@@ -1,7 +1,7 @@
 {
  "source": "Quran_Qaloun.pdf",
  "format": "webp",
- "count": 603,
+ "count": 621,
  "pageBox": [
   595,
   842
@@ -4227,6 +4227,132 @@
    "width": 1717,
    "height": 2662,
    "bytes": 275420
+  },
+  {
+   "n": 604,
+   "file": "page_604.webp",
+   "width": 1695,
+   "height": 2624,
+   "bytes": 199158
+  },
+  {
+   "n": 605,
+   "file": "page_605.webp",
+   "width": 1695,
+   "height": 2619,
+   "bytes": 186216
+  },
+  {
+   "n": 606,
+   "file": "page_606.webp",
+   "width": 1697,
+   "height": 2614,
+   "bytes": 199146
+  },
+  {
+   "n": 607,
+   "file": "page_607.webp",
+   "width": 1695,
+   "height": 2618,
+   "bytes": 196810
+  },
+  {
+   "n": 608,
+   "file": "page_608.webp",
+   "width": 1696,
+   "height": 2617,
+   "bytes": 222860
+  },
+  {
+   "n": 609,
+   "file": "page_609.webp",
+   "width": 1690,
+   "height": 2622,
+   "bytes": 249762
+  },
+  {
+   "n": 610,
+   "file": "page_610.webp",
+   "width": 1693,
+   "height": 2621,
+   "bytes": 219866
+  },
+  {
+   "n": 611,
+   "file": "page_611.webp",
+   "width": 1694,
+   "height": 2620,
+   "bytes": 255220
+  },
+  {
+   "n": 612,
+   "file": "page_612.webp",
+   "width": 1692,
+   "height": 2620,
+   "bytes": 266994
+  },
+  {
+   "n": 613,
+   "file": "page_613.webp",
+   "width": 1693,
+   "height": 2615,
+   "bytes": 241300
+  },
+  {
+   "n": 614,
+   "file": "page_614.webp",
+   "width": 1694,
+   "height": 2622,
+   "bytes": 193146
+  },
+  {
+   "n": 615,
+   "file": "page_615.webp",
+   "width": 1697,
+   "height": 2618,
+   "bytes": 193948
+  },
+  {
+   "n": 616,
+   "file": "page_616.webp",
+   "width": 1693,
+   "height": 2617,
+   "bytes": 213436
+  },
+  {
+   "n": 617,
+   "file": "page_617.webp",
+   "width": 1695,
+   "height": 2614,
+   "bytes": 203584
+  },
+  {
+   "n": 618,
+   "file": "page_618.webp",
+   "width": 1690,
+   "height": 2623,
+   "bytes": 260004
+  },
+  {
+   "n": 619,
+   "file": "page_619.webp",
+   "width": 1696,
+   "height": 2622,
+   "bytes": 191628
+  },
+  {
+   "n": 620,
+   "file": "page_620.webp",
+   "width": 1690,
+   "height": 2619,
+   "bytes": 177780
+  },
+  {
+   "n": 621,
+   "file": "page_621.webp",
+   "width": 1705,
+   "height": 2614,
+   "bytes": 178840
   }
  ]
 }

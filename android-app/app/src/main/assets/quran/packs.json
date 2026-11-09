@@ -6,7 +6,7 @@
    "name": "quran_pages",
    "kind": "pages",
    "delivery": "play",
-   "bytes": 180811188,
+   "bytes": 184660886,
    "files": [
     {
      "path": "quran/pages/page_001.webp",
@@ -2419,12 +2419,84 @@
     {
      "path": "quran/pages/page_603.webp",
      "bytes": 275420
+    },
+    {
+     "path": "quran/pages/page_604.webp",
+     "bytes": 199158
+    },
+    {
+     "path": "quran/pages/page_605.webp",
+     "bytes": 186216
+    },
+    {
+     "path": "quran/pages/page_606.webp",
+     "bytes": 199146
+    },
+    {
+     "path": "quran/pages/page_607.webp",
+     "bytes": 196810
+    },
+    {
+     "path": "quran/pages/page_608.webp",
+     "bytes": 222860
+    },
+    {
+     "path": "quran/pages/page_609.webp",
+     "bytes": 249762
+    },
+    {
+     "path": "quran/pages/page_610.webp",
+     "bytes": 219866
+    },
+    {
+     "path": "quran/pages/page_611.webp",
+     "bytes": 255220
+    },
+    {
+     "path": "quran/pages/page_612.webp",
+     "bytes": 266994
+    },
+    {
+     "path": "quran/pages/page_613.webp",
+     "bytes": 241300
+    },
+    {
+     "path": "quran/pages/page_614.webp",
+     "bytes": 193146
+    },
+    {
+     "path": "quran/pages/page_615.webp",
+     "bytes": 193948
+    },
+    {
+     "path": "quran/pages/page_616.webp",
+     "bytes": 213436
+    },
+    {
+     "path": "quran/pages/page_617.webp",
+     "bytes": 203584
+    },
+    {
+     "path": "quran/pages/page_618.webp",
+     "bytes": 260004
+    },
+    {
+     "path": "quran/pages/page_619.webp",
+     "bytes": 191628
+    },
+    {
+     "path": "quran/pages/page_620.webp",
+     "bytes": 177780
+    },
+    {
+     "path": "quran/pages/page_621.webp",
+     "bytes": 178840
     }
    ],
    "archive": {
-    "key": "v1/packs/quran_pages-d5487aab36c9.zip",
-    "bytes": 180887188,
-    "sha256": "d5487aab36c98b75e330a0646aa9b0998f591daa91f038672b6ab2e0cdc1e9c5"
+    "key": "v1/packs/quran_pages-30d05c055b21.zip",
+    "bytes": 184739154,
+    "sha256": "30d05c055b2177d57a30ce679324efeab81349c014c305802c99ead3bf4d6d79"
    }
   },
   {

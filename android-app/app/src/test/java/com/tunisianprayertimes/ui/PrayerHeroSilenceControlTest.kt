@@ -93,6 +93,14 @@ class PrayerHeroSilenceControlTest {
     }
 
     @Test
+    fun speaker_showsTheState_whileTheLabelNamesTheTap() {
+        assertEquals(R.drawable.ic_volume_on, heroSilenceIcon(silenced = false))
+        assertEquals(R.drawable.ic_volume_off, heroSilenceIcon(silenced = true))
+        compose.setContent { PrayerHeroSilenceControl(silenced = false, onClick = {}) }
+        compose.onNodeWithTag(TestTags.HERO_PHONE_SILENCE_BUTTON).assertContentDescriptionEquals(silenceLabel)
+    }
+
+    @Test
     fun stateChangedElsewhere_updatesTheAction_withoutCallingBack() {
         var silenced by mutableStateOf(true)
         var clicks = 0

@@ -1,5 +1,6 @@
 package com.tunisianprayertimes.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,9 +23,15 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.ui.theme.GoldLight
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
 
+/** The speaker shows the state, as a mute button does: crossed out while the phone is silenced. */
+@DrawableRes
+internal fun heroSilenceIcon(silenced: Boolean): Int =
+    if (silenced) R.drawable.ic_volume_off else R.drawable.ic_volume_on
+
 /**
- * The speaker shows the next action. The layout makes room for the 34 dp circle alone and the
- * 48 dp touch target overflows it, so the control never makes its row taller.
+ * The speaker shows the state ([heroSilenceIcon]) and the label names what a tap does. The layout
+ * makes room for the 34 dp circle alone and the 48 dp touch target overflows it, so the control
+ * never makes its row taller.
  */
 @Composable
 internal fun PrayerHeroSilenceControl(
@@ -53,7 +60,7 @@ internal fun PrayerHeroSilenceControl(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painter = painterResource(if (silenced) R.drawable.ic_volume_on else R.drawable.ic_volume_off),
+                    painter = painterResource(heroSilenceIcon(silenced)),
                     contentDescription = stringResource(if (silenced) R.string.hero_phone_unsilence_title else R.string.hero_phone_silence_title),
                     tint = GoldLight.copy(alpha = if (enabled) 1f else 0.45f),
                     modifier = Modifier.size(20.dp),
