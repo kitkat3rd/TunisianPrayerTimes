@@ -1,10 +1,13 @@
 package com.tunisianprayertimes.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 
@@ -44,13 +47,31 @@ private val LightColorScheme = lightColorScheme(
     error = SilenceRed,
 )
 
+/** Material's type scale with every style drawn in [fontFamily]. */
+fun appTypography(fontFamily: FontFamily): Typography = Typography().run {
+    Typography(
+        displayLarge = displayLarge.copy(fontFamily = fontFamily), displayMedium = displayMedium.copy(fontFamily = fontFamily),
+        displaySmall = displaySmall.copy(fontFamily = fontFamily), headlineLarge = headlineLarge.copy(fontFamily = fontFamily),
+        headlineMedium = headlineMedium.copy(fontFamily = fontFamily), headlineSmall = headlineSmall.copy(fontFamily = fontFamily),
+        titleLarge = titleLarge.copy(fontFamily = fontFamily), titleMedium = titleMedium.copy(fontFamily = fontFamily),
+        titleSmall = titleSmall.copy(fontFamily = fontFamily), bodyLarge = bodyLarge.copy(fontFamily = fontFamily),
+        bodyMedium = bodyMedium.copy(fontFamily = fontFamily), bodySmall = bodySmall.copy(fontFamily = fontFamily),
+        labelLarge = labelLarge.copy(fontFamily = fontFamily), labelMedium = labelMedium.copy(fontFamily = fontFamily),
+        labelSmall = labelSmall.copy(fontFamily = fontFamily),
+    )
+}
+
+/** [fontFamily]: the app's bundled UI font (the Android app passes its own); null keeps the platform font. */
 @Composable
 fun TunisianPrayerTimesTheme(
+    fontFamily: FontFamily? = null,
     content: @Composable () -> Unit
 ) {
+    val typography = remember(fontFamily) { fontFamily?.let(::appTypography) ?: Typography() }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         MaterialTheme(
             colorScheme = LightColorScheme,
+            typography = typography,
             content = content
         )
     }

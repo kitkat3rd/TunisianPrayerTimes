@@ -145,6 +145,21 @@
             android:name=".remembrance.DeathReminderReceiver"
             android:exported="false" />
 
+        <!-- The adhan at prayer times: its alarms, its player and its settings. -->
+        <receiver
+            android:name=".adhan.AdhanReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".adhan.AdhanPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <activity
+            android:name=".adhan.AdhanSettingsActivity"
+            android:exported="false"
+            android:label="@string/adhan_settings_title" />
+
         <!-- System broadcast receiver for boot/update (must be exported) -->
         <receiver
             android:name=".BootReceiver"

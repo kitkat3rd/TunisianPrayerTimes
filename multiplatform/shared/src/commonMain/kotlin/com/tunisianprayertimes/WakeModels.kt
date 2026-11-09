@@ -113,6 +113,8 @@ enum class MathDifficulty { EASY, INTERMEDIATE, HARD }
 enum class WakeUpCheckType { MATH, WHACK_A_MOLE, GYROSCOPE_MAZE }
 
 const val DEFAULT_AWAKE_CHECK_DELAY_MINUTES: Int = 3
+const val DEFAULT_WAKE_VIBRATION_SECONDS: Int = 30
+const val DEFAULT_WAKE_VOLUME_STEP_SECONDS: Int = 60
 
 @Serializable
 data class WakeUpCheckStep(
@@ -133,6 +135,8 @@ data class WakePlaybackOptions(
     val awakeCheckDelayMinutes: Int = DEFAULT_AWAKE_CHECK_DELAY_MINUTES,
     val ringtone: RingtonePreset = RingtonePreset.DEFAULT_ALARM,
     val customRingtoneUri: String? = null,
+    val initialVibrationSeconds: Int = DEFAULT_WAKE_VIBRATION_SECONDS,
+    val volumeStepIntervalSeconds: Int = DEFAULT_WAKE_VOLUME_STEP_SECONDS,
 ) {
     /** Returns the effective steps list, falling back to the legacy single type+difficulty. */
     val effectiveWakeUpCheckSteps: List<WakeUpCheckStep>

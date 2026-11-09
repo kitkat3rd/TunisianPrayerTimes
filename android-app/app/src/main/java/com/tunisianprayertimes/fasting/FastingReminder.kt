@@ -266,7 +266,9 @@ object FastingReminder {
     private val SHAWWAL_ORDINALS = listOf("الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن")
 
     private val clock = DateTimeFormatter.ofPattern("HH:mm")
-    fun clockOf(context: Context, at: Instant): String = ltr(clock.format(at.atZone(zone(context))))
+    /** A time as the phone's clock shows it, like every other time in the app (D8), even when the place keeps another zone. */
+    @Suppress("UNUSED_PARAMETER")
+    fun clockOf(context: Context, at: Instant): String = ltr(clock.format(at.atZone(ZoneId.systemDefault())))
 
     /** «الليلة», «مساء الغد», or «مساء الأحد 25 أكتوبر»; after midnight the eve in progress is still «الليلة». */
     fun eveWords(context: Context, eve: Eve, now: Instant): String {
@@ -324,9 +326,12 @@ object FastingReminder {
         return "لن نذكّرك ${eveWords(context, eve, now)}$about، $why"
     }
 
+    /** Shown when the phone is away from the saved place, whose Maghrib the reminder follows. */
+    const val PLACE_ELSEWHERE_LINE = "حدّد مكانك الحالي ليصلك التذكير بعد المغرب عندك."
+
     /** What the card says: the next reminder, and why an earlier eve has none. */
     fun statusLines(context: Context, now: Instant = Instant.now()): List<String> {
-        if (!isEnabled(context)) return listOf("نذكّرك بعد صلاة المغرب في الليلة التي قبل يوم الصيام.")
+        if (!isEnabled(context)) return listOf("نذكّرك إن شئت بعد صلاة المغرب في الليلة التي قبل يوم الصيام.")
         val eves = upcoming(context, now, count = 12)
         val today = now.atZone(zone(context)).toLocalDate()
         // Held only by a month not announced yet, with days left for the announcement: not a refusal.
@@ -356,7 +361,7 @@ object FastingReminder {
             blockLine(context, blocked, now)?.let(lines::add)
         }
         if (lines.isEmpty()) lines += "لن نذكّرك في الأسابيع القادمة."
-        if (placeElsewhere(context, now)) lines += "حدّد مكانك الحالي ليصلك التذكير بعد المغرب عندك."
+        if (placeElsewhere(context, now)) lines += PLACE_ELSEWHERE_LINE
         return lines
     }
 
@@ -415,7 +420,7 @@ object FastingReminder {
                 }
                 "سيرنّ منبه السحور في ${clockOf(context, suhoorAt)} صباحًا$before"
             }
-            own != null -> "$deadline. موعد منبّهك ${clockOf(context, own)}"
+            own != null -> "$deadline. موعد منبهك ${clockOf(context, own)}"
             else -> deadline
         }
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)

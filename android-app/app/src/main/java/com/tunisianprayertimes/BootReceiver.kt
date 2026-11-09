@@ -72,6 +72,8 @@ class BootReceiver : BroadcastReceiver() {
             .onFailure { Log.w("BootReceiver", "Failed to refresh the fasting reminder", it) }
         runCatching { com.tunisianprayertimes.remembrance.DeathReminder.refresh(context) }
             .onFailure { Log.w("BootReceiver", "Failed to refresh the remembrance reminder", it) }
+        runCatching { com.tunisianprayertimes.adhan.AdhanScheduler.refresh(context) }
+            .onFailure { Log.w("BootReceiver", "Failed to refresh the adhans", it) }
         AnalyticsTracker.installRamadanOverrideReporter(context)
         RamadanOverrideChecker.startPollingIfNeeded()
         return ScheduleRefreshCoordinator.syncAll(context).analyticsResult

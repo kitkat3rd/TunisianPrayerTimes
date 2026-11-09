@@ -1,5 +1,6 @@
 package com.tunisianprayertimes.ui
 
+import com.tunisianprayertimes.formatArabicHours
 import com.tunisianprayertimes.formatArabicMinutes
 import java.util.Calendar
 import java.util.TimeZone
@@ -61,11 +62,4 @@ private fun formatArabicDays(count: Int): String = when (count) {
     2 -> "يومين"
     in 3..10 -> "$count أيام"
     else -> "$count يومًا"
-}
-
-private fun formatArabicHours(count: Int): String = when (count) {
-    1 -> "ساعة"
-    2 -> "ساعتين"
-    in 3..10 -> "$count ساعات"
-    else -> "$count ساعة"
 }

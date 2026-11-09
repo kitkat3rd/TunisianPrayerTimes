@@ -110,6 +110,8 @@ private fun com.tunisianprayertimes.WakePlaybackOptions.normalized(): com.tunisi
     copy(
         customRingtoneUri = customRingtoneUri?.trim()?.takeIf { it.isNotEmpty() },
         awakeCheckDelayMinutes = awakeCheckDelayMinutes.normalizedAwakeCheckDelayMinutes(),
+        initialVibrationSeconds = initialVibrationSeconds.coerceIn(0, 300),
+        volumeStepIntervalSeconds = volumeStepIntervalSeconds.coerceIn(1, 300),
     )
 
 private fun Int.normalizedAwakeCheckDelayMinutes(): Int =

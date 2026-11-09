@@ -35,6 +35,17 @@ class VoluntaryPrayerTimesTest {
     }
 
     @Test
+    fun endedDuhaGivesTomorrowsPeriodOrKeepsTodaysWithoutIt() {
+        val evening = calculate(at(date, "11:40"))
+        assertEquals(date.plusDays(1), evening.duhaDate)
+        assertEquals(at(date.plusDays(1), "06:20"), evening.duha?.start)
+        val noTomorrow = calculate(at(date, "21:00"), dayFor = { if (it > date) null else day(it) })
+        assertEquals(date, noTomorrow.duhaDate)
+        assertEquals(at(date, "11:40"), noTomorrow.duha?.end)
+        assertEquals(date, calculate(at(date, "11:39")).duhaDate)
+    }
+
+    @Test
     fun configuredDhuhrNeverChangesDuha() {
         val baseline = calculate(at(date, "08:00")).duha
         val altered = calculate(at(date, "08:00"), dayFor = {

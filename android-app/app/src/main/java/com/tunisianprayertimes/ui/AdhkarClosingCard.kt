@@ -35,16 +35,19 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.adhkar.DhikrCatalog
 import com.tunisianprayertimes.adhkar.DhikrCategory
 import com.tunisianprayertimes.adhkar.DhikrClosingTexts
+import com.tunisianprayertimes.adhkar.DhikrSalawatClosingTexts
 import com.tunisianprayertimes.adhkar.DhikrSession
 import com.tunisianprayertimes.adhkar.MushafPassages
 import com.tunisianprayertimes.adhkar.isOutsideOccasionPeriod
 import kotlinx.coroutines.delay
+import java.time.DayOfWeek
 import java.time.LocalDate
 
 /** Which reading was finished, and so which words close it. */
-internal enum class DhikrClosingKind { MORNING, EVENING, NIGHT, SLEEP, SALAH, REMINDER, OUTSIDE }
+internal enum class DhikrClosingKind { MORNING, EVENING, NIGHT, SLEEP, SALAH, REMINDER, SALAWAT, OUTSIDE }
 
 /**
  * The closing card a reading earns once it is complete, or null for none: a whole wird (the morning,
@@ -53,7 +56,11 @@ internal enum class DhikrClosingKind { MORNING, EVENING, NIGHT, SLEEP, SALAH, RE
  * occasions (home, travel, food) read through like a book.
  */
 internal fun closingKind(session: DhikrSession, fromReminder: Boolean): DhikrClosingKind? {
-    val periodKey = session.collectionPeriodKey ?: return if (fromReminder) DhikrClosingKind.REMINDER else null
+    val periodKey = session.collectionPeriodKey ?: return when {
+        !fromReminder -> null
+        session.category == null && session.itemIds == listOf(DhikrCatalog.SALAWAT_ID) -> DhikrClosingKind.SALAWAT
+        else -> DhikrClosingKind.REMINDER
+    }
     return when (session.category) {
         // Read outside its time, the list is dhikr all the same, but not that time's adhkar.
         DhikrCategory.MORNING -> DhikrClosingKind.MORNING
@@ -122,6 +129,10 @@ private fun closingWords(kind: DhikrClosingKind, readingTitle: String): ClosingW
             ClosingGreeting("بارك الله في وِردك", "جعل الله لك من ذكره أُنسًا، وأعانك على الاستمرار."),
             ClosingGreeting("أعانك الله على المداومة", "رزقك الله قلبًا محبًّا لذكره، وهمّةً في طاعته."),
         ))
+    DhikrClosingKind.SALAWAT -> ClosingWords(R.drawable.ic_adhkar_salawat,
+        "أتممت وِردك من الصلاة على النبي ﷺ بفضل الله.", 0, listOf(
+            ClosingGreeting("تقبّل الله منك", "أعانك الله على الإكثار من الصلاة على نبيّه واتباع سنّته."),
+        ))
     DhikrClosingKind.OUTSIDE -> ClosingWords(R.drawable.ic_adhkar_leaf,
         "أتممت هذه القراءة بفضل الله.", 0, listOf(
             ClosingGreeting("تقبّل الله ذكرك", "جعل الله أيامك عامرةً بذكره."),
@@ -137,13 +148,24 @@ private fun closingWords(kind: DhikrClosingKind, readingTitle: String): ClosingW
  * dismiss it unread; back returns to the reading.
  */
 @Composable
-internal fun DhikrClosingCard(kind: DhikrClosingKind, readingTitle: String, onDone: () -> Unit, onStay: () -> Unit) {
+internal fun DhikrClosingCard(
+    kind: DhikrClosingKind, readingTitle: String, onDone: () -> Unit, onStay: () -> Unit,
+    date: LocalDate = LocalDate.now(),
+) {
     val p = LocalAdhkarPalette.current
     val words = remember(kind, readingTitle) { closingWords(kind, readingTitle) }
     // Pick once per card; counting touches, recomposition and rotation keep the same greeting.
     val greetingIndex = rememberSaveable(kind, readingTitle) { words.greetings.indices.random() }
     val greeting = words.greetings[greetingIndex]
-    val reward = remember(kind) { DhikrClosingTexts.rewardFor(LocalDate.now().toEpochDay(), words.shift) }
+    // Save both the date and the choice: recreation (even after midnight) keeps the displayed benefit.
+    val rewardDay = rememberSaveable(kind, readingTitle) { date.toEpochDay() }
+    val rewards = remember(kind, rewardDay) {
+        if (kind == DhikrClosingKind.SALAWAT)
+            DhikrSalawatClosingTexts.eligible(LocalDate.ofEpochDay(rewardDay).dayOfWeek == DayOfWeek.FRIDAY)
+        else listOf(DhikrClosingTexts.rewardFor(rewardDay, words.shift))
+    }
+    val rewardIndex = rememberSaveable(kind, readingTitle, rewardDay) { rewards.indices.random() }
+    val reward = rewards[rewardIndex]
     // Someone counting without looking keeps tapping after the last count: the buttons act only once
     // the card has gone untouched for a moment, every touch starting that moment over.
     var armed by remember { mutableStateOf(false) }
@@ -184,8 +206,11 @@ internal fun DhikrClosingCard(kind: DhikrClosingKind, readingTitle: String, onDo
                             border = BorderStroke(1.dp, AdhkarBorder), modifier = Modifier.fillMaxWidth().testTag("adhkar_closing_reward")) {
                             Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(if (reward.theme == DhikrClosingTexts.ClosingTheme.PERSEVERANCE) "من فضل المداومة" else "من فضل الذكر",
-                                    color = p.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text(reward.heading ?: if (reward.theme == DhikrClosingTexts.ClosingTheme.PERSEVERANCE) "من فضل المداومة" else "من فضل الذكر",
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                                        .testTag("adhkar_closing_reward_heading").semantics { heading() },
+                                    color = p.primary, fontSize = if (reward.heading != null) 14.sp else 12.sp,
+                                    fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
                                 // A verse as the mushaf prints it; a hadith reads as running text.
                                 val mushaf = if (reward.quran) MushafPassages.text(reward.id) else null
                                 if (mushaf != null) MushafPassage(mushaf, reward.text, 17.sp, 34.sp, p.forest,

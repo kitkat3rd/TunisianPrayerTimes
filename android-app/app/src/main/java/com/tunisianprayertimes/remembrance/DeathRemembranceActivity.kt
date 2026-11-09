@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.tunisianprayertimes.MainActivity
 import com.tunisianprayertimes.MainTabNavigation
 import com.tunisianprayertimes.ui.DeathRemembranceNoticeCard
+import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import java.time.LocalDate
 import java.util.Locale
@@ -41,13 +42,14 @@ class DeathRemembranceActivity : AppCompatActivity() {
             ?: DeathReminder.today(this)
         val item = DeathReminder.remembranceFor(day)
         setContent {
-            TunisianPrayerTimesTheme {
+            TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
                 DeathRemembranceNoticeCard(
                     item = item,
                     onSettings = {
                         startActivity(
+                            // SINGLE_TOP, like every other way in: a running screen switches tab instead of being rebuilt.
                             Intent(this, MainActivity::class.java)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                                 .putExtra(MainTabNavigation.EXTRA_DESTINATION, MainTabNavigation.DESTINATION_WORSHIP)
                                 .putExtra(MainTabNavigation.EXTRA_WORSHIP_ACTION, MainTabNavigation.WORSHIP_ACTION_REMEMBRANCE),
                         )

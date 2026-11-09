@@ -9,6 +9,7 @@ import com.tunisianprayertimes.quran.QuranSurah
 import com.tunisianprayertimes.quran.QuranVerseReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -90,6 +91,92 @@ class QuranExcerptTest {
         assertTrue(band.covered.containsAll(highlights.covers(page, rects(page, asked))))
         assertTrue(rects(page, verse(41, 35)).none { it in band.covered })
         assertTrue("only what the band shows", band.covered.all { it.bottom > band.top && it.top < band.bottom })
+    }
+
+    @Test
+    fun aReviewCueShowsTheEarlierVerseOnItsLine_asOnThePage() {
+        // The reported card asks what follows 39:30. Its cue is at the foot of printed page 461,
+        // on the same line as the end of 39:29.
+        val cue = verse(39, 30)
+        val earlier = verse(39, 29)
+        val page = catalog.pagesForVerse(cue.surah, cue.ayah).single()
+        val band = quranExcerpts(highlights, catalog, cue, showPrevious = true).single()
+        val earlierCovers = highlights.covers(page, rects(page, earlier)).filter { it.bottom > band.top && it.top < band.bottom }
+        assertTrue("the earlier verse shares the cue's band", earlierCovers.isNotEmpty())
+        assertTrue("the visible context counts as seen", earlier in band.context)
+        assertTrue("the earlier verse is not covered", earlierCovers.none { it in band.covered })
+        assertEquals(rects(page, cue), band.marked)
+
+        // Other excerpts keep their answer-safe default.
+        val ordinary = quranExcerpts(highlights, catalog, cue).single()
+        assertTrue(ordinary.covered.containsAll(earlierCovers))
+        assertTrue(ordinary.context.isEmpty())
+    }
+
+    @Test
+    fun anEarlierUnansweredVerseStillStaysCoveredInTheCue() {
+        val cue = verse(39, 30)
+        val earlier = verse(39, 29)
+        val page = catalog.pagesForVerse(cue.surah, cue.ayah).single()
+        val band = quranExcerpts(highlights, catalog, cue, showPrevious = true, protectedVerses = setOf(earlier)).single()
+        val earlierCovers = highlights.covers(page, rects(page, earlier)).filter { it.bottom > band.top && it.top < band.bottom }
+        assertTrue(earlierCovers.isNotEmpty())
+        assertTrue(band.covered.containsAll(earlierCovers))
+        assertFalse(earlier in band.context)
+    }
+
+    @Test
+    fun aQuestionShowsEarlierNeighbours_butNotItsAnswerOrFollowingVerses() {
+        val refs = (1..4).map { verse(1, it) }
+        val boxes = listOf(
+            QuranHighlightRect(0.78f, 0.4f, 0.94f, 0.5f),
+            QuranHighlightRect(0.54f, 0.4f, 0.78f, 0.5f),
+            QuranHighlightRect(0.30f, 0.4f, 0.54f, 0.5f),
+            QuranHighlightRect(0.06f, 0.4f, 0.30f, 0.5f),
+        )
+        val index = QuranCatalog(
+            listOf(QuranPage(1, "", emptyList())), listOf(QuranSurah(1, "test", 1)),
+            refs.map { QuranSearchEntry(it.surah, it.ayah, "verse", 1) },
+        )
+        val places = QuranHighlights(mapOf(1 to refs.zip(boxes).associate { it.first to listOf(it.second) }))
+        val band = quranExcerpts(places, index, refs[2], linesBefore = 1, cover = true, showPrevious = true).single()
+        assertEquals(setOf(refs[0]), band.context)
+        assertEquals(places.covers(1, boxes.drop(2)).toSet(), band.covered.toSet())
+
+        val protected = quranExcerpts(
+            places, index, refs[2], linesBefore = 1, cover = true, showPrevious = true, protectedVerses = setOf(refs[0]),
+        ).single()
+        assertTrue(protected.context.isEmpty())
+        assertEquals(places.covers(1, listOf(boxes[0], boxes[2], boxes[3])).toSet(), protected.covered.toSet())
+    }
+
+    @Test
+    fun aReviewQuestionAcrossPages_keepsTheAnswerCoveredAndTheEarlierContextVisible() {
+        val asked = verse(39, 31)
+        val earlier = verse(39, 29)
+        val bands = quranExcerpts(highlights, catalog, asked, linesBefore = 1, cover = true, showPrevious = true)
+        assertEquals(listOf(460, 461), bands.map { it.page })
+        assertTrue(earlier in bands.first().context)
+        assertTrue(bands.last().covered.containsAll(highlights.covers(461, rects(461, asked))))
+        assertFalse(bands.any { asked in it.context })
+    }
+
+    @Test
+    fun earlierContextMayBelongToThePreviousSurah() {
+        val refs = listOf(verse(1, 7), verse(2, 1), verse(2, 2))
+        val boxes = listOf(
+            QuranHighlightRect(0.70f, 0.4f, 0.94f, 0.5f),
+            QuranHighlightRect(0.40f, 0.4f, 0.70f, 0.5f),
+            QuranHighlightRect(0.06f, 0.4f, 0.40f, 0.5f),
+        )
+        val index = QuranCatalog(
+            listOf(QuranPage(1, "", emptyList())), listOf(QuranSurah(1, "one", 1), QuranSurah(2, "two", 1)),
+            refs.map { QuranSearchEntry(it.surah, it.ayah, "verse", 1) },
+        )
+        val places = QuranHighlights(mapOf(1 to refs.zip(boxes).associate { it.first to listOf(it.second) }))
+        val band = quranExcerpts(places, index, refs[1], showPrevious = true).single()
+        assertEquals(setOf(refs[0]), band.context)
+        assertEquals(places.covers(1, listOf(boxes[2])), band.covered)
     }
 
     @Test

@@ -228,14 +228,17 @@ internal fun PrayerSilenceRangeSlider(
     val extendEarlierCue = stringResource(R.string.prayer_silence_extend_earlier)
     val extendLaterCue = stringResource(R.string.prayer_silence_extend_later)
     val valueLabelStyle = TextStyle(
+        fontFamily = AppFontFamily,
         fontSize = PrayerSilenceTypography.ValueLabel,
         fontWeight = FontWeight.SemiBold,
     )
     val adhanLabelStyle = TextStyle(
+        fontFamily = AppFontFamily,
         fontSize = PrayerSilenceTypography.AdhanLabel,
         fontWeight = FontWeight.SemiBold,
     )
     val scaleLabelStyle = TextStyle(
+        fontFamily = AppFontFamily,
         fontSize = PrayerSilenceTypography.ScaleLabel,
         // Left-to-right so the signed value renders before the "د" unit: "+60 د".
         textDirection = TextDirection.Ltr,

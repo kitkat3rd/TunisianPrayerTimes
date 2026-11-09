@@ -42,6 +42,55 @@ class HifzReviewFirstTest {
     }
 
     @Test
+    fun openingADueVerseByNumberUsesTheSameReviewFirstGateAsShowingThePage() {
+        val due = point()
+        val pageGate = hifzReadingGate(listOf(due), setOf(due.id), setOf(verse, other), emptySet())
+        val verseGate = hifzReadingGate(listOf(due), setOf(due.id), setOf(verse, other), emptySet(),
+            versesHidden = true, revealVerse = verse)
+        assertEquals(listOf(due), verseGate)
+        assertEquals(pageGate, verseGate)
+    }
+
+    @Test
+    fun coveredVersesDoNotPromptUntilAnAnswerIsRequested() {
+        val due = point()
+        assertTrue(hifzReadingGate(listOf(due), setOf(due.id), setOf(verse, other), emptySet(),
+            versesHidden = true).isEmpty())
+        assertTrue(hifzReadingGate(listOf(due), setOf(due.id), setOf(verse, other), emptySet(),
+            versesHidden = true, revealVerse = other).isEmpty())
+        assertTrue(hifzReadingGate(listOf(due), setOf(due.id), setOf(other), emptySet(),
+            versesHidden = true, revealVerse = verse).isEmpty())
+    }
+
+    @Test
+    fun openingOneVerseDoesNotAskAboutOtherAnswersThatRemainCovered() {
+        val due = point()
+        val another = point(2L).copy(verse = other)
+        assertEquals(listOf(due), hifzReadingGate(listOf(due, another), setOf(due.id, another.id),
+            setOf(verse, other), emptySet(), versesHidden = true, revealVerse = verse))
+    }
+
+    @Test
+    fun revealingALookAlikeOrLinkedVerseAlsoRequiresReviewFirst() {
+        val similar = point().copy(mistakes = listOf(HifzMistake(HifzKind.Similar, other)))
+        assertEquals(listOf(similar), hifzReadingGate(listOf(similar), setOf(similar.id), setOf(other), emptySet(),
+            versesHidden = true, revealVerse = other))
+        val skipped = point().copy(mistakes = listOf(HifzMistake(HifzKind.Skip)))
+        val previous = QuranVerseReference(verse.surah, verse.ayah - 1)
+        assertEquals(listOf(skipped), hifzReadingGate(listOf(skipped), setOf(skipped.id), setOf(previous), emptySet(),
+            versesHidden = true, revealVerse = previous))
+    }
+
+    @Test
+    fun explicitReadingAndAlreadyExposedAnswersDoNotRestartTheTestOnAnotherReveal() {
+        val due = point()
+        assertTrue(hifzReadingGate(listOf(due), setOf(due.id), setOf(verse), setOf(due.id),
+            versesHidden = true, revealVerse = verse).isEmpty())
+        assertTrue(hifzReadingGate(listOf(due), emptySet(), setOf(verse), emptySet(),
+            versesHidden = true, revealVerse = verse).isEmpty())
+    }
+
+    @Test
     fun deferredListKeepsOverdueSpacedChecksVisibleWithoutListingFutureOrFreshQuestions() {
         val old = point(1L, today - 3)
         val due = point(2L)

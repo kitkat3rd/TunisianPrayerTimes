@@ -148,6 +148,8 @@ internal fun WakePlaybackOptions.withSoundOf(source: WakePlaybackOptions): WakeP
     customRingtoneUri = source.customRingtoneUri,
     vibrationOnly = source.vibrationOnly,
     progressiveVolume = source.progressiveVolume,
+    initialVibrationSeconds = source.initialVibrationSeconds,
+    volumeStepIntervalSeconds = source.volumeStepIntervalSeconds,
 )
 
 /** The stop challenge of [source]: on or off, and the same challenges at the same difficulties. */
@@ -187,6 +189,8 @@ internal fun PrayerWakeSubAlarm.soundMatches(mainPlayback: WakePlaybackOptions):
                 (
                     playback.ringtone == mainPlayback.ringtone &&
                         playback.customRingtoneUri == mainPlayback.customRingtoneUri &&
-                        playback.progressiveVolume == mainPlayback.progressiveVolume
+                        playback.initialVibrationSeconds == mainPlayback.initialVibrationSeconds &&
+                        playback.progressiveVolume == mainPlayback.progressiveVolume &&
+                        (!mainPlayback.progressiveVolume || playback.volumeStepIntervalSeconds == mainPlayback.volumeStepIntervalSeconds)
                     )
             )

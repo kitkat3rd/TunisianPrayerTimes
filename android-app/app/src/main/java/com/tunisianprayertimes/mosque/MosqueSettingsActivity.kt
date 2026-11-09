@@ -41,6 +41,7 @@ import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.ScheduleRefreshCoordinator
 import com.tunisianprayertimes.mosque.presence.*
+import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -52,7 +53,7 @@ import java.util.Locale
 class MosqueSettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { TunisianPrayerTimesTheme {
+        setContent { TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 Surface(Modifier.fillMaxSize()) { MosqueSettingsScreen(onBack = ::finish) }
             }

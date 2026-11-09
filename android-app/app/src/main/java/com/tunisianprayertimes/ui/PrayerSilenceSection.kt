@@ -153,11 +153,13 @@ private const val HeaderNameSlot = "prayer_silence_header_name"
 private const val HeaderSwitchSlot = "prayer_silence_header_switch"
 
 private val HeaderNameTextStyle = TextStyle(
+    fontFamily = AppFontFamily,
     fontSize = PrayerSilenceTypography.PrayerName,
     fontWeight = FontWeight.Bold,
 )
 
 private val HeaderClockTextStyle = TextStyle(
+    fontFamily = AppFontFamily,
     fontSize = PrayerSilenceTypography.PrayerTime,
     fontWeight = FontWeight.SemiBold,
     fontFeatureSettings = "tnum",
@@ -442,7 +444,7 @@ private fun PrayerSilenceClock(
                 fontSize = PrayerSilenceTypography.PrayerTime,
                 fontWeight = FontWeight.SemiBold,
                 color = PrayerSilencePalette.GoldAccent,
-                style = TextStyle(textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
+                style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
                 maxLines = 1,
                 softWrap = false,
                 modifier = Modifier.testTag("prayer_time_${prayer.name}"),
@@ -471,16 +473,19 @@ private fun Prayer.displayNameRes(): Int = when (this) {
 }
 
 private val EndpointTimeTextStyle = TextStyle(
+    fontFamily = AppFontFamily,
     fontSize = PrayerSilenceTypography.FieldValue,
     fontWeight = FontWeight.SemiBold,
     fontFeatureSettings = "tnum",
 )
 
 private val EndpointCaptionTextStyle = TextStyle(
+    fontFamily = AppFontFamily,
     fontSize = PrayerSilenceTypography.FieldLabel,
 )
 
 private val EndpointDurationTextStyle = TextStyle(
+    fontFamily = AppFontFamily,
     fontSize = PrayerSilenceTypography.Duration,
     fontWeight = FontWeight.SemiBold,
 )
@@ -814,7 +819,7 @@ private fun SilenceDurationLabel(
             fontWeight = FontWeight.SemiBold,
             color = PrayerSilencePalette.InteractiveTeal,
             // The phrase itself keeps its natural Arabic ordering.
-            style = TextStyle(textDirection = TextDirection.Content),
+            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Content),
             maxLines = 1,
         )
         Icon(

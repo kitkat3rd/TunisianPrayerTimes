@@ -5,10 +5,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import com.tunisianprayertimes.R
+import com.tunisianprayertimes.ui.AppFontFamily
 
 internal object WakeAlarmColors {
     val Background = Color(0xFF0B211F)
@@ -25,10 +23,7 @@ internal object WakeAlarmColors {
     val OnLockedStop = Color(0xFFA6B8AB)
 }
 
-internal val WakeAlarmFont = FontFamily(
-    Font(R.font.noto_sans_arabic),
-    Font(R.font.noto_sans_arabic_semibold, FontWeight.SemiBold),
-)
+internal val WakeAlarmFont: FontFamily get() = AppFontFamily
 
 /** A quiet, continuous background also keeps every challenge's light text legible. */
 internal fun Modifier.wakeAlarmBackground(): Modifier = drawBehind {

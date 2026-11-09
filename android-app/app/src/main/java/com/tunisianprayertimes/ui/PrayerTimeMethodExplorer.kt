@@ -180,7 +180,7 @@ private fun ExplorerSunChart(
     val noonLabel = stringResource(R.string.prayer_explorer_noon)
     val horizonLabel = stringResource(R.string.prayer_explorer_horizon)
     val measurer = rememberTextMeasurer()
-    val labelStyle = TextStyle(fontSize = 12.sp, color = TextMuted, textDirection = TextDirection.ContentOrRtl)
+    val labelStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 12.sp, color = TextMuted, textDirection = TextDirection.ContentOrRtl)
     val timeStyle = ExplorerTimeStyle.copy(fontSize = 11.sp, color = TextMuted)
     val chartHeight = with(LocalDensity.current) { 204.dp + 54.sp.toDp() }
 

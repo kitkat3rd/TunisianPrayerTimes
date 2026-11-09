@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import com.tunisianprayertimes.DEFAULT_AWAKE_CHECK_DELAY_MINUTES
+import com.tunisianprayertimes.DEFAULT_WAKE_VIBRATION_SECONDS
+import com.tunisianprayertimes.DEFAULT_WAKE_VOLUME_STEP_SECONDS
 import com.tunisianprayertimes.MathDifficulty
 import com.tunisianprayertimes.OffsetDirection
 import com.tunisianprayertimes.Prayer
@@ -25,6 +27,8 @@ const val EXTRA_CUSTOM_RINGTONE_URI = "extra_custom_ringtone_uri"
 const val EXTRA_VIBRATION_ONLY = "extra_vibration_only"
 const val EXTRA_WAKE_UP_CHECK = "extra_wake_up_check"
 const val EXTRA_PROGRESSIVE_VOLUME = "extra_progressive_volume"
+const val EXTRA_INITIAL_VIBRATION_SECONDS = "extra_initial_vibration_seconds"
+const val EXTRA_VOLUME_STEP_INTERVAL_SECONDS = "extra_volume_step_interval_seconds"
 const val EXTRA_SNORE_TRACKING_ENABLED = "extra_snore_tracking_enabled"
 const val EXTRA_AUTO_SILENCE_OVERRIDE_ALLOWED = "extra_auto_silence_override_allowed"
 const val EXTRA_AUTO_SILENCE_CONFLICT_PLAYBACK = "extra_auto_silence_conflict_playback"
@@ -98,6 +102,8 @@ data class WakeTriggerPayload(
     val offsetMinutes: Int? = null,
     val offsetDirection: OffsetDirection? = null,
     val occurrenceAtMillis: Long = 0L,
+    val initialVibrationSeconds: Int = DEFAULT_WAKE_VIBRATION_SECONDS,
+    val volumeStepIntervalSeconds: Int = DEFAULT_WAKE_VOLUME_STEP_SECONDS,
 )
 
 fun wakeMainEventId(alarmId: String): String = "wake:main:$alarmId"
@@ -148,6 +154,8 @@ fun Intent.populateWakeTriggerPayload(
     offsetDirection: OffsetDirection? = null,
     triggerAtMillis: Long = 0L,
     occurrenceAtMillis: Long = 0L,
+    initialVibrationSeconds: Int = DEFAULT_WAKE_VIBRATION_SECONDS,
+    volumeStepIntervalSeconds: Int = DEFAULT_WAKE_VOLUME_STEP_SECONDS,
 ): Intent = apply {
     putExtra(EXTRA_EVENT_ID, eventId)
     putExtra(EXTRA_PRAYER, prayer.name)
@@ -166,6 +174,8 @@ fun Intent.populateWakeTriggerPayload(
         putExtra(EXTRA_WAKE_UP_CHECK_STEPS, wakeUpCheckSteps.joinToString(",") { "${it.type.name}:${it.difficulty.name}" })
     }
     putExtra(EXTRA_PROGRESSIVE_VOLUME, progressiveVolume)
+    putExtra(EXTRA_INITIAL_VIBRATION_SECONDS, initialVibrationSeconds.coerceIn(0, 300))
+    putExtra(EXTRA_VOLUME_STEP_INTERVAL_SECONDS, volumeStepIntervalSeconds.coerceIn(1, 300))
     putExtra(EXTRA_SNORE_TRACKING_ENABLED, snoreTrackingEnabled)
     putExtra(EXTRA_AUTO_SILENCE_OVERRIDE_ALLOWED, autoSilenceOverrideAllowed)
     putExtra(EXTRA_AUTO_SILENCE_CONFLICT_PLAYBACK, useAutoSilenceConflictPlayback)
@@ -269,6 +279,14 @@ fun Intent.toWakeTriggerPayload(): WakeTriggerPayload? {
         wakeUpCheckDifficulty = wakeUpCheckDifficulty,
         whackAMoleKillTarget = whackAMoleKillTarget,
         progressiveVolume = getBooleanExtra(EXTRA_PROGRESSIVE_VOLUME, true),
+        initialVibrationSeconds = getIntExtra(
+            EXTRA_INITIAL_VIBRATION_SECONDS,
+            DEFAULT_WAKE_VIBRATION_SECONDS,
+        ).coerceIn(0, 300),
+        volumeStepIntervalSeconds = getIntExtra(
+            EXTRA_VOLUME_STEP_INTERVAL_SECONDS,
+            DEFAULT_WAKE_VOLUME_STEP_SECONDS,
+        ).coerceIn(1, 300),
         snoreTrackingEnabled = getBooleanExtra(EXTRA_SNORE_TRACKING_ENABLED, false),
         autoSilenceOverrideAllowed = getBooleanExtra(
             EXTRA_AUTO_SILENCE_OVERRIDE_ALLOWED,
@@ -324,6 +342,8 @@ fun WakeTriggerPayload.toBundle(): Bundle =
         whackAMoleKillTarget = whackAMoleKillTarget,
         wakeUpCheckSteps = wakeUpCheckSteps,
         progressiveVolume = progressiveVolume,
+        initialVibrationSeconds = initialVibrationSeconds,
+        volumeStepIntervalSeconds = volumeStepIntervalSeconds,
         snoreTrackingEnabled = snoreTrackingEnabled,
         autoSilenceOverrideAllowed = autoSilenceOverrideAllowed,
         useAutoSilenceConflictPlayback = useAutoSilenceConflictPlayback,

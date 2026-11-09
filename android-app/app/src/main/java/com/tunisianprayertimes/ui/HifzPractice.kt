@@ -264,7 +264,7 @@ internal class HifzPracticeState private constructor(saved: List<String>?, ids: 
 }
 
 /**
- * What an answer in «مراجعة الدفتر» does, said under it: as in «مراجعة اليوم» for a point whose question was due
+ * What an answer in «مراجعة الدفتر» does, explained on request: as in «مراجعة اليوم» for a point whose question was due
  * ([counted]) and for a verse forgotten, counted as the slip it is; null for the others, which change nothing.
  */
 internal fun hifzPracticeOutcome(point: HifzPoint, grade: HifzGrade, counted: Boolean, again: String, tomorrow: String): HifzGradeOutcome? =
@@ -350,6 +350,7 @@ internal fun HifzPracticeSheet(
                     else HifzPracticeCard(
                         state, catalog, lookAlikes, point, at, count, audio?.takeIf { !leaving }, audioControls, tomorrow, actions, leaving,
                         beforeProtected = point.verse.ayah > 1 && QuranVerseReference(point.verse.surah, point.verse.ayah - 1) in protectedVerses,
+                        protectedVerses = protectedVerses,
                     )
                 }
             }
@@ -375,6 +376,7 @@ internal fun HifzPracticeOnPage(
     beforeProtected: Boolean,
     pointInView: Boolean,
     pageNamesSurah: Boolean,
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
 ) {
     val cards = remember(state.ids, points) { state.cards(points) }
     val count = cards.size
@@ -411,6 +413,7 @@ internal fun HifzPracticeOnPage(
                     state, catalog, lookAlikes, point, index, count, audio, audioControls, tomorrow, actions, leaving = false,
                     modifier = Modifier.weight(1f, fill = false), onPage = true, beforeHidden = beforeHidden,
                     beforeProtected = beforeProtected, pointInView = pointInView, pageNamesSurah = pageNamesSurah,
+                    protectedVerses = protectedVerses,
                 )
             }
         }
@@ -441,6 +444,7 @@ private fun HifzPracticeCard(
     beforeProtected: Boolean = false,
     pointInView: Boolean = true,
     pageNamesSurah: Boolean = pointInView,
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
 ) {
     val revealed = state.revealed(point)
     val answer = state.answer(point)
@@ -498,12 +502,14 @@ private fun HifzPracticeCard(
             } else if (onPage) {
                 if (beforeHidden && previous != null) QuranVerseExcerpt(
                     catalog, previous, "الآية السابقة، ${hifzVerseAbout(catalog, previous)}",
+                    showPrevious = true, protectedVerses = protectedVerses,
                     fallback = { HifzReviewCueText(catalog, previous, fontSize = 18.sp) },
                 )
             } else {
                 if (!talkBack) QuranVerseExcerpt(
                     catalog, point.verse, "${hifzVerseAbout(catalog, point.verse)} مغطاة في المصحف",
-                    linesBefore = if (previous != null) 1 else 0, cover = true, fallback = inText,
+                    linesBefore = if (previous != null) 1 else 0, cover = true,
+                    showPrevious = true, protectedVerses = protectedVerses, fallback = inText,
                 )
                 if (talkBack) inText()
             }
@@ -533,31 +539,23 @@ private fun HifzPracticeCard(
         if (point.key.isNotBlank()) Text(withQuranQuotes("ملاحظتك: ${point.key}"), fontSize = 13.sp, color = QuranHifzViolet)
         if (audio != null) HifzAudioStrip(audio, audioControls)
         if (answer == null) {
-            Text("هل تذكّرتها قبل أن تكشفها؟", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
             val counted = state.counted(point)
-            // Whether the answer counts, said once: a question due now counts as in «مراجعة اليوم»; the others
-            // change only when the verse was forgotten.
             Text(
-                if (counted) "حان موعد السؤال عنها، فتُحسب إجابتك في متابعة الحفظ." else "هذا تدريب اختياري: التذكّر لا يغيّر موعد المراجعة، والنسيان أو الخطأ يُسجّل.",
+                if (counted) "سؤال حان وقته" else "تدريب اختياري",
                 fontSize = 12.sp, color = TextMuted, modifier = Modifier.testTag("hifz_practice_counts"),
             )
             val assisted = state.assisted(point)
-            if (assisted) Text("رأيت منها شيئًا قبل أن تكشفها.", fontSize = 12.sp, color = QuranHifzViolet)
             val grades = if (assisted) listOf(HifzGrade.Hesitated, HifzGrade.Again) else HifzGrade.entries.toList()
             val outcomes = grades.associateWith { hifzPracticeOutcome(point, it, counted, again, tomorrow) }
-            // The same time on every answer is said once, under them, as in «مراجعة اليوم».
-            val shared = outcomes.values.map { it?.back }.distinct().singleOrNull()
-            grades.forEach { grade ->
-                val outcome = outcomes.getValue(grade)
-                val label = hifzGradeLabel(grade, assisted)
-                HifzGradeButton(label, outcome?.text(withBack = shared == null, short = false).orEmpty(), grade, tag = "hifz_practice_grade_${grade.name.lowercase()}") {
-                    state.answer(point, grade, outcome?.text(withBack = true, short = false) ?: "لم تُحسب إجابتك في متابعة الحفظ، لأن موعد السؤال عنها لم يحن.", count, actions)
-                }
+            HifzGradeChoices(
+                point.id, outcomes, assisted, compact = onPage, tagPrefix = "hifz_practice_grade",
+                notice = "رأيت منها شيئًا قبل أن تكشفها.".takeIf { assisted },
+                explanation = if (counted) "حان موعد السؤال عنها، فتُحسب إجابتك في متابعة الحفظ."
+                    else "هذا تدريب اختياري: التذكّر لا يغيّر موعد المراجعة، والنسيان أو الخطأ يُسجّل.",
+            ) { grade ->
+                state.answer(point, grade, outcomes.getValue(grade)?.text(withBack = true, short = false)
+                    ?: "لم تُحسب إجابتك في متابعة الحفظ، لأن موعد السؤال عنها لم يحن.", count, actions)
             }
-            if (shared != null) Text(
-                "نسألك عنها $shared أيًّا كان جوابك.", fontSize = 12.sp, color = TextMuted, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("hifz_practice_answered")) {
                 Text(hifzPracticeAnswered(answer), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)

@@ -153,7 +153,8 @@ class QuranLibraryTest {
     fun shareText_ofEveryVerseIsTheMushafsWordsAndSignsInMarksOtherFontsDrawAsMeant() {
         // Signs the mushaf does not print (la; the small seen but for the sakta of 69:28), the sajdah sign, the small
         // zero, the empty low stop, the encoding's open tanween and its ya barree, a right-to-left mark: none is drawn by
-        // other fonts as the mushaf means it. The lazim mim is one of its waqf signs (the 2017 printing sets four).
+        // other fonts as the mushaf means it. The lazim mim is one of its waqf signs (29: the scans' 25 and the four the
+        // 2017 printing sets).
         val foreign = Regex("[\u06D9\u06DD-\u06DF\u06E9\u06EA\u0656\u0657\u065E\u06D2\u200F]")
         val signs = Regex("[\u06D6\u06D7\u06D8\u06DA\u06DB]")
         val sakta = QuranVerseReference(69, 28)
@@ -179,7 +180,7 @@ class QuranLibraryTest {
             shared++
         }
         assertEquals(6214, shared)
-        assertEquals(4305, waqf.values.sumOf { it.size })
+        assertEquals(4331, waqf.values.sumOf { it.size })
     }
 
     @Test

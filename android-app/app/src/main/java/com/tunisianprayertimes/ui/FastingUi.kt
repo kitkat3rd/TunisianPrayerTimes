@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -67,10 +69,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.fasting.FastingReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminder
+import com.tunisianprayertimes.ui.theme.CardBorder
 import com.tunisianprayertimes.ui.theme.Gold
-import com.tunisianprayertimes.ui.theme.GoldLight
 import com.tunisianprayertimes.ui.theme.GreenPrimary
-import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
 import com.tunisianprayertimes.ui.theme.PrayerNameColor
 import com.tunisianprayertimes.ui.theme.TextDark
 import com.tunisianprayertimes.ui.theme.TextMuted
@@ -79,6 +80,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private const val SUHOOR_TOO_LATE = "فات وقت منبه السحور لهذه الليلة."
 
 /** What the fasting notification asked «عباداتي» to open. */
 internal object FastingRequests {
@@ -93,7 +96,7 @@ private fun rememberFastingSwitch(onChanged: () -> Unit): (Boolean) -> Unit {
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onChanged() }
     return { on ->
         FastingReminder.setEnabled(context, on)
-        if (on) Toast.makeText(context, "سنذكّرك بعد صلاة المغرب قبل أيام الصيام التي اخترتها.", Toast.LENGTH_SHORT).show()
+        if (on) Toast.makeText(context, "سنذكّرك بعد صلاة المغرب في الليلة التي قبل يوم الصيام.", Toast.LENGTH_SHORT).show()
         if (on && Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) ask.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -125,7 +128,9 @@ private fun fastingCardState(context: android.content.Context, now: Instant = In
             FastingCardState(
                 enabled = true, tonight = tonight,
                 title = FastingReminder.title(context, tonight, now),
-                lines = emptyList(), suhoorAt = suhoorAt,
+                // Away from the saved place, the eve says so too: its reminder follows that place's Maghrib.
+                lines = listOfNotNull(FastingReminder.PLACE_ELSEWHERE_LINE.takeIf { FastingReminder.placeElsewhere(context, now) }),
+                suhoorAt = suhoorAt,
                 ownAlarm = if (suhoorAt == null) FastingReminder.ownAlarm(context, tonight) else null,
                 fajr = tonight.fajr?.let { FastingReminder.clockOf(context, it) },
                 canSuhoor = tonight.fajr?.let { FastingReminder.suhoorOptions(it, now).isNotEmpty() } == true,
@@ -134,7 +139,7 @@ private fun fastingCardState(context: android.content.Context, now: Instant = In
         // Off, on an eve of a day the reader keeps: the card asks, in its own place.
         !enabled && eve != null && chosenDay -> FastingCardState(
             enabled = false, tonight = null,
-            title = FastingReminder.title(context, eve, now) + ".",
+            title = FastingReminder.title(context, eve, now),
             lines = listOf("أتريد أن نذكّرك بعد صلاة المغرب بأيام صيام التطوع؟"),
             suhoorAt = null, ownAlarm = null, fajr = null,
         )
@@ -169,7 +174,8 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
     }
     val setSuhoor: (FastingReminder.Eve) -> Unit = { target ->
         scope.launch {
-            withContext(Dispatchers.IO) { FastingReminder.setSuhoor(context, target) }
+            val set = withContext(Dispatchers.IO) { FastingReminder.setSuhoor(context, target) }
+            if (!set) Toast.makeText(context, SUHOOR_TOO_LATE, Toast.LENGTH_SHORT).show()
             revision++
         }
     }
@@ -182,6 +188,10 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
             setSuhoor(target)
         } else if (options.isNotEmpty()) {
             suhoorSheet = target
+        } else {
+            // The button is checked once a minute: a tap can come after the last ring that fits.
+            Toast.makeText(context, SUHOOR_TOO_LATE, Toast.LENGTH_SHORT).show()
+            revision++
         }
     }
     // From the notification: the sheet, or the suhoor questions.
@@ -205,27 +215,27 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
             .clip(shape)
             .background(Color.White)
             .border(BorderStroke(1.dp, Gold.copy(alpha = 0.25f)), shape)
-            .clickable(role = Role.Button) { sheet = true }
-            .padding(start = 14.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
+            .clickable(role = Role.Button, onClickLabel = "إعدادات التذكير") { sheet = true }
+            // The same insets as the «ذكر الموت» card, so the two switches line up.
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(GoldLight.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(R.drawable.ic_adhkar_moon), contentDescription = null, tint = GreenPrimaryDark, modifier = Modifier.size(22.dp))
-        }
-        Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // No icon here: the «الصيام» heading above already carries the moon.
+        Column(Modifier.weight(1f).padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val current = state
-            Text(current?.title ?: "صيام التطوع", color = PrayerNameColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(current?.title ?: "صيام التطوع", color = PrayerNameColor, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.semantics { heading() })
             when {
                 current == null -> Unit
                 current.tonight != null -> {
-                    Text("إن شئت الصيام فانوِه الليلة قبل أذان الفجر في ${current.fajr} صباحًا", color = TextMuted, fontSize = 13.sp, lineHeight = 19.sp)
+                    Text("إن شئت الصيام فانوِه الليلة قبل أذان الفجر في ${current.fajr} صباحًا.", color = TextMuted, fontSize = 13.sp, lineHeight = 19.sp)
                     when {
                         current.suhoorAt != null -> Text(
                             "منبه السحور ${FastingReminder.clockOf(context, current.suhoorAt)} · الفجر ${current.fajr}",
                             color = GreenPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, lineHeight = 19.sp,
                         )
                         current.ownAlarm != null -> Text(
-                            "موعد منبّهك ${FastingReminder.clockOf(context, current.ownAlarm)}",
+                            "موعد منبهك ${FastingReminder.clockOf(context, current.ownAlarm)}",
                             color = GreenPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, lineHeight = 19.sp,
                         )
                         current.canSuhoor -> OutlinedButton(
@@ -239,10 +249,12 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
                         }
                         else -> Unit
                     }
+                    current.lines.forEach { Text(it, color = TextMuted, fontSize = 13.sp, lineHeight = 19.sp) }
                 }
                 else -> current.lines.forEach { Text(it, color = TextMuted, fontSize = 13.sp, lineHeight = 19.sp) }
             }
         }
+        ReminderSwitchDivider()
         Switch(
             checked = state?.enabled ?: FastingReminder.isEnabled(context),
             onCheckedChange = switch,
@@ -307,6 +319,8 @@ private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
                     modifier = Modifier.semantics { contentDescription = "تذكير صيام التطوع" })
             }
             if (enabled) {
+                // Asked like the frequency of «ذكر الموت»: «كم مرة يصلك التذكير؟».
+                Text("بأيّ الأيام نذكّرك؟", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FastingReminder.Fast.entries.forEach { fast ->
                         FilterChip(
@@ -410,6 +424,15 @@ private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
         },
         onDismiss = { suhoorSheet = false },
     )
+}
+
+/**
+ * The line between a row that opens a reminder's settings and the switch that turns it on or off, so the two read as
+ * two controls (as in the phone's own settings).
+ */
+@Composable
+internal fun ReminderSwitchDivider() {
+    Box(Modifier.padding(end = 12.dp).width(1.dp).height(32.dp).background(CardBorder))
 }
 
 @Composable

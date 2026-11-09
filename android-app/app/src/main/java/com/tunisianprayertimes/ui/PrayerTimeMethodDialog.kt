@@ -576,7 +576,7 @@ private fun SunQuantity(
 /** Keep a time intact without squeezing its Arabic label on a narrow screen or with large text. */
 @Composable
 private fun ValueRow(label: String, value: String, valueStyle: TextStyle = LtrMonospace) {
-    val labelStyle = TextStyle(fontSize = 13.sp, color = PrayerSilencePalette.SecondaryText)
+    val labelStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp, color = PrayerSilencePalette.SecondaryText)
     val measurer = rememberTextMeasurer()
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val fits = with(LocalDensity.current) {
@@ -603,7 +603,7 @@ private fun ValueRow(label: String, value: String, valueStyle: TextStyle = LtrMo
  */
 @Composable
 private fun EventResult(name: String, step: InmEventStep) {
-    val nameStyle = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextDark)
+    val nameStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextDark)
     val valueStyle = LtrMonospace.copy(color = GreenPrimaryDark)
     val value = "${clock(step.exactMinutes)} → ${hhmm(step.shownMinutes)}"
     val measurer = rememberTextMeasurer()
@@ -657,7 +657,7 @@ private fun ResultTable(events: List<InmEventStep>, names: Map<InmEvent, String>
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val measurer = rememberTextMeasurer()
         val density = LocalDensity.current
-        val headerStyle = TextStyle(fontSize = 11.sp)
+        val headerStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 11.sp)
         // Wide enough for the longest value and its header, whatever the font scale.
         fun columnWidth(sample: String, style: TextStyle, title: String) = with(density) {
             maxOf(measurer.measure(sample, style).size.width, measurer.measure(title, headerStyle).size.width).toDp() + 12.dp
@@ -667,7 +667,7 @@ private fun ResultTable(events: List<InmEventStep>, names: Map<InmEvent, String>
         val exactWidth = columnWidth("00:00:00", LtrMonospace, exactTitle)
         val shownWidth = columnWidth("00:00", LtrMonospace.copy(fontWeight = FontWeight.Bold), shownTitle)
         val nameWidth = with(density) {
-            events.maxOf { measurer.measure(names.getValue(it.event), TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold)).size.width }.toDp()
+            events.maxOf { measurer.measure(names.getValue(it.event), TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp, fontWeight = FontWeight.Bold)).size.width }.toDp()
         }
         if (nameWidth + exactWidth + shownWidth <= maxWidth) {
             Column(Modifier.fillMaxWidth()) {
@@ -705,7 +705,7 @@ private fun TableRow(
     header: Boolean = false,
 ) {
     val size = if (header) 11.sp else 13.sp
-    val cellStyle = if (header) TextStyle(fontSize = size, color = TextMuted) else LtrMonospace.copy(color = TextDark)
+    val cellStyle = if (header) TextStyle(fontFamily = AppFontFamily, fontSize = size, color = TextMuted) else LtrMonospace.copy(color = TextDark)
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
             name,

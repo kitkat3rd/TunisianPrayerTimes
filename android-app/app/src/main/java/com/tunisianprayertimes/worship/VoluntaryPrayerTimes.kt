@@ -49,13 +49,15 @@ data class VoluntaryPrayerTimes(
     val date: LocalDate,
     val duha: VoluntaryPrayerWindow?,
     val night: NightPrayerWindow?,
+    /** The day [duha] belongs to: today, or tomorrow once today's period has ended. */
+    val duhaDate: LocalDate = date,
 )
 
 private const val DUHA_AFTER_SUNRISE_MINUTES = 20L
 private const val DUHA_BEFORE_TRANSIT_MINUTES = 20L
 
 /**
- * Today's approximate Duha planning period and the current/upcoming night, in the selected place's
+ * The approximate Duha planning period (today's, or tomorrow's once today's has ended) and the current/upcoming night, in the selected place's
  * time zone. Fixed margins are only a planning estimate: the sun's sufficient rise varies by place
  * and season. The UI must retain that qualification even for [VoluntaryPrayerStatus.ACTIVE].
  *
@@ -75,13 +77,12 @@ fun voluntaryPrayerTimes(
         dayFor(date)?.takeIf { it.date == date && it.zone == zone }
     }
 
-    val todayDay = day(today)
-    val duha = todayDay?.let { prayerDay ->
+    fun duhaOn(date: LocalDate): VoluntaryPrayerWindow? = day(date)?.let { prayerDay ->
         val sunriseEvent = prayerDay[TimeEvent.SUNRISE]
         val sunrise = sunriseEvent.at
-        val noon = solarNoonFor(today)
+        val noon = solarNoonFor(date)
         if (sunriseEvent.status != EventStatus.COMPUTED || sunrise == null || noon == null ||
-            sunrise.atZone(zone).toLocalDate() != today || noon.atZone(zone).toLocalDate() != today
+            sunrise.atZone(zone).toLocalDate() != date || noon.atZone(zone).toLocalDate() != date
         ) {
             null
         } else {
@@ -90,6 +91,11 @@ fun voluntaryPrayerTimes(
             if (start < end) VoluntaryPrayerWindow(start, end, isEstimated = true) else null
         }
     }
+    // Once today's period is over, the reader plans tomorrow's; today's stays when tomorrow's cannot be computed.
+    val todayDuha = duhaOn(today)
+    val tomorrowDuha = if (todayDuha != null && now >= todayDuha.end) duhaOn(today.plusDays(1)) else null
+    val duha = tomorrowDuha ?: todayDuha
+    val duhaDate = if (tomorrowDuha != null) today.plusDays(1) else today
 
     // Both Isha and Fajr can cross their prayer day's civil-date boundary. Compare adjacent nights
     // by actual instants, so a Fajr before midnight ends that night immediately.
@@ -123,7 +129,7 @@ fun voluntaryPrayerTimes(
     val night = current ?: upcoming?.takeUnless { next ->
         candidates.any { !it.ended && it.window == null && it.eveningDate <= next.eveningDate }
     }
-    return VoluntaryPrayerTimes(today, duha, night)
+    return VoluntaryPrayerTimes(today, duha, night, duhaDate)
 }
 
 private data class NightCandidate(

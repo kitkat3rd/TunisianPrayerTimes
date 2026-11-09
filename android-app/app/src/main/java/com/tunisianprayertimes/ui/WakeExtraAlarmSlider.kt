@@ -162,15 +162,18 @@ internal fun WakeExtraAlarmSlider(
     }
 
     val scaleLabelStyle = TextStyle(
+        fontFamily = AppFontFamily,
         fontSize = PrayerSilenceTypography.ScaleLabel,
         // Left-to-right so the signed value renders before the "د" unit: "+30 د".
         textDirection = TextDirection.Ltr,
     )
     val mainLabelStyle = TextStyle(
+        fontFamily = AppFontFamily,
         fontSize = PrayerSilenceTypography.AdhanLabel,
         fontWeight = FontWeight.SemiBold,
     )
     val valueLabelStyle = TextStyle(
+        fontFamily = AppFontFamily,
         fontSize = PrayerSilenceTypography.ValueLabel,
         fontWeight = FontWeight.SemiBold,
         textDirection = TextDirection.Rtl,

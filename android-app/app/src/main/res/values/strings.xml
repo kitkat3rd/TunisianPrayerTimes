@@ -326,8 +326,9 @@
     <string name="wake_summary_disabled_body">لا يوجد منبه استيقاظ مفعّل لهذا الموعد</string>
     <string name="wake_summary_fixed">وقت ثابت: %1$s</string>
     <string name="wake_summary_from_now">لمرة واحدة بعد %1$s</string>
-    <string name="wake_summary_relative_before">قبل %1$s بـ %2$s</string>
-    <string name="wake_summary_relative_after">بعد %1$s بـ %2$s</string>
+    <!-- %2$s carries its own «بـ»: «بساعة و30 دقيقة», «بـ 20 دقيقة». -->
+    <string name="wake_summary_relative_before">قبل %1$s %2$s</string>
+    <string name="wake_summary_relative_after">بعد %1$s %2$s</string>
     <string name="wake_summary_with_days">%1$s • %2$s</string>
     <string name="wake_alarm_feature_wake_check">تحدي</string>
     <string name="wake_alarm_feature_vibration">اهتزاز</string>
@@ -376,6 +377,18 @@
     <string name="wake_editor_relative_label">الدقائق</string>
     <string name="wake_editor_relative_unit_minute">دقيقة</string>
     <string name="wake_editor_relative_hint">اختر ما إذا كان المنبه قبل الصلاة أو بعدها، ثم أدخل عدد الدقائق.</string>
+    <!-- %1$s: the prayer, «الفجر». -->
+    <string name="wake_editor_offset_side_before">قبل %1$s</string>
+    <string name="wake_editor_offset_side_at">عند %1$s</string>
+    <string name="wake_editor_offset_side_after">بعد %1$s</string>
+    <string name="wake_editor_offset_unit_hour">ساعة</string>
+    <string name="wake_editor_offset_unit_minute">دقيقة</string>
+    <string name="wake_editor_offset_hours_label">الساعات</string>
+    <string name="wake_editor_offset_minutes_label">الدقائق</string>
+    <string name="wake_editor_offset_preset_hour">ساعة</string>
+    <string name="wake_editor_offset_preset_hour_desc">ساعة واحدة</string>
+    <!-- «يرن الساعة 04:10 • الفجر 05:30» -->
+    <string name="wake_editor_offset_result">يرن الساعة %1$s • %2$s %3$s</string>
     <string name="wake_editor_from_now_title">مؤقت لمرة واحدة</string>
     <string name="wake_editor_from_now_hint">أدخل المدة بالساعات والدقائق. سيرنّ المنبه مرة واحدة بعد انقضائها.</string>
 
@@ -433,7 +446,12 @@
     <string name="wake_alarm_stop_short">إيقاف</string>
     <string name="wake_alarm_undo_skip_next_short">إلغاء التخطي</string>
     <string name="wake_editor_progressive_volume_title">رفع الصوت تدريجيًا</string>
-    <string name="wake_editor_progressive_volume_subtitle">يبدأ المنبه بصوت منخفض ثم يرتفع خلال أول 30 ثانية.</string>
+    <string name="wake_editor_progressive_volume_subtitle">يبدأ الصوت منخفضًا، ثم يرتفع درجة واحدة بعد كل مدة تحددها.</string>
+    <string name="wake_editor_initial_vibration_title">اهتزاز قبل الصوت</string>
+    <string name="wake_editor_initial_vibration_subtitle">يبدأ المنبه بالاهتزاز وحده، ثم تبدأ النغمة بعد المدة المحددة.</string>
+    <string name="wake_editor_volume_step_interval_title">المدة بين زيادات الصوت</string>
+    <string name="wake_editor_no_initial_vibration">بدون</string>
+    <string name="wake_editor_seconds_short">%1$d ث</string>
     <string name="wake_editor_preview_title">الموعد القادم</string>
     <string name="wake_editor_preview_unavailable">تعذر حساب الموعد القادم لهذه الصلاة حاليًا.</string>
     <string name="wake_editor_extra_section_title">تنبيهات قبل وبعد المنبه</string>
@@ -479,8 +497,9 @@
     <string name="wake_editor_hero_date_today">اليوم، %1$s</string>
     <string name="wake_editor_hero_date_tomorrow">غدًا، %1$s</string>
     <string name="wake_editor_hero_rule_prayer_at">عند %1$s</string>
-    <string name="wake_editor_hero_rule_prayer_before">قبل %1$s بـ %2$s</string>
-    <string name="wake_editor_hero_rule_prayer_after">بعد %1$s بـ %2$s</string>
+    <!-- %2$s carries its own «بـ», as in wake_summary_relative_before. -->
+    <string name="wake_editor_hero_rule_prayer_before">قبل %1$s %2$s</string>
+    <string name="wake_editor_hero_rule_prayer_after">بعد %1$s %2$s</string>
     <string name="wake_editor_hero_rule_with_repeat">%1$s • %2$s</string>
     <string name="wake_alarm_row_next_at">التالي: %1$s</string>
     <string name="wake_alarm_row_next_extra">التالي %1$s: تنبيه إضافي %2$s</string>

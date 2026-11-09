@@ -64,6 +64,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.adhkar.*
+import com.tunisianprayertimes.mosque.DisplayTexts
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -218,13 +219,12 @@ import kotlin.math.sign
                         DhikrIcon(R.drawable.ic_adhkar_back, "العودة", modifier = Modifier.size(22.dp))
                     }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(entry.title, Modifier.semantics { heading() },
+                        Text(readerTitle(entry), Modifier.semantics { heading() },
                             fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                             color = AdhkarHeading, maxLines = 1)
-                        Text(when {
-                            session.category != null -> collectionTitle(session.category)
-                            else -> "قراءة مستقلة"
-                        }, color = p.muted, fontSize = 12.sp)
+                        session.category?.let { category ->
+                            Text(collectionTitle(category), color = p.muted, fontSize = 12.sp)
+                        }
                     }
                     Box {
                         IconButton(onClick = { menu = true }, modifier = Modifier.testTag("adhkar_reader_menu")) {
@@ -312,8 +312,8 @@ import kotlin.math.sign
                         },
                         onDragStopped = { velocity -> settleSwipe(velocity) })
                     .testTag("adhkar_reader_body")) {
-                    // Position belongs to the reading, not to the way it was opened.
-                    Surface(shape = RoundedCornerShape(50), color = AdhkarSoftGreen,
+                    // Position belongs to the reading, not to the way it was opened; a lone dhikr has none.
+                    if (session.itemIds.size > 1) Surface(shape = RoundedCornerShape(50), color = AdhkarSoftGreen,
                         modifier = Modifier.align(Alignment.CenterHorizontally)) {
                         Text("الذكر " + latinNumber(currentIndex + 1) + " من " + latinNumber(session.itemIds.size),
                             Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = p.muted, fontSize = 12.sp)
@@ -511,7 +511,11 @@ private fun DhikrPage(
         // A Qur'an passage is typed as the mushaf prints it.
         val mushaf = if (entry.custom) null else MushafPassages.text(entry.id)
         if (entry.steps.isEmpty() && mushaf != null) {
-            MushafPassage(mushaf, entry.text, textSize.sp, (textSize * 1.9f).sp, p.forest,
+            // An opening for this reading, not part of the numbered Ayat al-Kursi passage.
+            val opening = DisplayTexts.BASMALA.takeIf { entry.id == "ayat_kursi" }
+            MushafPassage(opening?.let { it.mushafText + "\n" + mushaf } ?: mushaf,
+                opening?.let { it.text + "\n" + entry.text } ?: entry.text,
+                textSize.sp, (textSize * 1.9f).sp, p.forest,
                 Modifier.fillMaxWidth().then(activate).testTag("adhkar_reader_text"))
         } else if (entry.steps.isEmpty()) {
             Text(entry.text, fontFamily = AdhkarReadingFont, fontSize = textSize.sp,
@@ -638,6 +642,10 @@ private fun DhikrSourceDetails(entry: DhikrEntry, countDescription: String) {
             color = p.muted, fontSize = 12.sp, lineHeight = 23.sp)
     }
 }
+
+/** The reader's heading; the daily tahlil carries the same name as its reminder. */
+internal fun readerTitle(entry: DhikrEntry): String =
+    if (entry.id == TAHLIL_DAILY_ID) "لا إله إلا الله" else entry.title
 
 /** The daily tahlil read a hundred times cites the hundred-times hadith rather than the ten-times one. */
 private fun readerSourceEntry(entry: DhikrEntry, target: Int): DhikrEntry =

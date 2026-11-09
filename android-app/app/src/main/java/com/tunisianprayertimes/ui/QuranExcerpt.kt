@@ -75,6 +75,7 @@ internal val LocalQuranExposure = staticCompositionLocalOf<(Set<QuranVerseRefere
 /**
  * A band of one mushaf page, from [top] to [bottom] of the scan (0 at its top, 1 at its foot), as wide as the page.
  * [marked] stands out in the points' violet, [muted] is outlined in grey, [covered] is hidden under the «مراجعة» colour.
+ * [context] is the other, earlier verses visible in this band, counted as seen when the image is shown.
  */
 @Immutable
 internal data class QuranExcerpt(
@@ -84,6 +85,7 @@ internal data class QuranExcerpt(
     val marked: List<QuranHighlightRect> = emptyList(),
     val muted: List<QuranHighlightRect> = emptyList(),
     val covered: List<QuranHighlightRect> = emptyList(),
+    val context: Set<QuranVerseReference> = emptySet(),
 )
 
 /** How the verse of an excerpt stands out: the point's own verse, or the one it is confused with. */
@@ -104,9 +106,9 @@ internal fun quranExcerptVerses(verse: QuranVerseReference, linesBefore: Int = 0
 /**
  * The mushaf around [verse], as bands of its page or pages: the verse's lines and the last [linesBefore] lines of the
  * verse before it. A band holds every line between the first and the last it shows, and the verse before may be on
- * another page, with a band of its own. Any other verse on those lines
- * is covered: an excerpt shows the verses it names ([quranExcerptVerses]), never a neighbour's opening or ending, which
- * may be another point's answer.
+ * another page, with a band of its own. Ordinarily other verses on those lines are covered. A review question can show
+ * earlier verses too ([showPrevious]), as the page does, except other answers still protected by [protectedVerses].
+ * The named cue remains visible even if it is protected: the review already counts it as seen.
  * [cover]: the verse and whatever follows it on those lines are hidden, for a question.
  */
 internal fun quranExcerpts(
@@ -116,6 +118,8 @@ internal fun quranExcerpts(
     linesBefore: Int = 0,
     mark: QuranExcerptMark = QuranExcerptMark.Point,
     cover: Boolean = false,
+    showPrevious: Boolean = false,
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
 ): List<QuranExcerpt> {
     fun lines(of: QuranVerseReference): List<Pair<Int, QuranHighlightRect>> = catalog.pagesForVerse(of.surah, of.ayah)
         .flatMap { page -> highlights.rectangles(page, of.surah, of.ayah).sortedBy { it.top }.map { page to it } }
@@ -131,14 +135,22 @@ internal fun quranExcerpts(
         // No pad below: the pad above is for the first line's marks; below, it would only let in the next line's.
         val bottom = shown.maxOf { it.bottom }
         val ownHere = own.filter { it.first == page }.map { it.second }
+        val pageVerses = catalog.versesOnPage(page).filter { it.ayah > 0 }
+        fun previous(ref: QuranVerseReference) = showPrevious && ref < verse && ref !in protectedVerses
+        val context = pageVerses.filter { it.reference !in named && previous(it.reference) }.filter { v ->
+            highlights.rectangles(page, v.surah, v.ayah).any { it.bottom > top && it.top < bottom }
+        }.map { it.reference }.toSet()
         // Each cover reaches halfway into the gaps around its line, as on the page: no seam between covered lines.
-        val covered = highlights.covers(page, catalog.versesOnPage(page).filter { it.ayah > 0 && (it.reference !in named || (cover && it.reference >= verse)) }
-            .flatMap { highlights.rectangles(page, it.surah, it.ayah) }).filter { it.bottom > top && it.top < bottom }
+        val covered = highlights.covers(page, pageVerses.filter { v ->
+            val namedAndVisible = v.reference in named && (!cover || v.reference < verse)
+            !namedAndVisible && !previous(v.reference)
+        }.flatMap { highlights.rectangles(page, it.surah, it.ayah) }).filter { it.bottom > top && it.top < bottom }
         QuranExcerpt(
             page, top, bottom,
             marked = ownHere.takeIf { mark == QuranExcerptMark.Point }.orEmpty(),
             muted = ownHere.takeIf { mark == QuranExcerptMark.Other }.orEmpty(),
             covered = covered,
+            context = context,
         )
     }
 }
@@ -162,8 +174,8 @@ private sealed interface QuranBand {
     data class Ready(val image: ImageBitmap) : QuranBand
 }
 
-/** A line of the enlarged excerpt's text view: words of the interface, or already converted mushaf text with scan signs. */
-internal data class QuranExcerptLine(val text: String, val verse: Boolean = false)
+/** A line of the enlarged excerpt's text view; [exposure] is an additional verse shown in the surrounding context. */
+internal data class QuranExcerptLine(val text: String, val verse: Boolean = false, val exposure: QuranVerseReference? = null)
 
 /**
  * [excerpts] as they look in the mushaf, one band under the other, each with where it sits on its page. [fallback]
@@ -221,6 +233,7 @@ private fun QuranExcerptViewer(
     var missing by remember { mutableStateOf(false) }
     val vertical = rememberScrollState()
     val horizontal = rememberScrollState()
+    val onExposure by rememberUpdatedState(LocalQuranExposure.current)
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().safeDrawingPadding().testTag("quran_excerpt_viewer"), color = BgCream) {
             Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -250,10 +263,19 @@ private fun QuranExcerptViewer(
                     ) {
                         // As large as the zoom asks, but no larger than its longest word allows: a word is never split.
                         lines.forEach { line ->
-                            if (line.verse) Text(
-                                line.text, fontFamily = QuranMushafFont,
-                                fontSize = (21f * zoom).sp, lineHeight = 1.81.em, color = TextDark, autoSize = WholeWords((21f * zoom).sp, floor = 21.sp),
-                            )
+                            if (line.verse) {
+                                var visible by remember(line) { mutableStateOf(false) }
+                                LaunchedEffect(visible, line.exposure) {
+                                    if (visible) line.exposure?.let { onExposure(setOf(it)) }
+                                }
+                                Text(
+                                    line.text, Modifier.onGloballyPositioned { coordinates ->
+                                        val bounds = coordinates.boundsInWindow()
+                                        visible = bounds.width > 0f && bounds.height > 0f
+                                    }, fontFamily = QuranMushafFont,
+                                    fontSize = (21f * zoom).sp, lineHeight = 1.81.em, color = TextDark, autoSize = WholeWords((21f * zoom).sp, floor = 21.sp),
+                                )
+                            }
                             else Text(line.text, fontSize = (15f * zoom).sp, lineHeight = 1.6.em, color = TextMuted, autoSize = WholeWords((15f * zoom).sp, floor = 15.sp))
                         }
                     }
@@ -282,6 +304,8 @@ internal fun QuranVerseExcerpt(
     linesBefore: Int = 0,
     mark: QuranExcerptMark = QuranExcerptMark.Point,
     cover: Boolean = false,
+    showPrevious: Boolean = false,
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
     fallback: (@Composable () -> Unit)? = null,
 ) {
     val highlights = LocalQuranHighlights.current
@@ -294,15 +318,22 @@ internal fun QuranVerseExcerpt(
     LaunchedEffect(visible, exposed) {
         if (visible && exposed.isNotEmpty()) onExposure(exposed)
     }
-    val excerpts = remember(highlights, catalog, verse, linesBefore, mark, cover) {
-        highlights?.let { quranExcerpts(it, catalog, verse, linesBefore, mark, cover) }.orEmpty()
+    val excerpts = remember(highlights, catalog, verse, linesBefore, mark, cover, showPrevious, protectedVerses) {
+        highlights?.let { quranExcerpts(it, catalog, verse, linesBefore, mark, cover, showPrevious, protectedVerses) }.orEmpty()
     }
+    val context = remember(excerpts) { excerpts.flatMap { it.context }.distinct().sorted() }
     // The scan is the visible verse; its accessible description carries the same words.
     // A covered question must not disclose its answer to TalkBack or when a page is missing.
     // The enlarged text view shows the same, each label in the interface's font and each verse in the mushaf's.
-    val lines = remember(catalog, verse, description, linesBefore, cover) {
+    val lines = remember(catalog, verse, description, linesBefore, cover, context) {
         buildList {
             add(QuranExcerptLine(description))
+            context.forEach { ref ->
+                catalog.verse(ref)?.mushafText?.let {
+                    add(QuranExcerptLine(hifzVerseAbout(catalog, ref)))
+                    add(QuranExcerptLine(it, verse = true, exposure = ref))
+                }
+            }
             if (linesBefore > 0 && verse.ayah > 1) {
                 catalog.verse(QuranVerseReference(verse.surah, verse.ayah - 1))?.mushafText?.let {
                     add(QuranExcerptLine("الآية السابقة"))
@@ -372,12 +403,23 @@ private fun QuranBandView(catalog: QuranCatalog, excerpt: QuranExcerpt, descript
                 }
             }
             when (val shown = band) {
-                is QuranBand.Ready -> Box(
-                    Modifier.fillMaxWidth().aspectRatio(shown.image.width / shown.image.height.toFloat())
-                        .clip(RoundedCornerShape(10.dp)).background(Color.White).border(1.dp, CardBorder, RoundedCornerShape(10.dp)),
-                ) {
-                    Image(shown.image, description, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
-                    QuranBandMarks(excerpt)
+                is QuranBand.Ready -> {
+                    val onExposure by rememberUpdatedState(LocalQuranExposure.current)
+                    var visible by remember(excerpt) { mutableStateOf(false) }
+                    LaunchedEffect(visible, excerpt.context) {
+                        if (visible && excerpt.context.isNotEmpty()) onExposure(excerpt.context)
+                    }
+                    Box(
+                        Modifier.fillMaxWidth().aspectRatio(shown.image.width / shown.image.height.toFloat())
+                            .clip(RoundedCornerShape(10.dp)).background(Color.White).border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                            .onGloballyPositioned { coordinates ->
+                                val bounds = coordinates.boundsInWindow()
+                                visible = bounds.width > 0f && bounds.height > 0f
+                            }.testTag("quran_excerpt_band"),
+                    ) {
+                        Image(shown.image, description, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                        QuranBandMarks(excerpt)
+                    }
                 }
                 // Room for the band while it is read, as tall as a scan's band of that height: nothing jumps once it shows.
                 QuranBand.Reading -> Box(

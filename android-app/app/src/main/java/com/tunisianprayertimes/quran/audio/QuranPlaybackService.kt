@@ -1856,6 +1856,7 @@ class QuranPlaybackService : Service() {
     override fun onDestroy() {
         hifzSessions.notePlayback(QuranAudioController.state.value, force = true)
         autoReview.detach()
+        hifzSessions.persistAsync()
         if (hifzSessions.carAudio === autoReview) hifzSessions.carAudio = null
         if (!explicitStop) {
             if (prepared && !seeking) refreshPosition()

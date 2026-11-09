@@ -96,7 +96,7 @@ internal class QuranAutoReview(
         request?.cancel(); preparing = false
         player.pause()
         sessions.notePlayback(QuranAudioController.state.value, force = true)
-        scope.launch { runCatching { sessions.persist() }.onFailure { sessions.audioError(context.getString(R.string.quran_auto_review_failed)) } }
+        sessions.persistAsync()
         player.refresh()
     }
 
@@ -116,7 +116,8 @@ internal class QuranAutoReview(
     }
 
     fun detach() {
-        if (active) { stop(); sessions.leaveCar() }
+        // A phone review shares the session, but is not owned by this car adapter.
+        if (sessions.carActive) { stop(); sessions.leaveCar() }
         selected = false
     }
 

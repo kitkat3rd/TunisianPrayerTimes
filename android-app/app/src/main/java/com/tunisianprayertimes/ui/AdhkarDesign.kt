@@ -44,8 +44,7 @@ internal val AdhkarReadingFont = FontFamily(Font(R.font.noto_naskh_arabic))
  * verse frame.
  */
 internal val QuranMushafFont = FontFamily(Font(R.font.mushaf_qaloun))
-private val AdhkarUiFont = FontFamily(Font(R.font.noto_sans_arabic), Font(R.font.noto_sans_arabic_semibold, FontWeight.SemiBold))
-private fun TextStyle.adhkarUi() = copy(fontFamily = AdhkarUiFont,
+private fun TextStyle.adhkarUi() = copy(fontFamily = AppFontFamily,
     lineHeight = 1.5.em,
     lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
     platformStyle = PlatformTextStyle(includeFontPadding = false))

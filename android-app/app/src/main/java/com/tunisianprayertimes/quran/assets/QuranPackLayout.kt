@@ -26,8 +26,8 @@ data class QuranPack(
     val files: List<QuranPackFile>,
 ) {
     /**
-     * Pages: the page scans. Book: the mushaf in the print's own type (quran/book: its fonts, plates and page layouts),
-     * with the scans of the pages it does not set (the appendix). Audio: a recitation's chapters.
+     * Pages: the page scans. Book: the mushaf in the print's own type (quran/book: its fonts, plates and page layouts).
+     * Either holds the Quran's pages alone, no appendix. Audio: a recitation's chapters.
      */
     enum class Kind { Pages, Book, Audio }
 
@@ -120,7 +120,7 @@ class QuranPackLayout(
                 require((pack.kind == QuranPack.Kind.Audio) == (pack.reciterId != null && pack.surahs != null)) {
                     "Quran pack ${pack.name} does not say which recitation it holds"
                 }
-                require(pack.kind != QuranPack.Kind.Book || pack.files.all { it.path.startsWith("quran/book/") || it.path.startsWith("quran/pages/") }) {
+                require(pack.kind != QuranPack.Kind.Book || pack.files.all { it.path.startsWith("quran/book/") }) {
                     "Quran pack ${pack.name} holds files that are not the book's"
                 }
             }

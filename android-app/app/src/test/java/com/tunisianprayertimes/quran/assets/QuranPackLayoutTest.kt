@@ -57,12 +57,12 @@ class QuranPackLayoutTest {
     }
 
     @Test
-    fun theBookCarriesItsTypeAndTheScansItDoesNotSet() {
-        val files = listOf("quran/book/plates.json", "quran/book/book_0.otf", "quran/book/pages/page_001.bin", "quran/pages/604.webp")
+    fun theBookCarriesItsType() {
+        val files = listOf("quran/book/plates.json", "quran/book/book_0.otf", "quran/book/pages/page_001.bin")
         val layout = QuranPackLayout.parse(layout(pack("quran_book", "book", files), pack("quran_hosary_01", "audio", listOf("quran/audio/hosary/001.mp3"), 1..1)))
         assertEquals("quran_book", layout.book?.name)
         assertNull(layout.pages)
-        assertEquals("quran_book", layout.packOf("quran/pages/604.webp")?.name)
+        assertEquals("quran_book", layout.packOf("quran/book/pages/page_001.bin")?.name)
         assertEquals(listOf("quran_book", "quran_hosary_01"), layout.playPacks().packs.map { it.name })
     }
 
@@ -75,7 +75,9 @@ class QuranPackLayoutTest {
         val plainHttpsless = layout(pack("quran_pages", "pages", listOf("quran/pages/1.webp")), cdn = "file:///sdcard/")
         val bookWithChapters = layout(pack("quran_book", "book", listOf("quran/book/plates.json"), 1..1))
         val bookWithRecordings = layout(pack("quran_book", "book", listOf("quran/book/plates.json", "quran/audio/hosary/001.mp3")))
-        for (json in listOf(traversal, foreignKey, audioWithoutChapters, duplicate, plainHttpsless, bookWithChapters, bookWithRecordings)) {
+        // The book holds the Quran's pages alone: no scans of an appendix beside it.
+        val bookWithScans = layout(pack("quran_book", "book", listOf("quran/book/plates.json", "quran/pages/page_604.webp")))
+        for (json in listOf(traversal, foreignKey, audioWithoutChapters, duplicate, plainHttpsless, bookWithChapters, bookWithRecordings, bookWithScans)) {
             assertThrows(IllegalArgumentException::class.java) { QuranPackLayout.parse(json) }
         }
     }
@@ -101,7 +103,7 @@ class QuranPackLayoutTest {
             assertEquals("A reciter comes from one place", 1, audio.map { it.delivery }.distinct().size)
             if (audio.first().delivery == QuranPack.Delivery.Play) assertTrue(audio.size <= 9)
         }
-        // The reader's pages: the page scans, or the book with the scans of the pages it does not set.
+        // The reader's pages: the page scans, or the book setting every one of them.
         val scans = pages.getJSONArray("pages")
         val scanPaths = List(scans.length()) { "quran/pages/" + scans.getJSONObject(it).getString("file") }
         val reader = requireNotNull(layout.book ?: layout.pages)
@@ -114,7 +116,7 @@ class QuranPackLayoutTest {
             val layouts = book.files.map { it.path }.filter { it.startsWith("quran/book/pages/") }
             assertEquals(List(layouts.size) { "quran/book/pages/page_%03d.bin".format(it + 1) }, layouts.sorted())
             assertTrue("quran/book/plates.json" in book.files.map { it.path })
-            assertEquals(scanPaths.drop(layouts.size).sorted(), book.files.map { it.path }.filter { it.startsWith("quran/pages/") }.sorted())
+            assertEquals("The book sets every page the reader has", scanPaths.size, layouts.size)
         }
 
         val fromPlay = layout.playPacks().packs

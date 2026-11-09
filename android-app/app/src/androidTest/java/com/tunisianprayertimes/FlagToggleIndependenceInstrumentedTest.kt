@@ -11,6 +11,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso.pressBack
 import com.tunisianprayertimes.ui.TestTags
 import org.junit.Rule
 import org.junit.Test
@@ -57,12 +58,34 @@ class FlagToggleIndependenceInstrumentedTest {
         performSemanticsAction(SemanticsActions.OnClick)
     }
 
-    /** All three flags live in the settings sheet beside the location header. */
+    /** All three automatic-silence preferences are available in Settings. */
     private fun openPrayerTabSettings() {
         composeRule.onNodeWithTag(TestTags.PRAYER_TAB_SETTINGS_BUTTON)
             .performScrollTo()
             .performClick()
         composeRule.waitForIdle()
+    }
+
+    @Test
+    fun autoSilenceSetting_persistsAfterRecreation() {
+        val ctx = composeRule.activity
+        openPrayerTabSettings()
+        val autoSilenceSwitch = composeRule.onNodeWithTag(TestTags.AUTO_SILENCE_SWITCH)
+        autoSilenceSwitch.performScrollTo().assertIsOn()
+        autoSilenceSwitch.performToggle()
+        composeRule.waitForIdle()
+        autoSilenceSwitch.assertIsOff()
+        assert(!PrefsManager.isEnabled(ctx))
+        assert(PrefsManager.isCallEndVibrationEnabled(ctx))
+        assert(PrefsManager.isAutoLocationUpdateEnabled(ctx))
+
+        composeRule.onNodeWithTag(TestTags.AUTO_SILENCE_SWITCH)
+            .performScrollTo().assertIsOff()
+        pressBack()
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitForIdle()
+        openPrayerTabSettings()
+        composeRule.onNodeWithTag(TestTags.AUTO_SILENCE_SWITCH).performScrollTo().assertIsOff()
     }
 
     @Test

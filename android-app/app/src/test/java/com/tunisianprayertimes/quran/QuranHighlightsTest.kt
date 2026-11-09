@@ -41,8 +41,8 @@ class QuranHighlightsTest {
         assertNull(highlights.verseAt(7, .97f, .130f))
         assertNull(highlights.verseAt(7, .50f, .50f))
         assertNull(highlights.verseAt(7, .50f, .05f))
-        // Appendix pages carry no verse geometry.
-        assertNull(highlights.verseAt(610, .50f, .130f))
+        // A page past the mushaf's last carries no verse geometry.
+        assertNull(highlights.verseAt(604, .50f, .130f))
     }
 
     @Test

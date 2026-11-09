@@ -59,6 +59,9 @@ object ScheduleRefreshCoordinator {
             // «ذكر الموت» keeps out of prayer times: it moves with them too.
             runCatching { com.tunisianprayertimes.remembrance.DeathReminder.refresh(appContext) }
                 .onFailure { Log.w("ScheduleRefresh", "Could not restore the remembrance reminder", it) }
+            // The adhans come at the prayer times, whether or not the silence is on.
+            runCatching { com.tunisianprayertimes.adhan.AdhanScheduler.refresh(appContext) }
+                .onFailure { Log.w("ScheduleRefresh", "Could not restore the adhans", it) }
         }
 
         if (!PrefsManager.isEnabled(appContext)) {

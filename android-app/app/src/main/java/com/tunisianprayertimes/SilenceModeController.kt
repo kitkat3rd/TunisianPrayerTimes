@@ -27,6 +27,16 @@ object SilenceModeController {
     internal var isAutoSilencePausedForAwakeCheck = false
         private set
 
+    /**
+     * Until when a playing adhan holds back the prayer silence (epoch ms, 0 when none). The adhan calls to a prayer
+     * that has not begun: a silence starting with it starts once it ends ([releaseAdhanHold]). The time bounds the
+     * hold should the player never release it.
+     */
+    @Volatile
+    private var adhanHoldUntilMillis = 0L
+
+    internal fun isHeldForAdhan(nowMillis: Long = System.currentTimeMillis()): Boolean = adhanHoldUntilMillis > nowMillis
+
     /** Adhkar nudges are deferred while DND is active; deliver them once it is lifted. */
     private fun refreshDhikrReminders(context: Context) {
         val app = context.applicationContext
@@ -74,6 +84,8 @@ object SilenceModeController {
             MosqueSilenceMonitor.reconcile(context)
             return SilenceCoordinator.autoActive(context)
         }
+        // An adhan is playing: the prayer's silence starts when it ends. Presence at a mosque (above) never waits.
+        if (isHeldForAdhan()) return true
         if (MosqueSilenceSettings.usesOwnedRules(context)) return SilenceCoordinator.enableTime(context)
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!notificationManager.isNotificationPolicyAccessGranted) return false
@@ -175,6 +187,38 @@ object SilenceModeController {
             MosqueSilenceMonitor.reconcile(context)
             return
         }
+        val window = SilenceScheduler.planner(context).containing(SilenceScheduler.now())
+            .firstOrNull { !SilenceScheduler.isDismissed(context, it.prayer, it.prayerDay) }
+        if (window != null) enableAutoSilence(context, window.prayer)
+    }
+
+    /**
+     * An adhan starts playing until [untilMillis]. The prayer silence waits for it; if this prayer's own silence,
+     * begun with its adhan, is already on, the adhan borrows it as the awake check does, without dismissing the
+     * prayer occurrence. Presence silence at a mosque is never held. True when a silence was lifted.
+     */
+    @Synchronized
+    internal fun holdAutoSilenceForAdhan(context: Context, untilMillis: Long): Boolean {
+        adhanHoldUntilMillis = untilMillis
+        if (MosqueSilenceSettings.combined(context)) return false
+        if (!PrefsManager.isAutoSilenceActive(context) || PrefsManager.isManualSilenceActive(context)) return false
+        return if (MosqueSilenceSettings.usesOwnedRules(context)) {
+            SilenceCoordinator.pauseAutoForAwakeCheck(context)
+        } else {
+            disableAutoSilence(context)
+        }
+    }
+
+    /**
+     * The adhan has ended: the silence of a window that contains now comes on. [force] re-applies it even without a
+     * hold in this process (the safety alarm after the player's process died).
+     */
+    @Synchronized
+    internal fun releaseAdhanHold(context: Context, force: Boolean = false) {
+        if (adhanHoldUntilMillis == 0L && !force) return
+        adhanHoldUntilMillis = 0L
+        if (!PrefsManager.isEnabled(context) || isAutoSilencePausedForAwakeCheck) return
+        if (MosqueSilenceSettings.combined(context)) return
         val window = SilenceScheduler.planner(context).containing(SilenceScheduler.now())
             .firstOrNull { !SilenceScheduler.isDismissed(context, it.prayer, it.prayerDay) }
         if (window != null) enableAutoSilence(context, window.prayer)

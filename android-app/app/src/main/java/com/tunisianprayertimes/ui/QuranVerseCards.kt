@@ -191,7 +191,7 @@ internal fun QuranSurahCard(
 }
 
 /** The actions' labels, as drawn and as measured. */
-private val CardActionLabelStyle = TextStyle(fontSize = 12.sp)
+private val CardActionLabelStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 12.sp)
 
 /** Every label a verse card's action may show, to measure the widest. */
 private val CardActionLabels = listOf("استمع", "كرّر", "أخطأت", "انسخ", "شارك")

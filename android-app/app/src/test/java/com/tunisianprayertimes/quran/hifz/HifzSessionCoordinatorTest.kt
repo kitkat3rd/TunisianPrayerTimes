@@ -63,6 +63,17 @@ class HifzSessionCoordinatorTest {
         return coordinator
     }
 
+    private fun adapter(coordinator: HifzSessionCoordinator, scope: CoroutineScope) =
+        QuranAutoReview(context, coordinator, scope, object : QuranAutoReview.Player {
+            override fun foreground() = Unit
+            override fun idle() = Unit
+            override fun pause() = Unit
+            override fun resume() = Unit
+            override fun play(list: QuranPlaylist, reciter: String, index: Int, round: Int, position: Long?, surah: Int?) = Unit
+            override fun restore(place: String?) = Unit
+            override fun refresh() = Unit
+        })
+
     private fun settle() { shadowOf(Looper.getMainLooper()).idleFor(500, TimeUnit.MILLISECONDS) }
     private fun reveal(coordinator: HifzSessionCoordinator) {
         settle()
@@ -106,6 +117,117 @@ class HifzSessionCoordinatorTest {
         assertEquals(first, HifzRepository.points.value.single())
         assertEquals(0, coordinator.view().tally.graded)
         assertEquals(HifzSessionPhase.Question, coordinator.view().phase)
+    }
+
+    @Test fun pausingAudioSavesTheLatestPositionEvenAfterThePlaybackScopeIsCancelled() {
+        install(point())
+        val dispatcher = StandardTestDispatcher()
+        val coordinator = coordinator(CoroutineScope(SupervisorJob() + dispatcher))
+        assertTrue(coordinator.startDaily())
+        coordinator.cue()
+        val list = played.single()
+        QuranAudioController.publish(QuranPlaybackState(surah = 67, playlist = list, positionMs = 12_345L))
+        val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            adapter(coordinator, playbackScope).pauseAudio()
+            playbackScope.cancel()
+            await { playbackScope.coroutineContext[Job]!!.isCompleted }
+            assertNull(coordinator.error)
+            await {
+                dispatcher.scheduler.runCurrent()
+                context.getSharedPreferences("hifz_shared_session", Context.MODE_PRIVATE).getString("session", null)
+                    ?.let { JSONObject(it).optLong("position") == 12_345L } == true
+            }
+            coordinator.dispose()
+            val recovered = coordinator()
+            assertEquals(12_345L, recovered.savedClipPosition())
+            assertEquals(list.requestId, recovered.resumableClip()!!.first.requestId)
+            assertEquals(1L, recovered.view().point!!.id)
+            assertEquals(0, recovered.view().tally.graded)
+            assertNull(recovered.error)
+        } finally { playbackScope.cancel() }
+    }
+
+    @Test fun detachingTheCarAdapterDoesNotPauseAnActivePhoneReview() {
+        install(point())
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        coordinator.usePhone()
+        coordinator.cue()
+        val question = coordinator.view().token
+        val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            adapter(coordinator, playbackScope).detach()
+            assertTrue(coordinator.active)
+            assertFalse(coordinator.carActive)
+            assertTrue(coordinator.reviewAudio.value)
+            assertEquals(question, coordinator.view().token)
+            assertNull(coordinator.error)
+        } finally { playbackScope.cancel() }
+    }
+
+    @Test fun detachingAfterACarToPhoneHandoffDoesNotPauseThePhoneReview() {
+        install(point(ayah = 1))
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val adapter = adapter(coordinator, playbackScope)
+        try {
+            adapter.onPlay()
+            assertTrue(coordinator.carActive)
+            coordinator.usePhone()
+            adapter.detach()
+            assertTrue(coordinator.active)
+            assertFalse(coordinator.carActive)
+            assertNull(coordinator.error)
+        } finally { playbackScope.cancel() }
+    }
+
+    @Test fun cancellingACoordinatorSaveDoesNotReportAStorageFailure() {
+        install(point())
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        val save = coordinator.persistAsync()
+        save.cancel()
+        await { save.isCompleted }
+        assertTrue(save.isCancelled)
+        assertNull(coordinator.error)
+    }
+
+    @Test fun detachingACarReviewKeepsItsAnswerAndPlaybackPositionWithoutAnError() {
+        install(point())
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        reveal(coordinator)
+        coordinator.assess(HifzGrade.Again)
+        await { !coordinator.savingAnswer && coordinator.view().tally.again == 1 }
+        settle()
+        coordinator.drill()
+        val list = played.single()
+        QuranAudioController.publish(QuranPlaybackState(surah = 67, playlist = list, positionMs = 23_456L))
+        val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val adapter = adapter(coordinator, playbackScope)
+        coordinator.carAudio = adapter
+        coordinator.useCar()
+        try {
+            adapter.detach()
+            playbackScope.cancel()
+            await { playbackScope.coroutineContext[Job]!!.isCompleted }
+            assertTrue(coordinator.paused)
+            assertFalse(coordinator.carActive)
+            assertNull(coordinator.error)
+            await {
+                context.getSharedPreferences("hifz_shared_session", Context.MODE_PRIVATE).getString("session", null)
+                    ?.let { JSONObject(it).optLong("position") == 23_456L } == true
+            }
+            coordinator.dispose()
+            val recovered = coordinator()
+            assertEquals(23_456L, recovered.savedClipPosition())
+            assertEquals(HifzSessionPhase.Training, recovered.view().phase)
+            assertEquals(1, recovered.view().tally.again)
+            assertEquals(1, HifzRepository.points.value.single().checks.size)
+            assertNull(recovered.error)
+        } finally { playbackScope.cancel() }
     }
 
     @Test fun carRevealDoesNotRecordAnAnswerThatHasNotActuallyBeenHeard() {

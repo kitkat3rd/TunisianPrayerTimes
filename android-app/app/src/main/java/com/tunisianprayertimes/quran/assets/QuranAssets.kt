@@ -61,6 +61,12 @@ object QuranAssets {
     /** Whether [assetPath] can come from a download at all; false means no build part carries it. IO thread. */
     fun downloadable(context: Context, assetPath: String): Boolean = layout(context)?.packOf(assetPath) != null
 
+    /**
+     * Whether this build carries the book (the mushaf in the print's own type) itself, as a debug build made with
+     * -PquranFonts does: its pages are then drawn from the app, whatever pack the layout names for them. IO thread.
+     */
+    fun bookBundled(context: Context): Boolean = isBundled(context, "quran/book/plates.json")
+
     /** Packs whose every file this build carries itself; they never need a download. IO thread. */
     fun bundledPacks(context: Context): Set<String> =
         layout(context)?.packs.orEmpty().filter { pack -> pack.files.all { isBundled(context, it.path) } }.map { it.name }.toSet()

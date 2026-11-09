@@ -8,10 +8,11 @@ package com.tunisianprayertimes.adhkar
  */
 object DhikrClosingTexts {
 
-    enum class ClosingTheme { DHIKR, PERSEVERANCE }
+    enum class ClosingTheme { DHIKR, PERSEVERANCE, SALAWAT }
 
     data class ClosingText(
         val id: String, val theme: ClosingTheme, val quran: Boolean, val text: String, val reference: String,
+        val heading: String? = null, val fridayOnly: Boolean = false,
     )
 
     val REWARDS: List<ClosingText> = listOf(

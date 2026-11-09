@@ -86,7 +86,7 @@ internal fun QuranIndexSheet(
                 IconButton(onClick = actions::dismiss) { Icon(painterResource(R.drawable.ic_adhkar_close), "إغلاق") }
             }
             // The page already open is no place to go back to.
-            val lastRead = remember(libraryRevision) { library.lastRead }?.takeIf { it != currentPage }
+            val lastRead = remember(libraryRevision) { library.lastRead }?.takeIf { it != currentPage && it <= QuranScanCount }
             if (lastRead != null || lastListened != null) BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
                 // Side by side while each card holds a line of its words; with large text, one under the other.
                 val stacked = (maxWidth - 8.dp) / 2 < with(LocalDensity.current) { 13.sp.toDp() } * 9
@@ -209,9 +209,6 @@ private fun ColumnScope.SurahList(
                 PlayRound({ actions.playSurah(surah.number) }, "الاستماع إلى سورة ${surah.name}")
             }
         }
-        item {
-            TextButton(onClick = { actions.openPage(QuranScanCount + 1) }, modifier = Modifier.fillMaxWidth()) { Text("ملحق أحكام القراءة") }
-        }
     }
 }
 
@@ -293,7 +290,8 @@ internal fun thumnName(thumn: Int): String = when (thumn) {
 private fun ColumnScope.RecentList(
     library: QuranLibrary, revision: Int, actions: QuranIndexActions, collapse: NestedScrollConnection,
 ) {
-    val recent = remember(revision) { library.recentPages }
+    // Pages past the mushaf's last (the appendix the reader no longer has) are left out.
+    val recent = remember(revision) { library.recentPages.filter { it <= QuranScanCount } }
     val state = rememberLazyListState()
     LazyColumn(Modifier.weight(1f).nestedScroll(rememberSheetScrollGuard(state)).nestedScroll(collapse).padding(horizontal = 8.dp), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         if (recent.isEmpty()) item {
@@ -306,7 +304,7 @@ private fun ColumnScope.RecentList(
             FlowRow(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 recent.forEach { page ->
                     AssistChip(onClick = { actions.openPage(page) }, label = {
-                        Text(if (page <= QuranScanCount) "صفحة ${page + 1}" else "الملحق ${page - QuranScanCount}")
+                        Text("صفحة ${page + 1}")
                     })
                 }
             }

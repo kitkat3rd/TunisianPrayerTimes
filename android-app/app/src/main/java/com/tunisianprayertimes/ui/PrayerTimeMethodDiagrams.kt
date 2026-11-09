@@ -83,7 +83,7 @@ private val GroundFill = Color(0xFFF3ECE0)
 
 // No text direction: a bare signed number appended to an Arabic label measured with this style
 // lands its sign after the digits ("23.44°+"). Measure numbers with [NumberStyle] or isolate them.
-private val LabelStyle = TextStyle(fontSize = 11.sp, color = TextDark)
+private val LabelStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 11.sp, color = TextDark)
 private val NumberStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
     fontSize = 11.sp,
@@ -1240,7 +1240,7 @@ internal fun TwilightDiagram(explanation: InmDayExplanation, names: Map<InmEvent
 internal fun RoundingDiagram(events: List<InmEventStep>, names: Map<InmEvent, String>) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val nameStyle = TextStyle(fontSize = 12.sp, color = TextDark)
+    val nameStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 12.sp, color = TextDark)
     val nameWidth = with(density) { events.maxOf { measurer.measure(names.getValue(it.event), nameStyle).size.width }.toDp() } + 8.dp
     val upText = stringResource(R.string.prayer_method_rounding_up)
     val downText = stringResource(R.string.prayer_method_rounding_down)

@@ -113,13 +113,16 @@ internal fun timesListNotes(context: Context, date: LocalDate, phoneZone: ZoneId
         }.getOrNull()
     }
     val noon = ZonedDateTime.of(date, LocalTime.NOON, place.zone).toInstant()
-    val placeOffset = place.zone.rules.getOffset(noon)
-    val offset = if (placeOffset == phoneZone.rules.getOffset(noon)) null else {
-        val seconds = placeOffset.totalSeconds
-        val sign = if (seconds < 0) "−" else "+"
-        val hours = abs(seconds) / 3600
-        val minutes = abs(seconds) % 3600 / 60
-        "⁦UTC$sign$hours" + (if (minutes != 0) String.format(java.util.Locale.US, ":%02d", minutes) else "") + "⁩"
-    }
-    return TimesListNotes(zoneName, offset)
+    return TimesListNotes(zoneName, placeOffsetLabel(place.zone, phoneZone, noon))
+}
+
+/** The place's UTC offset at [at], e.g. «UTC+4» in an LTR isolate, or null when the phone keeps the same offset (D8). */
+internal fun placeOffsetLabel(placeZone: ZoneId, phoneZone: ZoneId, at: java.time.Instant): String? {
+    val placeOffset = placeZone.rules.getOffset(at)
+    if (placeOffset == phoneZone.rules.getOffset(at)) return null
+    val seconds = placeOffset.totalSeconds
+    val sign = if (seconds < 0) "−" else "+"
+    val hours = abs(seconds) / 3600
+    val minutes = abs(seconds) % 3600 / 60
+    return "⁦UTC$sign$hours" + (if (minutes != 0) String.format(java.util.Locale.US, ":%02d", minutes) else "") + "⁩"
 }

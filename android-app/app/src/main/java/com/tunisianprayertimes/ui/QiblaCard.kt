@@ -83,6 +83,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.res.ResourcesCompat
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -902,6 +903,10 @@ private fun QiblaCompassDial(
         animationSpec = tween(durationMillis = 220),
         label = "qiblaAlignmentRing",
     )
+    val labelContext = LocalContext.current
+    val labelTypeface = remember(labelContext) {
+        ResourcesCompat.getFont(labelContext, R.font.ibm_plex_sans_arabic_bold) ?: Typeface.DEFAULT_BOLD
+    }
 
     BoxWithConstraints(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
         val dialSize = minOf(maxWidth, QIBLA_DIAL_SIZE)
@@ -991,7 +996,7 @@ private fun QiblaCompassDial(
                     val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         textAlign = Paint.Align.CENTER
                         textSize = 12.sp.toPx() * scale
-                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                        typeface = labelTypeface
                     }
                     val baselineOffset = -(labelPaint.ascent() + labelPaint.descent()) / 2f
                     QIBLA_CARDINAL_LABELS.forEach { (label, bearingDegrees) ->

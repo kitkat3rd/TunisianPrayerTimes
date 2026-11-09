@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import com.tunisianprayertimes.ui.OnboardingScreen
+import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import java.util.Locale
 
@@ -28,7 +29,7 @@ class OnboardingActivity : AppCompatActivity() {
         )
         AnalyticsTracker.installRamadanOverrideReporter(this)
         setContent {
-            TunisianPrayerTimesTheme {
+            TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
                 OnboardingScreen(onFinish = {
                     PrefsManager.markFirstLaunchDone(this@OnboardingActivity)
                     finish()

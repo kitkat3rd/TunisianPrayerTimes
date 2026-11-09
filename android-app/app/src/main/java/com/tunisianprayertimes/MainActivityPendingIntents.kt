@@ -20,6 +20,7 @@ object MainActivityPendingIntents {
     const val SILENCE_ALARM_CLOCK_URI = "tunisianprayertimes://main/alarm-clock/silence"
     const val SILENCE_GUARD_URI = "tunisianprayertimes://main/silence/guard"
     const val CHOOSE_PLACE_URI = "tunisianprayertimes://main/prayers/choose-place"
+    const val ADHAN_URI = "tunisianprayertimes://main/prayers/adhan"
 
     /** Awake-check notification: brings the app back on the alarms tab. */
     fun awakeCheck(context: Context): PendingIntent = activity(
@@ -54,6 +55,14 @@ object MainActivityPendingIntents {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(MainTabNavigation.EXTRA_DESTINATION, MainTabNavigation.DESTINATION_PRAYERS)
             .putExtra(MainTabNavigation.EXTRA_PRAYERS_ACTION, MainTabNavigation.PRAYERS_ACTION_CHOOSE_PLACE),
+    )
+
+    /** The adhan's alarm-clock info and its notifications: the prayers tab. */
+    fun adhan(context: Context): PendingIntent = activity(
+        context,
+        mainIntent(context, ADHAN_URI)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(MainTabNavigation.EXTRA_DESTINATION, MainTabNavigation.DESTINATION_PRAYERS),
     )
 
     private fun mainIntent(context: Context, uri: String): Intent =

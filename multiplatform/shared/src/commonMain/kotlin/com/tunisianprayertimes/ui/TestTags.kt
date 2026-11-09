@@ -14,6 +14,7 @@ object TestTags {
     const val PRAYER_SETTINGS = "prayer_settings"
     const val AUTO_SILENCE_CARD = "auto_silence_card"
     const val AUTO_SILENCE_SWITCH = "auto_silence_switch"
+    const val HERO_PHONE_SILENCE_BUTTON = "hero_phone_silence_button"
     const val CALL_END_VIBRATION_SWITCH = "call_end_vibration_switch"
     const val AUTO_LOCATION_SWITCH = "auto_location_switch"
     const val PRAYER_TAB_SETTINGS_BUTTON = "prayer_tab_settings_button"

@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.tunisianprayertimes.ui.MainScreen
 import com.tunisianprayertimes.ui.theme.BgCream
+import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -209,7 +210,7 @@ class MainActivity : AppCompatActivity() {
 
         setContent {
             val tabRequest = tabRequests.current
-            TunisianPrayerTimesTheme {
+            TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
                 // Abroad, a cold process's first days run the validity guard's year scan (6.5, about a second): it runs
                 // off the main thread while the screen waits, instead of freezing the first frame. Once only: a later
                 // change of place computes the new place's days before storing it.

@@ -25,6 +25,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,7 +43,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.adhan.AdhanSettings
+import com.tunisianprayertimes.adhan.AdhanSettingsActivity
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.TextDark
 
@@ -121,6 +128,8 @@ internal fun PrayerTabSettingsSheet(
                 Text(stringResource(R.string.mosque_settings_entry), color = GreenPrimary)
             }
             HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+            AdhanSettingsRow(onClick = { context.startActivity(Intent(context, AdhanSettingsActivity::class.java)) })
+            HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
             PrayerTabSettingsSwitchRow(
                 title = stringResource(R.string.call_end_vibration_title),
                 checked = callEndVibrationEnabled,
@@ -156,6 +165,47 @@ internal fun PrayerTabSettingsSheet(
             methodSection()
             PrayerTimeMethodRow(asExample = inmMethodIsExample, onClick = onShowPrayerTimeMethod)
         }
+    }
+}
+
+/** Opens [AdhanSettingsActivity]; the line under the title names the prayers whose adhan plays. */
+@Composable
+private fun AdhanSettingsRow(onClick: () -> Unit) {
+    val context = LocalContext.current
+    var summary by remember { mutableStateOf(AdhanSettings.summary(context)) }
+    // Back from the adhan settings: the sheet stays open, so its line follows what was changed there.
+    LifecycleResumeEffect(Unit) {
+        summary = AdhanSettings.summary(context)
+        onPauseOrDispose { }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.adhan_settings_title),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextDark,
+            )
+            Text(
+                text = summary,
+                fontSize = 12.sp,
+                color = PrayerSilencePalette.SecondaryText,
+            )
+        }
+        Icon(
+            painter = painterResource(R.drawable.ic_qibla_chevron),
+            contentDescription = null,
+            tint = PrayerSilencePalette.SecondaryText,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

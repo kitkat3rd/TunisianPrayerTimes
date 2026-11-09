@@ -213,6 +213,7 @@ import com.tunisianprayertimes.hasPendingWakeOccurrenceSkip
 import com.tunisianprayertimes.isRepeatingWakeAlarm
 import com.tunisianprayertimes.MathDifficulty
 import com.tunisianprayertimes.OffsetDirection
+import com.tunisianprayertimes.formatArabicByDuration
 import com.tunisianprayertimes.formatArabicMinutes
 import com.tunisianprayertimes.wake.PrayerWakeRepository
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
@@ -371,7 +372,7 @@ private fun WakeQuickPreset.testTag(): String = when (this) {
 }
 
 /** The next prayer (6.9): its instant, its hour and minute in the phone's clock, and its prayer day. */
-private data class NextPrayerCountdownInfo(
+internal data class NextPrayerCountdownInfo(
     val prayer: Prayer,
     val hour: Int,
     val minute: Int,
@@ -506,7 +507,7 @@ fun MainScreen(
     }
     var autoSilenceActive by remember { mutableStateOf(PrefsManager.isAutoSilenceActive(context)) }
     var manualSilenceActive by remember { mutableStateOf(PrefsManager.isManualSilenceActive(context)) }
-    // A tap on the manual silence card waiting its turn on the scheduling queue: the next tap waits for it.
+    // The hero and manual card share a pending action, so their writes cannot overlap.
     var silenceActionPending by remember { mutableStateOf(false) }
     var phoneSilenced by remember { mutableStateOf(SilenceStatus.isPhoneSilenced(context)) }
     var appControlledSilenceActive by remember { mutableStateOf(SilenceStatus.isAppControlledSilenceActive(context)) }
@@ -516,12 +517,150 @@ fun MainScreen(
     }
 
     fun refreshSilenceState() {
+        autoSilenceEnabled = PrefsManager.isEnabled(context)
         autoSilenceActive = PrefsManager.isAutoSilenceActive(context)
         manualSilenceActive = PrefsManager.isManualSilenceActive(context)
         phoneSilenced = SilenceStatus.isPhoneSilenced(context)
         appControlledSilenceActive = SilenceStatus.isAppControlledSilenceActive(context)
         wakeSilenceUntilAlarmActive = WakeAlarmScheduler.isSilenceUntilAlarmActive(context)
         manualSilenceEndsAtMillis = PrefsManager.getManualSilenceEndsAtMillis(context)
+    }
+
+    fun toggleManualSilence(mode: ManualSilenceMode = manualSilenceMode) {
+        if (!notificationManager.isNotificationPolicyAccessGranted) {
+            Toast.makeText(context, context.getString(R.string.toast_dnd_permission), Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (silenceActionPending) return
+        if (manualSilenceActive || autoSilenceActive) {
+            silenceActionPending = true
+            // Restoring the ringer waits 150 ms for the system: off the main thread, in turn, and
+            // run even if the screen goes meanwhile. The saved state decides there: a silence its
+            // timer ended meanwhile is not ended twice.
+            schedulerScope.launch {
+                try {
+                    val restored = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
+                        val ended = when {
+                            PrefsManager.isManualSilenceActive(context) ->
+                                if (com.tunisianprayertimes.mosque.MosqueSilenceSettings.usesOwnedRules(context))
+                                    SilenceModeController.setManualNormal(context)
+                                else SilenceModeController.endManualSilenceIfActive(context)
+                            PrefsManager.isAutoSilenceActive(context) -> {
+                                // In turn with a re-plan, which reads the dismissals.
+                                synchronized(SilenceScheduler) {
+                                    SilenceModeController.disableAutoSilence(context)
+                                    SilenceScheduler.dismissCurrentWindows(
+                                        context, SilenceScheduler.currentSilenceWindowPrayer(context),
+                                    )
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                        if (ended) SilenceModeController.notifyIfMissedCallDuringSilence(context)
+                        ended
+                    }
+                    refreshSilenceState()
+                    if (restored) {
+                        Toast.makeText(context, context.getString(if (com.tunisianprayertimes.mosque.MosqueSilenceSettings.usesOwnedRules(context)) R.string.mosque_request_released else R.string.toast_normal_restored), Toast.LENGTH_SHORT).show()
+                    }
+                } finally {
+                    silenceActionPending = false
+                }
+            }
+        } else {
+            val totalMinutes = resolveManualTotalMinutes(
+                manualDurationHours, manualDurationMinutes,
+                PrefsManager.getManualSilenceDurationMinutes(context)
+            )
+            if (mode == ManualSilenceMode.DURATION && totalMinutes <= 0) {
+                Toast.makeText(context, context.getString(R.string.error_manual_duration_required), Toast.LENGTH_SHORT).show()
+                return
+            }
+            val prayerEndsAtMillis = if (mode == ManualSilenceMode.UNTIL_PRAYER) {
+                resolveManualSilencePrayerEndMillis(context, delegationId, manualTargetPrayer)
+            } else {
+                null
+            }
+            if (mode == ManualSilenceMode.UNTIL_PRAYER && prayerEndsAtMillis == null) {
+                Toast.makeText(context, context.getString(R.string.error_manual_prayer_time_unavailable), Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            ensureCallTrackingPermission()
+            silenceActionPending = true
+            schedulerScope.launch {
+                try {
+                    // In turn with the screen's other silence work, off the main thread, and run even if
+                    // the screen goes meanwhile.
+                    val endsAt = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
+                        SilenceModeController.setManualSilent(context)
+                        PrefsManager.setManualSilenceMode(context, mode)
+                        when (mode) {
+                            ManualSilenceMode.DURATION -> ManualSilenceScheduler.schedule(context, totalMinutes)
+                            ManualSilenceMode.UNTIL_PRAYER ->
+                                requireNotNull(prayerEndsAtMillis).also { ManualSilenceScheduler.scheduleAt(context, it) }
+                            ManualSilenceMode.UNTIL_STOPPED -> {
+                                ManualSilenceScheduler.cancel(context)
+                                -1L
+                            }
+                        }
+                    }
+                    manualSilenceMode = mode
+                    when (mode) {
+                        ManualSilenceMode.DURATION -> {
+                            manualSilenceEndsAtMillis = endsAt
+                            AnalyticsTracker.manualSilenceStarted(context, mode, totalMinutes)
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.toast_silent_enabled_timed, formatDurationText(totalMinutes)),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        ManualSilenceMode.UNTIL_PRAYER -> {
+                            manualSilenceEndsAtMillis = endsAt
+                            AnalyticsTracker.manualSilenceStarted(context, mode, null)
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.toast_silent_enabled_until_prayer,
+                                    prayerName(context, manualTargetPrayer)
+                                ),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        ManualSilenceMode.UNTIL_STOPPED -> {
+                            manualSilenceEndsAtMillis = endsAt
+                            AnalyticsTracker.manualSilenceStarted(context, mode, null)
+                            Toast.makeText(context, context.getString(R.string.toast_silent_enabled), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    refreshSilenceState()
+                } finally {
+                    silenceActionPending = false
+                }
+            }
+        }
+    }
+
+    fun changeAutoSilence(enabled: Boolean) {
+        if (autoSilenceEnabled == enabled) return
+        autoSilenceEnabled = enabled
+        PrefsManager.setEnabled(context, enabled)
+        AnalyticsTracker.autoSilenceStateChanged(context, enabled)
+        if (enabled && hasDnd && hasAlarm) ensureCallTrackingPermission()
+        Toast.makeText(
+            context,
+            context.getString(if (enabled) R.string.toast_auto_enabled else R.string.toast_auto_disabled),
+            Toast.LENGTH_SHORT,
+        ).show()
+        // Arming or cancelling every window (and restoring the ringer) off the main thread.
+        schedulerScope.launch {
+            withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
+                ScheduleRefreshCoordinator.syncSilence(context)
+            }
+            refreshSilenceState()
+        }
     }
 
     suspend fun syncWakeScheduling() {
@@ -980,6 +1119,8 @@ fun MainScreen(
                             manualSilenceEndsAtMillis = manualSilenceEndsAtMillis,
                             wakeSilenceUntilAlarmActive = wakeSilenceUntilAlarmActive,
                             autoSilenceEnabled = autoSilenceEnabled,
+                            silenceActionPending = silenceActionPending,
+                            onManualSilenceClick = { toggleManualSilence(ManualSilenceMode.UNTIL_STOPPED) },
                         )
 
                         AnimatedVisibility(
@@ -1075,121 +1216,7 @@ fun MainScreen(
                                 manualDurationMinutes = (totalMinutes % 60).toString()
                                 PrefsManager.setManualSilenceDurationMinutes(context, totalMinutes)
                             },
-                            onClick = {
-                                if (!notificationManager.isNotificationPolicyAccessGranted) {
-                                    Toast.makeText(context, context.getString(R.string.toast_dnd_permission), Toast.LENGTH_SHORT).show()
-                                    return@ManualSilenceCard
-                                }
-                                if (silenceActionPending) return@ManualSilenceCard
-                                if (manualSilenceActive || autoSilenceActive) {
-                                    silenceActionPending = true
-                                    // Restoring the ringer waits 150 ms for the system: off the main thread, in turn, and
-                                    // run even if the screen goes meanwhile. The saved state decides there: a silence its
-                                    // timer ended meanwhile is not ended twice.
-                                    schedulerScope.launch {
-                                        try {
-                                            val restored = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
-                                                val ended = when {
-                                                    PrefsManager.isManualSilenceActive(context) ->
-                                                        if (com.tunisianprayertimes.mosque.MosqueSilenceSettings.usesOwnedRules(context))
-                                                            SilenceModeController.setManualNormal(context)
-                                                        else SilenceModeController.endManualSilenceIfActive(context)
-                                                    PrefsManager.isAutoSilenceActive(context) -> {
-                                                        // In turn with a re-plan, which reads the dismissals.
-                                                        synchronized(SilenceScheduler) {
-                                                            SilenceModeController.disableAutoSilence(context)
-                                                            SilenceScheduler.dismissCurrentWindows(
-                                                                context, SilenceScheduler.currentSilenceWindowPrayer(context),
-                                                            )
-                                                        }
-                                                        true
-                                                    }
-                                                    else -> false
-                                                }
-                                                if (ended) SilenceModeController.notifyIfMissedCallDuringSilence(context)
-                                                ended
-                                            }
-                                            refreshSilenceState()
-                                            if (restored) {
-                                                Toast.makeText(context, context.getString(if (com.tunisianprayertimes.mosque.MosqueSilenceSettings.usesOwnedRules(context)) R.string.mosque_request_released else R.string.toast_normal_restored), Toast.LENGTH_SHORT).show()
-                                            }
-                                        } finally {
-                                            silenceActionPending = false
-                                        }
-                                    }
-                                } else {
-                                    val totalMinutes = resolveManualTotalMinutes(
-                                        manualDurationHours, manualDurationMinutes,
-                                        PrefsManager.getManualSilenceDurationMinutes(context)
-                                    )
-                                    if (manualSilenceMode == ManualSilenceMode.DURATION && totalMinutes <= 0) {
-                                        Toast.makeText(context, context.getString(R.string.error_manual_duration_required), Toast.LENGTH_SHORT).show()
-                                        return@ManualSilenceCard
-                                    }
-                                    val prayerEndsAtMillis = if (manualSilenceMode == ManualSilenceMode.UNTIL_PRAYER) {
-                                        resolveManualSilencePrayerEndMillis(context, delegationId, manualTargetPrayer)
-                                    } else {
-                                        null
-                                    }
-                                    if (manualSilenceMode == ManualSilenceMode.UNTIL_PRAYER && prayerEndsAtMillis == null) {
-                                        Toast.makeText(context, context.getString(R.string.error_manual_prayer_time_unavailable), Toast.LENGTH_SHORT).show()
-                                        return@ManualSilenceCard
-                                    }
-
-                                    ensureCallTrackingPermission()
-                                    val mode = manualSilenceMode
-                                    silenceActionPending = true
-                                    schedulerScope.launch {
-                                        try {
-                                            // In turn with the screen's other silence work, off the main thread, and run even if
-                                            // the screen goes meanwhile.
-                                            val endsAt = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
-                                                SilenceModeController.setManualSilent(context)
-                                                when (mode) {
-                                                    ManualSilenceMode.DURATION -> ManualSilenceScheduler.schedule(context, totalMinutes)
-                                                    ManualSilenceMode.UNTIL_PRAYER ->
-                                                        requireNotNull(prayerEndsAtMillis).also { ManualSilenceScheduler.scheduleAt(context, it) }
-                                                    ManualSilenceMode.UNTIL_STOPPED -> {
-                                                        ManualSilenceScheduler.cancel(context)
-                                                        -1L
-                                                    }
-                                                }
-                                            }
-                                            when (mode) {
-                                                ManualSilenceMode.DURATION -> {
-                                                    manualSilenceEndsAtMillis = endsAt
-                                                    AnalyticsTracker.manualSilenceStarted(context, mode, totalMinutes)
-                                                    Toast.makeText(
-                                                        context,
-                                                        context.getString(R.string.toast_silent_enabled_timed, formatDurationText(totalMinutes)),
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                                ManualSilenceMode.UNTIL_PRAYER -> {
-                                                    manualSilenceEndsAtMillis = endsAt
-                                                    AnalyticsTracker.manualSilenceStarted(context, mode, null)
-                                                    Toast.makeText(
-                                                        context,
-                                                        context.getString(
-                                                            R.string.toast_silent_enabled_until_prayer,
-                                                            prayerName(context, manualTargetPrayer)
-                                                        ),
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                                ManualSilenceMode.UNTIL_STOPPED -> {
-                                                    manualSilenceEndsAtMillis = endsAt
-                                                    AnalyticsTracker.manualSilenceStarted(context, mode, null)
-                                                    Toast.makeText(context, context.getString(R.string.toast_silent_enabled), Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                            refreshSilenceState()
-                                        } finally {
-                                            silenceActionPending = false
-                                        }
-                                    }
-                                }
-                            }
+                            onClick = { toggleManualSilence() },
                         )
 
                         SunriseAndNightTimesCard(
@@ -1211,31 +1238,11 @@ fun MainScreen(
                             RamadanBadge()
                         }
 
-                        // Automatic silencing and the other tab settings live behind the settings
-                        // button beside the location header.
+                        // Automatic silencing is configured in Settings.
                         if (prayerTabSettingsOpen) {
                             PrayerTabSettingsSheet(
                                 autoSilenceEnabled = autoSilenceEnabled,
-                                onAutoSilenceChange = { enabled ->
-                                    autoSilenceEnabled = enabled
-                                    PrefsManager.setEnabled(context, enabled)
-                                    AnalyticsTracker.autoSilenceStateChanged(context, enabled)
-                                    if (enabled) {
-                                        if (hasDnd && hasAlarm) {
-                                            ensureCallTrackingPermission()
-                                        }
-                                        Toast.makeText(context, context.getString(R.string.toast_auto_enabled), Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, context.getString(R.string.toast_auto_disabled), Toast.LENGTH_SHORT).show()
-                                    }
-                                    // Arming or cancelling every window (and restoring the ringer) off the main thread.
-                                    schedulerScope.launch {
-                                        withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
-                                            ScheduleRefreshCoordinator.syncSilence(context)
-                                        }
-                                        refreshSilenceState()
-                                    }
-                                },
+                                onAutoSilenceChange = ::changeAutoSilence,
                                 callEndVibrationEnabled = callEndVibrationEnabled,
                                 onCallEndVibrationChange = { enabled ->
                                     callEndVibrationEnabled = enabled
@@ -2255,6 +2262,8 @@ private fun TodayNextPrayerCard(
     manualSilenceEndsAtMillis: Long,
     wakeSilenceUntilAlarmActive: Boolean,
     autoSilenceEnabled: Boolean,
+    silenceActionPending: Boolean,
+    onManualSilenceClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -2327,6 +2336,9 @@ private fun TodayNextPrayerCard(
             hasDnd = hasDnd,
             silenceReason = silenceReason,
             autoSilenceEnabled = autoSilenceEnabled,
+            silenceActionPending = silenceActionPending,
+            silenceActive = (manualSilenceActive || autoSilenceActive) && hasDnd,
+            onManualSilenceClick = onManualSilenceClick,
         )
     }
 }
@@ -2934,29 +2946,6 @@ private fun SunriseAndNightTimesCard(
     }
 
     val selectedTimesForDay = selectedTimes ?: return
-    // A day overview retains earlier rings, including a one-off whose time has already passed.
-    val timelineAlarms = remember(wakeAlarms, delegationId, selectedDayMillis) {
-        wakeAlarms.orEmpty()
-            .flatMap { wakeAlarm ->
-                scheduledWakeAlarmTriggersForDay(context, delegationId, wakeAlarm, selectedCalendar).map { trigger ->
-                    NightTimelineAlarm(
-                        id = listOfNotNull(trigger.alarmId, trigger.subAlarmId, trigger.triggerAtMillis.toString()).joinToString(":"),
-                        wakeAlarmId = trigger.alarmId,
-                        title = wakeAlarm.title.ifBlank {
-                            when (wakeAlarm.mainAlarm.mode) {
-                                WakeMainAlarmMode.FROM_NOW -> context.getString(R.string.wake_editor_mode_from_now)
-                                WakeMainAlarmMode.FIXED_TIME -> context.getString(R.string.wake_editor_mode_fixed)
-                                WakeMainAlarmMode.PRAYER_RELATIVE -> prayerName(context, trigger.effectivePrayer)
-                            }
-                        },
-                        time = formatTimeOfDay(trigger.triggerAtMillis),
-                        minuteOfDay = minuteOfDay(trigger.triggerAtMillis),
-                        isSubAlarm = trigger.isSubAlarm,
-                    )
-                }
-            }
-            .sortedBy { alarm -> alarm.minuteOfDay }
-    }
     fun atMillis(day: com.tunisianprayertimes.engine.PrayerDay?, event: com.tunisianprayertimes.engine.TimeEvent): Long? =
         day?.get(event)?.at?.toEpochMilli()
     val selectedFajrMillis = atMillis(selectedTimesForDay, com.tunisianprayertimes.engine.TimeEvent.FAJR) ?: return
@@ -2973,24 +2962,43 @@ private fun SunriseAndNightTimesCard(
     val thirdDurationMillis = (nightEndMillis - nightStartMillis) / 3L
     val firstEndMillis = nightStartMillis + thirdDurationMillis
     val secondEndMillis = nightStartMillis + thirdDurationMillis * 2L
-    val activeThird = when {
-        !isToday -> null
-        currentTimeMillis >= nightStartMillis && currentTimeMillis < firstEndMillis -> 0
-        currentTimeMillis >= firstEndMillis && currentTimeMillis < secondEndMillis -> 1
-        currentTimeMillis >= secondEndMillis && currentTimeMillis < nightEndMillis -> 2
-        else -> null
-    }
-    val statusText = if (!isToday) stringResource(R.string.prayer_timeline_selected_night) else when (activeThird) {
-        0 -> "الآن: الثلث الأول"
-        1 -> "الآن: الثلث الثاني"
-        2 -> "الآن: الثلث الأخير"
-        else -> "الليلة القادمة"
-    }
     // A time's minute counted from the selected day's midnight in the phone's clock: an Isha after midnight
     // (Paris in June) sorts after Maghrib in the details, at the same place on the dial.
     fun minuteOfSelectedDay(millis: Long): Int {
         val date = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         return minuteOfDay(millis) + 1440 * java.time.temporal.ChronoUnit.DAYS.between(selectedLocal, date).toInt()
+    }
+    // The rings shown are those of the 24 hours the dial draws: the day shown and the night after it (its Fajr to
+    // the next), or, before today's Fajr, the night now running and the day after it. So the night arc holds
+    // tonight's rings, not this morning's, and a ring that already rang today keeps its place.
+    val dayMillis = 24L * 60L * 60L * 1000L
+    val windowStartMillis = if (usePreviousNight) nightStartMillis else nightEndMillis - dayMillis
+    val windowEndMillis = windowStartMillis + dayMillis
+    val timelineAlarms = remember(wakeAlarms, delegationId, windowStartMillis) {
+        val days = (-1..1).map { offset -> (selectedCalendar.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, offset) } }
+        wakeAlarms.orEmpty()
+            .flatMap { wakeAlarm ->
+                days.flatMap { day -> scheduledWakeAlarmTriggersForDay(context, delegationId, wakeAlarm, day) }
+                    .filter { trigger -> trigger.triggerAtMillis >= windowStartMillis && trigger.triggerAtMillis < windowEndMillis }
+                    .distinctBy { trigger -> listOf(trigger.alarmId, trigger.subAlarmId, trigger.triggerAtMillis) }
+                    .map { trigger ->
+                        NightTimelineAlarm(
+                            id = listOfNotNull(trigger.alarmId, trigger.subAlarmId, trigger.triggerAtMillis.toString()).joinToString(":"),
+                            wakeAlarmId = trigger.alarmId,
+                            title = wakeAlarm.title.ifBlank {
+                                when (wakeAlarm.mainAlarm.mode) {
+                                    WakeMainAlarmMode.FROM_NOW -> context.getString(R.string.wake_editor_mode_from_now)
+                                    WakeMainAlarmMode.FIXED_TIME -> context.getString(R.string.wake_editor_mode_fixed)
+                                    WakeMainAlarmMode.PRAYER_RELATIVE -> prayerName(context, trigger.effectivePrayer)
+                                }
+                            },
+                            time = formatTimeOfDay(trigger.triggerAtMillis),
+                            minuteOfDay = minuteOfSelectedDay(trigger.triggerAtMillis),
+                            isSubAlarm = trigger.isSubAlarm,
+                        )
+                    }
+            }
+            .sortedBy { alarm -> alarm.minuteOfDay }
     }
     fun timelinePrayer(prayer: Prayer, millis: Long): NightTimelinePrayer = NightTimelinePrayer(
         prayer = prayer,
@@ -3010,45 +3018,24 @@ private fun SunriseAndNightTimesCard(
         atMillis(selectedTimesForDay, com.tunisianprayertimes.engine.TimeEvent.MAGHRIB)?.let { timelinePrayer(Prayer.MAGHRIB, it) },
         atMillis(selectedTimesForDay, com.tunisianprayertimes.engine.TimeEvent.ISHA)?.let { timelinePrayer(Prayer.ISHA, it) },
     )
-    val nightStartLabel = if (usePreviousNight) "أمس" else if (isToday) "اليوم" else formatWakeAlarmDate(nightStartMillis)
-    val nightEndLabel = if (usePreviousNight) "اليوم" else if (isToday) "غدًا" else formatWakeAlarmDate(nightEndMillis)
     val sunriseMillis = atMillis(selectedTimesForDay, com.tunisianprayertimes.engine.TimeEvent.SUNRISE) ?: return
+    fun third(startMillis: Long, endMillis: Long) = NightThirdSegment(
+        startTime = formatTimeOfDay(startMillis),
+        endTime = formatTimeOfDay(endMillis),
+        startMinuteOfDay = minuteOfSelectedDay(startMillis),
+        endMinuteOfDay = minuteOfSelectedDay(endMillis),
+    )
     val data = NightTimesCardData(
         selectedDateLabel = formatWakeAlarmDate(selectedDayMillis),
-        currentTimeText = formatTimeOfDay(currentTimeMillis),
         sunAltitudeDeg = if (isToday) solarLocation?.let { solarAltitudeDegAt(it, currentTimeMillis) } else null,
         sunriseTime = formatTimeOfDay(sunriseMillis),
         sunriseMinuteOfDay = minuteOfSelectedDay(sunriseMillis),
         currentMinuteOfDay = minuteOfDay(currentTimeMillis),
         showCurrentTime = isToday,
-        nightRange = "من ${formatTimeOfDay(nightStartMillis)} $nightStartLabel إلى ${formatTimeOfDay(nightEndMillis)} $nightEndLabel",
-        statusText = statusText,
-        activeThird = activeThird,
         thirds = listOf(
-            NightThirdSegment(
-                title = "الأول",
-                startTime = formatTimeOfDay(nightStartMillis),
-                endTime = formatTimeOfDay(firstEndMillis),
-                startMinuteOfDay = minuteOfSelectedDay(nightStartMillis),
-                endMinuteOfDay = minuteOfSelectedDay(firstEndMillis),
-                active = activeThird == 0,
-            ),
-            NightThirdSegment(
-                title = "الثاني",
-                startTime = formatTimeOfDay(firstEndMillis),
-                endTime = formatTimeOfDay(secondEndMillis),
-                startMinuteOfDay = minuteOfSelectedDay(firstEndMillis),
-                endMinuteOfDay = minuteOfSelectedDay(secondEndMillis),
-                active = activeThird == 1,
-            ),
-            NightThirdSegment(
-                title = "الأخير",
-                startTime = formatTimeOfDay(secondEndMillis),
-                endTime = formatTimeOfDay(nightEndMillis),
-                startMinuteOfDay = minuteOfSelectedDay(secondEndMillis),
-                endMinuteOfDay = minuteOfSelectedDay(nightEndMillis),
-                active = activeThird == 2,
-            ),
+            third(nightStartMillis, firstEndMillis),
+            third(firstEndMillis, secondEndMillis),
+            third(secondEndMillis, nightEndMillis),
         ),
         timelinePrayers = timelinePrayers,
         timelineAlarms = timelineAlarms,
@@ -3730,7 +3717,7 @@ private fun WakeNextAlarmDetails(
                 maxLines = 1,
                 softWrap = false,
                 autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 29.sp),
-                style = TextStyle(textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
+                style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
             )
         }
         Text(
@@ -3892,7 +3879,7 @@ private fun wakeAlarmPrayerName(prayer: Prayer): String = when (prayer) {
 }
 
 @Composable
-private fun NextPrayerHeroCard(
+internal fun NextPrayerHeroCard(
     countdown: NextPrayerCountdownInfo,
     prayerName: String,
     currentTimeMillis: Long,
@@ -3900,6 +3887,9 @@ private fun NextPrayerHeroCard(
     hasDnd: Boolean,
     silenceReason: PhoneSilenceReason?,
     autoSilenceEnabled: Boolean,
+    silenceActionPending: Boolean,
+    silenceActive: Boolean,
+    onManualSilenceClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val prayerTimeText = String.format(Locale.US, "%02d:%02d", countdown.hour, countdown.minute)
@@ -3971,7 +3961,15 @@ private fun NextPrayerHeroCard(
                 .heightIn(min = 122.dp),
         ) {
             val sideBySide = maxWidth >= 270.dp && LocalDensity.current.fontScale <= 1.3f
+            val silenceControl: @Composable () -> Unit = {
+                PrayerHeroSilenceControl(
+                    silenced = silenceActive,
+                    onClick = onManualSilenceClick,
+                    enabled = !silenceActionPending,
+                )
+            }
             if (sideBySide) {
+                // The control ends the prayer line, level with its icon, on the edge of the artwork column.
                 NextPrayerHeroDetails(
                     prayer = countdown.prayer,
                     prayerName = prayerName,
@@ -3984,7 +3982,9 @@ private fun NextPrayerHeroCard(
                     isPhoneSilenced = isPhoneSilenced,
                     hasDnd = hasDnd,
                     silenceReason = silenceReason,
-                    modifier = Modifier.width(maxWidth * 0.6f).align(Alignment.TopStart),
+                    modifier = Modifier.fillMaxWidth().align(Alignment.TopStart),
+                    textWidthFraction = 0.6f,
+                    prayerAction = silenceControl,
                 )
                 NextPrayerHeroVerse(
                     modifier = Modifier
@@ -4007,6 +4007,7 @@ private fun NextPrayerHeroCard(
                         hasDnd = hasDnd,
                         silenceReason = silenceReason,
                         modifier = Modifier.fillMaxWidth(),
+                        headerAction = silenceControl,
                     )
                     NextPrayerHeroVerse(modifier = Modifier.fillMaxWidth())
                 }
@@ -4015,6 +4016,11 @@ private fun NextPrayerHeroCard(
     }
 }
 
+/**
+ * The lines of the hero card. [textWidthFraction] is the share of the width they may take; with a
+ * [prayerAction] the rest of the prayer line holds it, beside the artwork. A [headerAction] ends
+ * the label line instead, for the layout that stacks the card's rows.
+ */
 @Composable
 private fun NextPrayerHeroDetails(
     prayer: Prayer,
@@ -4029,7 +4035,11 @@ private fun NextPrayerHeroDetails(
     hasDnd: Boolean,
     silenceReason: PhoneSilenceReason?,
     modifier: Modifier = Modifier,
+    textWidthFraction: Float = 1f,
+    headerAction: (@Composable () -> Unit)? = null,
+    prayerAction: (@Composable () -> Unit)? = null,
 ) {
+    require(prayerAction == null || textWidthFraction < 1f) { "The prayer action needs the width the text leaves" }
     val largeText = LocalDensity.current.fontScale > 1.3f
     val prayerIconSize = 34.dp
     val prayerIconSpacing = 8.dp
@@ -4038,129 +4048,156 @@ private fun NextPrayerHeroDetails(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = stringResource(R.string.next_prayer_countdown_title),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White.copy(alpha = 0.78f),
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(prayerIconSpacing),
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(textWidthFraction),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(prayerIconSize)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.13f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(iconRes),
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-            // Prayer and adhan time always share one line: the time keeps its size and a
-            // long name shrinks to fit instead of pushing the time onto a second line.
+            Text(
+                text = stringResource(R.string.next_prayer_countdown_title),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White.copy(alpha = 0.78f),
+            )
+            headerAction?.invoke()
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Row(
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.weight(textWidthFraction),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(prayerIconSpacing),
             ) {
-                Text(
-                    text = prayerName,
-                    fontSize = 29.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    maxLines = if (largeText) 2 else 1,
-                    softWrap = largeText,
-                    autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 29.sp),
+                Box(
+                    modifier = Modifier
+                        .size(prayerIconSize)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.13f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(iconRes),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                // Prayer and adhan time always share one line: the time keeps its size and a
+                // long name shrinks to fit instead of pushing the time onto a second line.
+                Row(
                     modifier = Modifier.weight(1f, fill = false),
-                )
-                Text(
-                    text = prayerTimeText,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GoldLight,
-                    maxLines = 1,
-                    softWrap = false,
-                )
-                if (isTomorrow) {
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text(
-                        text = stringResource(R.string.next_prayer_countdown_tomorrow),
-                        fontSize = 13.sp,
+                        text = prayerName,
+                        fontSize = 29.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = if (largeText) 2 else 1,
+                        softWrap = largeText,
+                        autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 29.sp),
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(
+                        text = prayerTimeText,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White.copy(alpha = 0.82f),
+                        color = GoldLight,
                         maxLines = 1,
                         softWrap = false,
                     )
+                    if (isTomorrow) {
+                        Text(
+                            text = stringResource(R.string.next_prayer_countdown_tomorrow),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White.copy(alpha = 0.82f),
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                }
+            }
+            if (prayerAction != null) {
+                Box(
+                    modifier = Modifier.weight(1f - textWidthFraction).padding(start = prayerIconSpacing),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    prayerAction()
                 }
             }
         }
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(countdownPillBackgroundColor)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        Column(
+            modifier = Modifier.fillMaxWidth(textWidthFraction),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                text = remainingText,
-                fontSize = 13.sp,
-                color = countdownPillTextColor,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                softWrap = false,
-                autoSize = TextAutoSize.StepBased(maxFontSize = 13.sp),
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Icon(
-                painter = painterResource(R.drawable.ic_adhkar_clock),
-                contentDescription = null,
-                tint = countdownPillTextColor,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        // A single status line, most urgent first: what the phone is doing right now
-        // (silenced, or missing Do Not Disturb access), otherwise what this prayer brings.
-        val phoneStatusText = phoneStatusNoticeText(
-            context = LocalContext.current,
-            isPhoneSilenced = isPhoneSilenced,
-            hasDnd = hasDnd,
-            silenceReason = silenceReason,
-        )
-        if (phoneStatusText != null) {
-            PhoneStatusNotice(
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(countdownPillBackgroundColor)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = remainingText,
+                    fontSize = 13.sp,
+                    color = countdownPillTextColor,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = TextAutoSize.StepBased(maxFontSize = 13.sp),
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Icon(
+                    painter = painterResource(R.drawable.ic_adhkar_clock),
+                    contentDescription = null,
+                    tint = countdownPillTextColor,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            // A single status line, most urgent first: what the phone is doing right now
+            // (silenced, or missing Do Not Disturb access), otherwise what this prayer brings.
+            val phoneStatusText = phoneStatusNoticeText(
+                context = LocalContext.current,
                 isPhoneSilenced = isPhoneSilenced,
                 hasDnd = hasDnd,
                 silenceReason = silenceReason,
             )
-        } else if (silenceLine != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Icon(
-                    painter = painterResource(
-                        if (silenceLine.scheduled) R.drawable.ic_bell_off else R.drawable.ic_adhkar_bell,
-                    ),
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = if (silenceLine.scheduled) 0.86f else 0.7f),
-                    modifier = Modifier.size(13.dp),
+            if (phoneStatusText != null) {
+                PhoneStatusNotice(
+                    isPhoneSilenced = isPhoneSilenced,
+                    hasDnd = hasDnd,
+                    silenceReason = silenceReason,
                 )
-                Text(
-                    text = silenceLine.text,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = if (silenceLine.scheduled) 0.9f else 0.72f),
-                    maxLines = if (largeText) 2 else 1,
-                    softWrap = largeText,
-                    autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 11.sp),
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+            } else if (silenceLine != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (silenceLine.scheduled) R.drawable.ic_bell_off else R.drawable.ic_adhkar_bell,
+                        ),
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = if (silenceLine.scheduled) 0.86f else 0.7f),
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = silenceLine.text,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White.copy(alpha = if (silenceLine.scheduled) 0.9f else 0.72f),
+                        maxLines = if (largeText) 2 else 1,
+                        softWrap = largeText,
+                        autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 11.sp),
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
         }
     }
@@ -4724,7 +4761,7 @@ private fun WakeAlarmRow(
                             fontWeight = FontWeight.Bold,
                             color = GreenPrimaryDark,
                             maxLines = 1,
-                            style = TextStyle(textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
+                            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
                         )
                     }
                     Text(
@@ -4856,7 +4893,7 @@ private fun WakeAlarmRingStrip(rings: List<Pair<Int, Long>>, nextRingAtMillis: L
                     isMain -> GreenPrimaryDark
                     else -> TextMuted
                 },
-                style = TextStyle(textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
+                style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
             )
         }
     }
@@ -4885,17 +4922,17 @@ private fun wakeSummaryText(
 
         WakeMainAlarmMode.PRAYER_RELATIVE -> {
             val offset = wakeConfig.mainAlarm.prayerOffset
-            if (offset.minutes < 0) {
-                stringResource(
+            when {
+                offset.minutes == 0 -> stringResource(R.string.wake_editor_hero_rule_prayer_at, prayerName)
+                offset.minutes < 0 -> stringResource(
                     R.string.wake_summary_relative_before,
                     prayerName,
-                    formatArabicMinutes(offset.absoluteMinutes),
+                    formatArabicByDuration(offset.absoluteMinutes),
                 )
-            } else {
-                stringResource(
+                else -> stringResource(
                     R.string.wake_summary_relative_after,
                     prayerName,
-                    formatArabicMinutes(offset.absoluteMinutes),
+                    formatArabicByDuration(offset.absoluteMinutes),
                 )
             }
         }
@@ -4987,6 +5024,7 @@ private fun NumberInput(
                 )
                 .padding(4.dp),
             textStyle = TextStyle(
+                fontFamily = AppFontFamily,
                 fontSize = 14.sp,
                 color = TextDark,
                 textAlign = TextAlign.Center,

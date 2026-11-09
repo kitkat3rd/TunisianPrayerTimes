@@ -45,9 +45,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.isImeVisible
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -102,8 +99,8 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -113,8 +110,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
@@ -131,6 +126,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
 import com.tunisianprayertimes.ClockTime
+import com.tunisianprayertimes.DEFAULT_WAKE_VIBRATION_SECONDS
+import com.tunisianprayertimes.DEFAULT_WAKE_VOLUME_STEP_SECONDS
 import com.tunisianprayertimes.MathDifficulty
 import com.tunisianprayertimes.OffsetDirection
 import com.tunisianprayertimes.PrefsManager
@@ -153,6 +150,7 @@ import com.tunisianprayertimes.WakeRepeatMode
 import com.tunisianprayertimes.WakeScheduleDay
 import com.tunisianprayertimes.WakeUpCheckStep
 import com.tunisianprayertimes.WakeUpCheckType
+import com.tunisianprayertimes.formatArabicByDuration
 import com.tunisianprayertimes.formatArabicMinutes
 import com.tunisianprayertimes.normalizedWakeScheduleDays
 import com.tunisianprayertimes.ui.theme.BgCream
@@ -250,18 +248,20 @@ fun WakeEditorSheet(
     var fixedMinute by remember(initialConfig.id, initialConfig.mainAlarm.fixedTime.minute) {
         mutableIntStateOf(initialConfig.mainAlarm.fixedTime.minute)
     }
-    var relativeOffsetDirection by remember(initialConfig.id, initialConfig.mainAlarm.prayerOffset.minutes) {
-        mutableStateOf(
-            if (initialConfig.mainAlarm.prayerOffset.minutes > 0) {
-                OffsetDirection.AFTER
-            } else {
-                OffsetDirection.BEFORE
-            }
+    var relativeOffsetSide by remember(initialConfig.id, initialConfig.mainAlarm.prayerOffset.minutes) {
+        mutableStateOf(wakePrayerOffsetSide(initialConfig.mainAlarm.prayerOffset.minutes))
+    }
+    // Kept while the alarm rings at the prayer time, so choosing before or after again brings it back.
+    var relativeOffsetMinutes by remember(initialConfig.id, initialConfig.mainAlarm.prayerOffset.minutes) {
+        mutableIntStateOf(
+            initialConfig.mainAlarm.prayerOffset.absoluteMinutes.takeIf { minutes -> minutes > 0 }
+                ?: WAKE_PRAYER_OFFSET_DEFAULT_MINUTES,
         )
     }
-    var relativeOffsetText by remember(initialConfig.id, initialConfig.mainAlarm.prayerOffset.minutes) {
-        mutableStateOf(initialConfig.mainAlarm.prayerOffset.absoluteMinutes.toString())
+    val relativeOffsetMaxHours = remember(initialConfig.id, initialConfig.mainAlarm.prayerOffset.minutes) {
+        wakePrayerOffsetMaxHours(initialConfig.mainAlarm.prayerOffset.absoluteMinutes)
     }
+    var adjustingRelativeOffset by remember(initialConfig.id) { mutableStateOf(false) }
     val initialFromNowOffsetMinutes = remember(initialConfig.id, initialConfig.mainAlarm.oneOffOffsetMinutes) {
         initialConfig.mainAlarm.oneOffOffsetMinutes.coerceAtLeast(1)
     }
@@ -312,12 +312,7 @@ fun WakeEditorSheet(
         mutableStateOf(initialConfig.ringDuringSilenceWindow)
     }
 
-    val parsedRelativeOffset = relativeOffsetText.toIntOrNull()?.coerceAtLeast(0) ?: 0
-    val signedRelativeOffset = if (relativeOffsetDirection == OffsetDirection.BEFORE) {
-        -parsedRelativeOffset
-    } else {
-        parsedRelativeOffset
-    }
+    val signedRelativeOffset = relativeOffsetSide.signedMinutes(relativeOffsetMinutes)
     val parsedFromNowOffsetMinutes = parseFromNowOffsetMinutes(
         hoursText = fromNowHoursText,
         minutesText = fromNowMinutesText,
@@ -420,9 +415,9 @@ fun WakeEditorSheet(
         }
     }
 
-    // While the keyboard is up the minutes are still being typed («1» on the way to «15»), so a conflict waits until
-    // it closes; Save checks again anyway.
-    val typing = WindowInsets.isImeVisible
+    // While the keyboard is up or the offset wheels turn, the time is still being set (the hours before the minutes),
+    // so a conflict waits until the user stops; Save checks again anyway.
+    val typing = WindowInsets.isImeVisible || adjustingRelativeOffset
     LaunchedEffect(
         unresolvedRecurringConflictKey,
         ringDuringSilenceWindow,
@@ -640,8 +635,7 @@ fun WakeEditorSheet(
                             context = context,
                             mode = mode,
                             prayer = selectedPrayer,
-                            offsetDirection = relativeOffsetDirection,
-                            offsetMinutes = parsedRelativeOffset,
+                            signedOffsetMinutes = signedRelativeOffset,
                             repeatMode = effectiveRepeatMode,
                             scheduledDays = effectiveScheduledDays,
                         ),
@@ -693,6 +687,10 @@ fun WakeEditorSheet(
                         onTriggerReached = { previewRefreshTick += 1 },
                     )
 
+                    // The prayer time of the shown ring, for the offset controls' "rings at" line.
+                    val offsetPrayerAtMillis = heroAnchorAtMillis
+                        ?.takeIf { mode == WakeMainAlarmMode.PRAYER_RELATIVE && !heroTimes.anchorIsExtraAlarm }
+                        ?.minus(signedRelativeOffset.toMillis())
                     WakeEditorSectionCard(
                         title = stringResource(R.string.wake_editor_main_section_title),
                     ) {
@@ -701,10 +699,24 @@ fun WakeEditorSheet(
                             onChangeModeClick = { modePickerVisible = true },
                             selectedPrayer = selectedPrayer,
                             onPrayerSelected = { prayer -> selectedPrayer = prayer },
-                            offsetDirection = relativeOffsetDirection,
-                            onOffsetDirectionChange = { direction -> relativeOffsetDirection = direction },
-                            offsetText = relativeOffsetText,
-                            onOffsetTextChange = { newValue -> relativeOffsetText = sanitizeMinutesInput(newValue) },
+                            offsetControls = {
+                                WakePrayerOffsetControls(
+                                    prayerName = prayerDisplayName(context, selectedPrayer),
+                                    side = relativeOffsetSide,
+                                    onSideChange = { side -> relativeOffsetSide = side },
+                                    minutes = relativeOffsetMinutes,
+                                    maxHours = relativeOffsetMaxHours,
+                                    onMinutesChange = { minutes -> relativeOffsetMinutes = minutes },
+                                    resultPrayerName = prayerDisplayName(context, heroEffectivePrayer ?: selectedPrayer),
+                                    prayerTimeText = offsetPrayerAtMillis?.let(::formatWakeTimelineTime),
+                                    ringTimeTextFor = { signedOffsetMinutes ->
+                                        offsetPrayerAtMillis?.let { prayerAtMillis ->
+                                            formatWakeTimelineTime(prayerAtMillis + signedOffsetMinutes.toMillis())
+                                        }
+                                    },
+                                    onAdjustingChange = { adjusting -> adjustingRelativeOffset = adjusting },
+                                )
+                            },
                             selectedDays = effectiveScheduledDays,
                             onSelectedDaysChange = { days -> scheduledDays = days.normalizedWakeScheduleDays() },
                             repeatMode = effectiveRepeatMode,
@@ -898,10 +910,7 @@ private fun WakeScheduleBuilder(
     onChangeModeClick: () -> Unit,
     selectedPrayer: Prayer,
     onPrayerSelected: (Prayer) -> Unit,
-    offsetDirection: OffsetDirection,
-    onOffsetDirectionChange: (OffsetDirection) -> Unit,
-    offsetText: String,
-    onOffsetTextChange: (String) -> Unit,
+    offsetControls: @Composable () -> Unit,
     selectedDays: Set<WakeScheduleDay>,
     onSelectedDaysChange: (Set<WakeScheduleDay>) -> Unit,
     repeatMode: WakeRepeatMode,
@@ -923,10 +932,7 @@ private fun WakeScheduleBuilder(
                 WakePrayerRelativeModeControls(
                     selectedPrayer = selectedPrayer,
                     onPrayerSelected = onPrayerSelected,
-                    offsetDirection = offsetDirection,
-                    onOffsetDirectionChange = onOffsetDirectionChange,
-                    offsetText = offsetText,
-                    onOffsetTextChange = onOffsetTextChange,
+                    offsetControls = offsetControls,
                 )
             }
 
@@ -1128,8 +1134,7 @@ private fun formatWakeHeroRule(
     context: android.content.Context,
     mode: WakeMainAlarmMode,
     prayer: Prayer,
-    offsetDirection: OffsetDirection,
-    offsetMinutes: Int,
+    signedOffsetMinutes: Int,
     repeatMode: WakeRepeatMode,
     scheduledDays: Set<WakeScheduleDay>,
 ): String {
@@ -1145,16 +1150,16 @@ private fun formatWakeHeroRule(
         WakeMainAlarmMode.PRAYER_RELATIVE -> {
             val prayerName = prayerDisplayName(context, prayer)
             val relation = when {
-                offsetMinutes == 0 -> context.getString(R.string.wake_editor_hero_rule_prayer_at, prayerName)
-                offsetDirection == OffsetDirection.BEFORE -> context.getString(
+                signedOffsetMinutes == 0 -> context.getString(R.string.wake_editor_hero_rule_prayer_at, prayerName)
+                signedOffsetMinutes < 0 -> context.getString(
                     R.string.wake_editor_hero_rule_prayer_before,
                     prayerName,
-                    formatArabicMinutes(offsetMinutes),
+                    formatArabicByDuration(-signedOffsetMinutes),
                 )
                 else -> context.getString(
                     R.string.wake_editor_hero_rule_prayer_after,
                     prayerName,
-                    formatArabicMinutes(offsetMinutes),
+                    formatArabicByDuration(signedOffsetMinutes),
                 )
             }
             context.getString(R.string.wake_editor_hero_rule_with_repeat, relation, repeatText)
@@ -1295,10 +1300,7 @@ private fun WakeScheduleDayChip(
 private fun WakePrayerRelativeModeControls(
     selectedPrayer: Prayer,
     onPrayerSelected: (Prayer) -> Unit,
-    offsetDirection: OffsetDirection,
-    onOffsetDirectionChange: (OffsetDirection) -> Unit,
-    offsetText: String,
-    onOffsetTextChange: (String) -> Unit,
+    offsetControls: @Composable () -> Unit,
 ) {
     Text(
         text = stringResource(R.string.wake_editor_anchor_prayer_title),
@@ -1317,92 +1319,7 @@ private fun WakePrayerRelativeModeControls(
         fontWeight = FontWeight.Bold,
         color = PrayerNameColor,
     )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        WakeChoiceButton(
-            selected = offsetDirection == OffsetDirection.BEFORE,
-            onClick = { onOffsetDirectionChange(OffsetDirection.BEFORE) },
-            text = stringResource(R.string.wake_editor_subalarm_before),
-            modifier = Modifier
-                .width(82.dp)
-                .height(48.dp),
-            compact = true,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        WakeRelativeMinutesInput(
-            value = offsetText,
-            onValueChange = onOffsetTextChange,
-            modifier = Modifier.width(118.dp),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        WakeChoiceButton(
-            selected = offsetDirection == OffsetDirection.AFTER,
-            onClick = { onOffsetDirectionChange(OffsetDirection.AFTER) },
-            text = stringResource(R.string.wake_editor_subalarm_after),
-            modifier = Modifier
-                .width(82.dp)
-                .height(48.dp),
-            compact = true,
-        )
-    }
-}
-
-@Composable
-private fun WakeRelativeMinutesInput(
-    value: String,
-    onValueChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(10.dp)
-    val focusManager = LocalFocusManager.current
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier
-            .height(48.dp)
-            .clip(shape)
-            .background(GoldLight.copy(alpha = 0.12f))
-            .border(1.dp, Gold.copy(alpha = 0.24f), shape)
-            .padding(horizontal = 10.dp),
-        textStyle = LocalTextStyle.current.copy(
-            fontSize = 20.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextDark,
-            textAlign = TextAlign.Center,
-            textDirection = TextDirection.Ltr,
-        ),
-        // Done closes the keyboard, which is when a silence conflict may show.
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-        singleLine = true,
-        decorationBox = { innerTextField ->
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier.width(42.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        innerTextField()
-                    }
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = stringResource(R.string.wake_editor_relative_unit_minute),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextMuted,
-                        maxLines = 1,
-                    )
-                }
-            }
-        },
-    )
+    offsetControls()
 }
 
 private fun showWakeTimePicker(
@@ -2382,6 +2299,7 @@ internal fun WakeSegmentedChoice(
     options: List<String>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
+    enabled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(12.dp)
     Row(
@@ -2390,6 +2308,7 @@ internal fun WakeSegmentedChoice(
             .heightIn(min = 48.dp)
             .height(IntrinsicSize.Min)
             .clip(shape)
+            .alpha(if (enabled) 1f else 0.5f)
             .border(BorderStroke(1.dp, GreenPrimary.copy(alpha = 0.35f)), shape)
             .selectableGroup(),
     ) {
@@ -2408,7 +2327,7 @@ internal fun WakeSegmentedChoice(
                     .weight(1f)
                     .fillMaxHeight()
                     .background(if (selected) GreenPrimary else Color.White)
-                    .selectable(selected = selected, role = Role.RadioButton, onClick = { onSelect(index) })
+                    .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = { onSelect(index) })
                     .padding(horizontal = 8.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -2428,6 +2347,8 @@ private fun shouldExpandWakeBehavior(playback: WakePlaybackOptions): Boolean =
     playback.vibrationOnly ||
         playback.wakeUpCheckEnabled ||
         !playback.progressiveVolume ||
+        playback.initialVibrationSeconds != DEFAULT_WAKE_VIBRATION_SECONDS ||
+        playback.volumeStepIntervalSeconds != DEFAULT_WAKE_VOLUME_STEP_SECONDS ||
         !playback.awakeCheckEnabled ||
         playback.ringtone != RingtonePreset.ADHAN_MADINAH_MARWAN_QASSAS ||
         !playback.customRingtoneUri.isNullOrBlank()
@@ -2490,6 +2411,16 @@ internal fun WakeSoundControls(
             },
         )
 
+        WakeSoundTimingSetting(
+            title = stringResource(R.string.wake_editor_initial_vibration_title),
+            subtitle = stringResource(R.string.wake_editor_initial_vibration_subtitle),
+            tag = "wake_initial_vibration",
+            seconds = playback.initialVibrationSeconds,
+            choices = listOf(0, 15, 30, 60, 120),
+            enabled = !playback.vibrationOnly,
+            onSecondsChange = { onPlaybackChange(playback.copy(initialVibrationSeconds = it)) },
+        )
+
         WakeSwitchSettingRow(
             title = stringResource(R.string.wake_editor_progressive_volume_title),
             subtitle = stringResource(R.string.wake_editor_progressive_volume_subtitle),
@@ -2498,6 +2429,48 @@ internal fun WakeSoundControls(
                 onPlaybackChange(playback.copy(progressiveVolume = enabled))
             },
             enabled = !playback.vibrationOnly,
+        )
+
+        WakeSoundTimingSetting(
+            title = stringResource(R.string.wake_editor_volume_step_interval_title),
+            subtitle = null,
+            tag = "wake_volume_step_interval",
+            seconds = playback.volumeStepIntervalSeconds,
+            choices = listOf(15, 30, 60, 120, 300),
+            enabled = !playback.vibrationOnly && playback.progressiveVolume,
+            onSecondsChange = { onPlaybackChange(playback.copy(volumeStepIntervalSeconds = it)) },
+        )
+    }
+}
+
+@Composable
+private fun WakeSoundTimingSetting(
+    title: String,
+    subtitle: String?,
+    tag: String,
+    seconds: Int,
+    choices: List<Int>,
+    enabled: Boolean,
+    onSecondsChange: (Int) -> Unit,
+) {
+    val options = (choices + seconds).distinct().sorted()
+    Column(
+        modifier = Modifier.fillMaxWidth().testTag(tag),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (enabled) TextDark else TextMuted)
+        subtitle?.let { Text(it, fontSize = 12.sp, color = TextMuted, lineHeight = 17.sp) }
+        WakeSegmentedChoice(
+            options = options.map { duration ->
+                when {
+                    duration == 0 -> stringResource(R.string.wake_editor_no_initial_vibration)
+                    duration % 60 == 0 -> stringResource(R.string.wake_editor_minutes_short, duration / 60)
+                    else -> stringResource(R.string.wake_editor_seconds_short, duration)
+                }
+            },
+            selectedIndex = options.indexOf(seconds),
+            onSelect = { onSecondsChange(options[it]) },
+            enabled = enabled,
         )
     }
 }
@@ -3651,9 +3624,6 @@ private fun formatWakeTimelineTime(timeInMillis: Long): String {
     val formatter = SimpleDateFormat("HH:mm", Locale.forLanguageTag("ar-TN-u-nu-latn"))
     return formatter.format(Date(timeInMillis))
 }
-
-private fun sanitizeMinutesInput(input: String): String =
-    normalizeDigits(input).filter { it in '0'..'9' }.take(3)
 
 private fun sanitizeHoursInput(input: String): String =
     normalizeDigits(input).filter { it in '0'..'9' }.take(3)

@@ -177,7 +177,7 @@ internal fun LocalityPickerSheet(
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)
                         .focusRequester(focusRequester).testTag("locality_search"),
-                    textStyle = TextStyle(fontSize = 15.sp, color = TextDark, textAlign = TextAlign.Start),
+                    textStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 15.sp, color = TextDark, textAlign = TextAlign.Start),
                     singleLine = true,
                     decorationBox = { inner ->
                         if (query.isEmpty()) Text(

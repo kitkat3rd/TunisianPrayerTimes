@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -24,6 +25,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.tunisianprayertimes.adhkar.DhikrCategory
+import com.tunisianprayertimes.adhkar.DhikrCatalog
+import com.tunisianprayertimes.adhkar.DhikrSalawatClosingTexts
 import com.tunisianprayertimes.adhkar.DhikrOccurrence
 import com.tunisianprayertimes.adhkar.DhikrReminder
 import com.tunisianprayertimes.adhkar.DhikrSession
@@ -31,6 +34,7 @@ import com.tunisianprayertimes.adhkar.DhikrState
 import com.tunisianprayertimes.adhkar.MushafPassages
 import com.tunisianprayertimes.adhkar.collectionEntries
 import com.tunisianprayertimes.adhkar.findDhikr
+import com.tunisianprayertimes.mosque.DisplayTexts
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -84,10 +88,13 @@ class AdhkarReaderEntryPointTest {
     private fun bounds(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
 
     private fun assertReadingHeader() {
-        compose.onNodeWithText(state.findDhikr(session.itemId)!!.title, useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText(session.category?.let(::collectionTitle) ?: "قراءة مستقلة").assertIsDisplayed()
-        compose.onNodeWithText("الذكر " + latinNumber(session.index + 1) + " من " + latinNumber(session.itemIds.size))
-            .assertIsDisplayed()
+        compose.onNodeWithText(readerTitle(state.findDhikr(session.itemId)!!), useUnmergedTree = true).assertIsDisplayed()
+        session.category?.let { category ->
+            compose.onNodeWithText(collectionTitle(category)).assertIsDisplayed()
+        }
+        compose.onNodeWithText("قراءة مستقلة").assertDoesNotExist()
+        val position = compose.onNodeWithText("الذكر " + latinNumber(session.index + 1) + " من " + latinNumber(session.itemIds.size))
+        if (session.itemIds.size > 1) position.assertIsDisplayed() else position.assertDoesNotExist()
     }
 
     private fun linkReminder() {
@@ -148,7 +155,45 @@ class AdhkarReaderEntryPointTest {
         assertEquals(text, bounds("adhkar_reader_text"))
     }
 
-    @Test fun singleDhikrReminderKeepsTheIndependentSubtitleAndOneOfOneIndex() {
+    private fun assertKursiOpening() {
+        val reading = compose.onNodeWithTag("adhkar_reader_text").fetchSemanticsNode().config
+        assertEquals(DisplayTexts.BASMALA.mushafText + "\n" + MushafPassages.text("ayat_kursi"),
+            reading[SemanticsProperties.Text].single().text)
+        assertEquals(listOf(DisplayTexts.BASMALA.text + "\n" + DhikrCatalog.find("ayat_kursi")!!.text),
+            reading[SemanticsProperties.ContentDescription])
+    }
+
+    @Test fun ayatKursiStartsWithTheBasmalaInEveryCollection() {
+        DhikrCatalog.find("ayat_kursi")!!.categories.forEach { category ->
+            compose.runOnIdle {
+                val items = state.collectionEntries(category).map { it.id }
+                session = DhikrSession(itemIds = items, index = items.indexOf("ayat_kursi"), category = category)
+            }
+            assertKursiOpening()
+        }
+    }
+
+    @Test fun ayatKursiKeepsItsBasmalaWhenOpenedFromAReminder() {
+        compose.runOnIdle { session = DhikrSession(itemIds = listOf("ayat_kursi")) }
+        assertKursiOpening()
+
+        linkReminder()
+
+        assertKursiOpening()
+        compose.onNodeWithTag("adhkar_reader_text").performClick()
+        assertEquals(listOf(1), counts)
+    }
+
+    @Test fun otherQuranReadingsKeepTheirExistingOpenings() {
+        listOf("surah_ikhlas", "surah_falaq", "surah_nas", "sleep_last_two_baqarah").forEach { id ->
+            compose.runOnIdle { session = DhikrSession(itemIds = listOf(id)) }
+            val reading = compose.onNodeWithTag("adhkar_reader_text").fetchSemanticsNode().config
+            assertEquals(MushafPassages.text(id), reading[SemanticsProperties.Text].single().text)
+            assertEquals(listOf(DhikrCatalog.find(id)!!.text), reading[SemanticsProperties.ContentDescription])
+        }
+    }
+
+    @Test fun singleDhikrReminderHasNoIndependentSubtitleAndKeepsOneOfOneIndex() {
         compose.runOnIdle { session = DhikrSession(itemIds = listOf(session.itemId)) }
         compose.waitForIdle()
         assertReadingHeader()
@@ -170,5 +215,22 @@ class AdhkarReaderEntryPointTest {
         compose.onNodeWithTag("adhkar_reader_reminder").assertDoesNotExist()
         compose.onNodeWithTag("adhkar_reader_configure_reminder").performClick()
         assertEquals(1, configuredReminders)
+    }
+
+    @Test fun finishingASalawatReminderShowsItsBenefitsInsteadOfGenericDhikr() {
+        compose.runOnIdle {
+            session = DhikrSession(itemIds = listOf(DhikrCatalog.SALAWAT_ID), targetCountOverride = 1)
+            reminder = DhikrReminder(dhikrId = DhikrCatalog.SALAWAT_ID, targetCount = 1)
+        }
+        compose.onNodeWithTag("adhkar_closing_card").assertDoesNotExist()
+        compose.onNodeWithTag("adhkar_count").performClick()
+        assertEquals(listOf(1), counts)
+        // Apply the parent's count update, as the repository-backed screen does.
+        compose.runOnIdle { session = session.copy(counts = mapOf(DhikrCatalog.SALAWAT_ID to 1)) }
+        compose.onNodeWithTag("adhkar_closing_card").assertIsDisplayed()
+        val heading = compose.onNodeWithTag("adhkar_closing_reward_heading").fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.Text].single().text
+        assertEquals(1, DhikrSalawatClosingTexts.ALL.count { it.heading == heading })
+        compose.onNodeWithText("من فضل الذكر").assertDoesNotExist()
     }
 }

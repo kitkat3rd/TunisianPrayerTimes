@@ -21,7 +21,7 @@ class MushafPassagesTest {
 
     @Test
     fun everyQuranTextOutsideTheQuranTabHasItsMushafText() {
-        val adhkar = DhikrClosingTexts.REWARDS.filter { it.quran }.map { it.id } +
+        val adhkar = (DhikrClosingTexts.REWARDS + DhikrSalawatClosingTexts.ALL).filter { it.quran }.map { it.id } +
             listOf("ayat_kursi", "sleep_last_two_baqarah", "surah_ikhlas", "surah_falaq", "surah_nas")
         val display = DisplayTexts.PRAYER_VERSES.map { it.id } + listOf(DisplayTexts.FRIDAY_VERSE.id, DisplayTexts.RAMADAN_VERSE.id,
             DisplayTexts.BASMALA.id)

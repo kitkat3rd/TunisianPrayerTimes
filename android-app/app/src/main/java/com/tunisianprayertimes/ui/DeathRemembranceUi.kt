@@ -292,7 +292,8 @@ internal fun DeathRemembranceCard(modifier: Modifier = Modifier) {
     ) {
         RemembranceReading(item)
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button) { sheet = true }
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .clickable(role = Role.Button, onClickLabel = "إعدادات التذكير") { sheet = true }
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -300,6 +301,7 @@ internal fun DeathRemembranceCard(modifier: Modifier = Modifier) {
                 Text("التذكير", color = TextDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text(status, color = TextMuted, fontSize = 12.sp, lineHeight = 18.sp)
             }
+            ReminderSwitchDivider()
             Switch(checked = enabled, onCheckedChange = switch,
                 modifier = Modifier.semantics { contentDescription = "تذكير ذكر الموت" })
         }

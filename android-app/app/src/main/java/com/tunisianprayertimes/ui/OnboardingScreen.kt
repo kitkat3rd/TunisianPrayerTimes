@@ -1235,7 +1235,7 @@ private fun DemoPrayerSilenceRow(
                         fontSize = 19.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = PrayerSilencePalette.GoldAccent,
-                        style = TextStyle(textDirection = TextDirection.Ltr),
+                        style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr),
                         maxLines = 1,
                         softWrap = false,
                     )
@@ -1397,7 +1397,7 @@ private fun DemoEndpointColumn(
             fontSize = 19.sp,
             fontWeight = FontWeight.SemiBold,
             color = PrayerSilencePalette.PrimaryText,
-            style = TextStyle(textDirection = TextDirection.Ltr),
+            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr),
             maxLines = 1,
             softWrap = false,
         )
@@ -1588,7 +1588,7 @@ private fun DemoResolvedTime(resolvedTime: String) {
             color = PrayerSilencePalette.PrimaryText,
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            style = TextStyle(textDirection = TextDirection.Ltr),
+            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr),
             maxLines = 1,
             softWrap = false,
         )

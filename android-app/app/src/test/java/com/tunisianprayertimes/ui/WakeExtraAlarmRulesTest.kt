@@ -13,6 +13,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WakeExtraAlarmRulesTest {
+    @Test
+    fun sameSoundCopiesTimingAndRecognizesDifferences() {
+        val main = WakePlaybackOptions(initialVibrationSeconds = 120, volumeStepIntervalSeconds = 30)
+        val copied = WakePlaybackOptions().withSoundOf(main)
+        val extra = PrayerWakeSubAlarm("timing", 5, OffsetDirection.AFTER, copied)
+        assertTrue(extra.soundMatches(main))
+        assertEquals(120, copied.initialVibrationSeconds)
+        assertEquals(30, copied.volumeStepIntervalSeconds)
+        assertFalse(extra.copy(playback = copied.copy(initialVibrationSeconds = 0)).soundMatches(main))
+        assertFalse(extra.copy(playback = copied.copy(volumeStepIntervalSeconds = 60)).soundMatches(main))
+    }
+
     private fun alarm(minutes: Int, direction: OffsetDirection = OffsetDirection.BEFORE) =
         PrayerWakeSubAlarm(id = "$direction-$minutes", minutesOffset = minutes, direction = direction)
 

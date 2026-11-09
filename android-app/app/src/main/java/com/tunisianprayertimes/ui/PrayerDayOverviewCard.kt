@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,21 +48,27 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.platform.testTag
@@ -78,18 +87,15 @@ import com.tunisianprayertimes.ui.theme.TextMuted
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 internal data class NightThirdSegment(
-    val title: String,
     val startTime: String,
     val endTime: String,
     val startMinuteOfDay: Int,
     val endMinuteOfDay: Int,
-    val active: Boolean,
 )
 
 internal data class NightTimelineAlarm(
@@ -114,34 +120,14 @@ internal data class NightTimesCardData(
     val sunriseMinuteOfDay: Int,
     val currentMinuteOfDay: Int,
     val showCurrentTime: Boolean,
-    val nightRange: String,
-    val statusText: String,
-    val activeThird: Int?,
+    /** The night shown, from its Maghrib to its Fajr, in thirds. */
     val thirds: List<NightThirdSegment>,
     val timelinePrayers: List<NightTimelinePrayer>,
     val timelineAlarms: List<NightTimelineAlarm>,
+    /** The day shown, written at the top of the dial on another day than today. */
     val selectedDateLabel: String,
-    val currentTimeText: String,
     val sunAltitudeDeg: Double?,
 )
-
-private data class NightTimelineAlarmPlacement(
-    val id: String,
-    val alarms: List<NightTimelineAlarm>,
-    val iconCenterX: Float,
-    val iconCenterY: Float,
-    val nearNonAlarmMarker: Boolean,
-    val labelCenterX: Float,
-    val labelCenterY: Float,
-    val labelX: Float,
-    val labelY: Float,
-    val labelWidth: Float,
-    val label: String,
-    val time: String,
-) {
-    val isCluster: Boolean = alarms.size > 1
-    val hasSubAlarm: Boolean = alarms.any { alarm -> alarm.isSubAlarm }
-}
 
 @Composable
 internal fun PrayerDayOverviewCard(
@@ -150,7 +136,8 @@ internal fun PrayerDayOverviewCard(
 ) {
     val skyBlue = Color(0xFF92D8F3)
     val deepNight = Color(0xFF16345C)
-    val sunAngleLineHeight = with(LocalDensity.current) { 16.sp.toDp().value }
+    // The dial's texts follow the phone's full text size, like the rest of the page: at a large size its panel grows
+    // taller to make room for them.
     var selectedAlarmCluster by remember(data.selectedDateLabel) { mutableStateOf<List<NightTimelineAlarm>?>(null) }
 
     selectedAlarmCluster?.let { alarms ->
@@ -182,702 +169,68 @@ internal fun PrayerDayOverviewCard(
         ) {
             Column(modifier = Modifier.padding(8.dp)) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    BoxWithConstraints(
+                    val dialTextSizes = rememberDialTextSizes()
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val panelWidth = maxWidth.value
+                    // The layout ignores what changes every few seconds (the time, the sun's altitude), so it is
+                    // worked out again only when the day, the place, the alarms or the text size change.
+                    val layoutData = remember(data) {
+                        data.copy(currentMinuteOfDay = 0, sunAltitudeDeg = data.sunAltitudeDeg?.let { 0.0 })
+                    }
+                    val layout = remember(layoutData, panelWidth, dialTextSizes) {
+                        layoutDayDial(layoutData, panelWidth, dialTextSizes)
+                    }
+                    // The panel is as tall as the layout needs: taller at a large text size.
+                    val panelHeight = layout.panelHeight
+                    // TalkBack reads the dial, and the list under it, in the day's order: from Fajr round to the last
+                    // third of the night.
+                    val fajrMinute = data.timelinePrayers.firstOrNull { it.prayer == Prayer.FAJR }?.minuteOfDay ?: data.thirds[2].endMinuteOfDay
+                    fun readOrder(minuteOfDay: Int): Float = minutesBetweenInDay(fajrMinute, minuteOfDay).toFloat()
+                    Column(modifier = Modifier.fillMaxWidth().semantics { isTraversalGroup = true }) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(442.dp)
+                            .height(panelHeight.dp)
                             .clip(RoundedCornerShape(22.dp))
                             .background(deepNight)
                             .border(BorderStroke(1.dp, Divider), RoundedCornerShape(22.dp)),
                     ) {
-                    val panelWidth = maxWidth.value
-                    val panelHeight = 442f
-                    val fajrMinuteOfDay = data.timelinePrayers.firstOrNull { it.prayer == Prayer.FAJR }?.minuteOfDay
-                        ?: data.thirds[2].endMinuteOfDay
-                    val maghribMinuteOfDay = data.timelinePrayers.firstOrNull { it.prayer == Prayer.MAGHRIB }?.minuteOfDay
-                        ?: data.thirds[0].startMinuteOfDay
-                    val daylightMinutes = minutesBetweenInDay(data.sunriseMinuteOfDay, maghribMinuteOfDay)
-                    val daylightFraction = daylightMinutes / (24f * 60f)
-                    val daylightSweepDegrees = daylightFraction * 360f
-                    val sunriseAngleDegrees = 180f
-                    val sunsetAngleDegrees = sunriseAngleDegrees + daylightSweepDegrees
-                    val sunsetRadians = sunsetAngleDegrees * PI / 180.0
-                    val circleRadius = if (panelWidth - 86f > 262f) 131f else (panelWidth - 86f) / 2f
-                    val circleCenterX = panelWidth / 2f
-                    val circleCenterY = panelHeight / 2f
+                    val circleCenterX = layout.centerX
+                    val circleCenterY = layout.centerY
+                    val circleRadius = layout.radius
                     val circleTop = circleCenterY - circleRadius
                     val circleBottom = circleCenterY + circleRadius
-                    val sunriseX = circleCenterX - circleRadius
-                    val sunriseY = circleCenterY
-                    val sunsetX = circleCenterX + circleRadius * cos(sunsetRadians).toFloat()
-                    val sunsetY = circleCenterY + circleRadius * sin(sunsetRadians).toFloat()
-                    val sunriseSunOutsideOffset = 26f
-                    val sunriseSunX = sunriseX + (sunriseX - circleCenterX) / circleRadius * sunriseSunOutsideOffset
-                    val sunriseSunY = sunriseY + (sunriseY - circleCenterY) / circleRadius * sunriseSunOutsideOffset
-                    val sunsetRayUnitX = (sunsetX - circleCenterX) / circleRadius
-                    val sunsetRayUnitY = (sunsetY - circleCenterY) / circleRadius
-                    fun distanceToPanelBorderAlongRay(originX: Float, originY: Float, unitX: Float, unitY: Float): Float {
-                        val horizontalDistance = when {
-                            unitX > 0f -> (panelWidth - originX) / unitX
-                            unitX < 0f -> -originX / unitX
-                            else -> Float.POSITIVE_INFINITY
-                        }
-                        val verticalDistance = when {
-                            unitY > 0f -> (panelHeight - originY) / unitY
-                            unitY < 0f -> -originY / unitY
-                            else -> Float.POSITIVE_INFINITY
-                        }
-                        return minOf(horizontalDistance, verticalDistance).coerceAtLeast(0f)
-                    }
-                    val sunsetDistanceToPanelBorder = distanceToPanelBorderAlongRay(sunsetX, sunsetY, sunsetRayUnitX, sunsetRayUnitY)
-                    val sunsetSunOffset = sunsetDistanceToPanelBorder / 2f
-                    val sunsetSunX = sunsetX + sunsetRayUnitX * sunsetSunOffset
-                    val sunsetSunY = sunsetY + sunsetRayUnitY * sunsetSunOffset
-                    val sunsetPanelBorderX = sunsetX + sunsetRayUnitX * sunsetDistanceToPanelBorder
-                    val sunsetPanelBorderY = sunsetY + sunsetRayUnitY * sunsetDistanceToPanelBorder
-                    val twilightMinutes = minutesBetweenInDay(fajrMinuteOfDay, data.sunriseMinuteOfDay)
-                    val twilightSweepDegrees = twilightMinutes / (24f * 60f) * 360f
-                    val nightSweepDegrees = (360f - daylightSweepDegrees - twilightSweepDegrees).coerceAtLeast(0f)
-                    val nightTotalMinutes = minutesBetweenInDay(maghribMinuteOfDay, fajrMinuteOfDay).coerceAtLeast(1)
-                    fun minuteToNightAngleDegrees(minuteOfDay: Int): Float {
-                        val minutesFromMaghrib = minutesBetweenInDay(maghribMinuteOfDay, minuteOfDay)
-                        return sunsetAngleDegrees + nightSweepDegrees * (minutesFromMaghrib.toFloat() / nightTotalMinutes.toFloat())
-                    }
-                    val secondThirdAngleDegrees = minuteToNightAngleDegrees(data.thirds[1].startMinuteOfDay)
-                    val finalThirdAngleDegrees = minuteToNightAngleDegrees(data.thirds[2].startMinuteOfDay)
-                    val fajrAngleDegrees = minuteToNightAngleDegrees(fajrMinuteOfDay)
-                    fun minuteToTimelineAngleDegrees(minuteOfDay: Int): Float {
-                        val minutesFromSunrise = minutesBetweenInDay(data.sunriseMinuteOfDay, minuteOfDay)
-                        val minutesFromMaghrib = minutesBetweenInDay(maghribMinuteOfDay, minuteOfDay)
-                        return when {
-                            minutesFromSunrise <= daylightMinutes -> {
-                                sunriseAngleDegrees + daylightSweepDegrees * (minutesFromSunrise.toFloat() / daylightMinutes.coerceAtLeast(1).toFloat())
-                            }
-
-                            minutesFromMaghrib <= nightTotalMinutes -> minuteToNightAngleDegrees(minuteOfDay)
-
-                            else -> {
-                                val minutesFromFajr = minutesBetweenInDay(fajrMinuteOfDay, minuteOfDay)
-                                fajrAngleDegrees + twilightSweepDegrees * (minutesFromFajr.toFloat() / twilightMinutes.coerceAtLeast(1).toFloat())
+                    val sunriseAngleDegrees = layout.sunriseAngle
+                    val daylightSweepDegrees = layout.daylightSweep
+                    val twilightSweepDegrees = layout.twilightSweep
+                    val fajrAngleDegrees = layout.fajrAngle
+                    val sunriseX = layout.point(layout.sunriseAngle).x
+                    val sunriseY = layout.point(layout.sunriseAngle).y
+                    val sunsetX = layout.point(layout.sunsetAngle).x
+                    val sunsetY = layout.point(layout.sunsetAngle).y
+                    val sunriseSunX = layout.sunriseSun.x
+                    val sunriseSunY = layout.sunriseSun.y
+                    val sunsetSunX = layout.sunsetSun.x
+                    val sunsetSunY = layout.sunsetSun.y
+                    val sunsetPanelBorderX = layout.sunsetBorderEnd.x
+                    val sunsetPanelBorderY = layout.sunsetBorderEnd.y
+                    val secondThirdX = layout.point(layout.secondThirdAngle).x
+                    val secondThirdY = layout.point(layout.secondThirdAngle).y
+                    val finalThirdX = layout.point(layout.finalThirdAngle).x
+                    val finalThirdY = layout.point(layout.finalThirdAngle).y
+                    val fajrX = layout.point(layout.fajrAngle).x
+                    val fajrY = layout.point(layout.fajrAngle).y
+                    val timelinePrayerAngles = layout.prayerAngles
+                    val timelineAlarmPlacements = layout.alarms
+                    val (activeSegmentStartAngle, activeSegmentSweep) = layout.activeArc(data.currentMinuteOfDay)
+                    val currentAngleDegrees = layout.angleOf(data.currentMinuteOfDay)
+                    // Texts that moved away from their dot, with the colour of the sky they sit on.
+                    val leaderLines = (listOf(layout.fajr, layout.secondThird, layout.finalThird) + layout.prayerLabels.map { it.second })
+                        .mapNotNull { label ->
+                            label.leaderFrom?.let { marker ->
+                                leaderEnds(marker, label.rect)?.let { ends -> ends to layout.onDaySky(label.rect.center) }
                             }
                         }
-                    }
-                    fun containsCurrentMinute(startMinuteOfDay: Int, endMinuteOfDay: Int): Boolean {
-                        val segmentDuration = minutesBetweenInDay(startMinuteOfDay, endMinuteOfDay)
-                        if (segmentDuration <= 0) return false
-                        return minutesBetweenInDay(startMinuteOfDay, data.currentMinuteOfDay) < segmentDuration
-                    }
-                    fun clockwiseSweepDegrees(startAngle: Float, endAngle: Float): Float {
-                        val sweep = endAngle - startAngle
-                        return if (sweep >= 0f) sweep else sweep + 360f
-                    }
-                    val middayMinuteOfDay = data.timelinePrayers.firstOrNull { it.prayer == Prayer.DHUHR || it.prayer == Prayer.JOMOAA }?.minuteOfDay
-                        ?: data.sunriseMinuteOfDay
-                    val asrMinuteOfDay = data.timelinePrayers.firstOrNull { it.prayer == Prayer.ASR }?.minuteOfDay
-                        ?: middayMinuteOfDay
-                    val ishaMinuteOfDay = data.timelinePrayers.firstOrNull { it.prayer == Prayer.ISHA }?.minuteOfDay
-                        ?: maghribMinuteOfDay
-                    val activeSegmentMinutes = listOf(
-                        fajrMinuteOfDay to data.sunriseMinuteOfDay,
-                        data.sunriseMinuteOfDay to middayMinuteOfDay,
-                        middayMinuteOfDay to asrMinuteOfDay,
-                        asrMinuteOfDay to maghribMinuteOfDay,
-                        maghribMinuteOfDay to ishaMinuteOfDay,
-                        ishaMinuteOfDay to data.thirds[1].startMinuteOfDay,
-                        data.thirds[1].startMinuteOfDay to data.thirds[2].startMinuteOfDay,
-                        data.thirds[2].startMinuteOfDay to fajrMinuteOfDay,
-                    ).firstOrNull { (startMinuteOfDay, endMinuteOfDay) ->
-                        containsCurrentMinute(startMinuteOfDay, endMinuteOfDay)
-                    } ?: (data.sunriseMinuteOfDay to maghribMinuteOfDay)
-                    val activeSegmentStartAngle = minuteToTimelineAngleDegrees(activeSegmentMinutes.first)
-                    val activeSegmentEndAngle = minuteToTimelineAngleDegrees(activeSegmentMinutes.second)
-                    val secondThirdRadians = secondThirdAngleDegrees * PI / 180.0
-                    val finalThirdRadians = finalThirdAngleDegrees * PI / 180.0
-                    val fajrRadians = fajrAngleDegrees * PI / 180.0
-                    val twilightLabelRadians = (fajrAngleDegrees + twilightSweepDegrees * 0.52f) * PI / 180.0
-                    val secondThirdX = circleCenterX + circleRadius * cos(secondThirdRadians).toFloat()
-                    val secondThirdY = circleCenterY + circleRadius * sin(secondThirdRadians).toFloat()
-                    val finalThirdX = circleCenterX + circleRadius * cos(finalThirdRadians).toFloat()
-                    val finalThirdY = circleCenterY + circleRadius * sin(finalThirdRadians).toFloat()
-                    val fajrX = circleCenterX + circleRadius * cos(fajrRadians).toFloat()
-                    val fajrY = circleCenterY + circleRadius * sin(fajrRadians).toFloat()
-                    val twilightLabelRadius = circleRadius * 0.58f
-                    val twilightLabelX = (circleCenterX + twilightLabelRadius * cos(twilightLabelRadians).toFloat() - 28f).coerceIn(4f, panelWidth - 58f)
-                    val twilightLabelY = (circleCenterY + twilightLabelRadius * sin(twilightLabelRadians).toFloat() - 9f).coerceIn(circleTop + 14f, circleBottom - 20f)
-                    val dayLabelY = circleTop + circleRadius * 0.48f
-                    val nightLabelY = circleCenterY + circleRadius * 0.22f
-                    val timeLabelHeight = 29f
-                    val fajrLabelWidth = 54f
-                    val sunriseLabelWidth = 52f
-                    val maghribLabelWidth = 58f
-                    val horizonLabelSunLift = 52f
-                    val maghribLabelSunLift = horizonLabelSunLift + 10f
-                    val sunriseLabelX = (sunriseSunX - sunriseLabelWidth / 2f).coerceIn(6f, panelWidth - sunriseLabelWidth - 6f)
-                    val maghribLabelX = (sunsetSunX - maghribLabelWidth / 2f).coerceIn(6f, panelWidth - maghribLabelWidth - 6f)
-                    val thirdLabelWidth = 82f
-                    val exteriorLabelTimelineGap = 3f
-                    val sunriseLabelY = (sunriseSunY - horizonLabelSunLift).coerceAtLeast(12f)
-                    val maghribLabelY = (sunsetSunY - maghribLabelSunLift).coerceIn(8f, panelHeight - timeLabelHeight - 8f)
-
-                    fun radialLabelExtent(angleDegrees: Float, labelWidth: Float, labelHeight: Float): Float {
-                        val radians = angleDegrees * PI / 180.0
-                        val radialX = cos(radians).toFloat()
-                        val radialY = sin(radians).toFloat()
-                        return abs(radialX) * labelWidth / 2f + abs(radialY) * labelHeight / 2f
-                    }
-
-                    fun exteriorMarkerLabelCenterDistance(
-                        angleDegrees: Float,
-                        labelWidth: Float,
-                        labelHeight: Float,
-                    ): Float = exteriorLabelTimelineGap + radialLabelExtent(angleDegrees, labelWidth, labelHeight)
-
-                    fun labelOutsideTimeline(
-                        angleDegrees: Float,
-                        labelWidth: Float,
-                        labelHeight: Float,
-                        markerLabelCenterDistance: Float,
-                    ): Pair<Float, Float> {
-                        val radians = angleDegrees * PI / 180.0
-                        val radialX = cos(radians).toFloat()
-                        val radialY = sin(radians).toFloat()
-                        val halfWidth = labelWidth / 2f
-                        val halfHeight = labelHeight / 2f
-                        val labelRadius = circleRadius + markerLabelCenterDistance
-                        val labelCenterX = circleCenterX + labelRadius * radialX
-                        val labelCenterY = circleCenterY + labelRadius * radialY
-                        return labelCenterX - halfWidth to labelCenterY - halfHeight
-                    }
-
-                    val (fajrLabelX, fajrLabelY) = labelOutsideTimeline(
-                        angleDegrees = fajrAngleDegrees,
-                        labelWidth = fajrLabelWidth,
-                        labelHeight = timeLabelHeight,
-                        markerLabelCenterDistance = exteriorMarkerLabelCenterDistance(
-                            fajrAngleDegrees,
-                            fajrLabelWidth,
-                            timeLabelHeight,
-                        ),
-                    )
-                    val (secondThirdLabelX, secondThirdLabelY) = labelOutsideTimeline(
-                        angleDegrees = secondThirdAngleDegrees,
-                        labelWidth = thirdLabelWidth,
-                        labelHeight = timeLabelHeight,
-                        markerLabelCenterDistance = exteriorMarkerLabelCenterDistance(
-                            secondThirdAngleDegrees,
-                            thirdLabelWidth,
-                            timeLabelHeight,
-                        ),
-                    )
-                    val (finalThirdLabelX, finalThirdLabelY) = labelOutsideTimeline(
-                        angleDegrees = finalThirdAngleDegrees,
-                        labelWidth = thirdLabelWidth,
-                        labelHeight = timeLabelHeight,
-                        markerLabelCenterDistance = exteriorMarkerLabelCenterDistance(
-                            finalThirdAngleDegrees,
-                            thirdLabelWidth,
-                            timeLabelHeight,
-                        ),
-                    )
-                    val timelinePrayerAngles = data.timelinePrayers.map { prayer -> minuteToTimelineAngleDegrees(prayer.minuteOfDay) }
-                    val timelinePrayerLabelWidth = 58f
-                    val timelinePrayerLabelHeight = 26f
-                    val timelinePrayerLabelRadius = (circleRadius - 31f).coerceAtLeast(20f)
-                    val timelinePrayerLabels = data.timelinePrayers.zip(timelinePrayerAngles)
-                        .filter { (prayer, _) -> prayer.prayer != Prayer.FAJR && prayer.prayer != Prayer.MAGHRIB }
-                        .map { (prayer, angleDegrees) ->
-                            val radians = angleDegrees * PI / 180.0
-                            val labelCenterX = circleCenterX + timelinePrayerLabelRadius * cos(radians).toFloat()
-                            val labelCenterY = circleCenterY + timelinePrayerLabelRadius * sin(radians).toFloat()
-                            Triple(
-                                prayer,
-                                (labelCenterX - timelinePrayerLabelWidth / 2f).coerceIn(4f, panelWidth - timelinePrayerLabelWidth - 4f),
-                                (labelCenterY - timelinePrayerLabelHeight / 2f).coerceIn(4f, panelHeight - timelinePrayerLabelHeight - 4f),
-                            )
-                        }
-                    val timelineAlarmLabelWidth = 40f
-                    val timelineAlarmLabelHeight = 16f
-                    val timelineAlarmMarkerRadius = 5.2f
-                    val timelineAlarmGap = 3f
-                    val timelineAlarmClusterLabelWidth = timelineAlarmLabelWidth
-                    val timelineAlarmCollisionPadding = 3f
-                    val timelineAlarmMinMarkerSpacing = timelineAlarmMarkerRadius * 2f + 3.2f
-                    val timelineAlarmAngles = data.timelineAlarms.map { alarm -> minuteToTimelineAngleDegrees(alarm.minuteOfDay) }
-                    val timelineAlarmLabelHalfWidth = timelineAlarmLabelWidth / 2f
-                    val timelineAlarmLabelHalfHeight = timelineAlarmLabelHeight / 2f
-                    val timelineAlarmMarkerLabelCenterDistance = timelineAlarmMarkerRadius + timelineAlarmGap + (
-                        timelineAlarmAngles.maxOfOrNull { angleDegrees ->
-                            val radians = angleDegrees * PI / 180.0
-                            val radialX = cos(radians).toFloat()
-                            val radialY = sin(radians).toFloat()
-                            abs(radialX) * timelineAlarmLabelHalfWidth + abs(radialY) * timelineAlarmLabelHalfHeight
-                        } ?: 0f
-                    )
-
-                    // Fixed obstacles: every non-alarm time label that alarm labels must never overlap.
-                    val nonAlarmLabelObstacles = mutableListOf<Rect>()
-                    run {
-                        val pad = 2f
-                        fun obstacle(x: Float, y: Float, width: Float, height: Float) {
-                            nonAlarmLabelObstacles.add(
-                                Rect(x - pad, y - pad, x + width + pad, y + height + pad),
-                            )
-                        }
-                        obstacle(sunriseLabelX, sunriseLabelY, sunriseLabelWidth, timeLabelHeight)
-                        obstacle(maghribLabelX, maghribLabelY, maghribLabelWidth, timeLabelHeight)
-                        obstacle(fajrLabelX, fajrLabelY, fajrLabelWidth, timeLabelHeight)
-                        obstacle(secondThirdLabelX, secondThirdLabelY, thirdLabelWidth, timeLabelHeight)
-                        obstacle(finalThirdLabelX, finalThirdLabelY, thirdLabelWidth, timeLabelHeight)
-                        obstacle(twilightLabelX, twilightLabelY, 56f, 20f)
-                        if (data.showCurrentTime && data.sunAltitudeDeg != null) {
-                            obstacle(12f, 14f, panelWidth - 24f, sunAngleLineHeight)
-                        }
-                        timelinePrayerLabels.forEach { (_, labelX, labelY) ->
-                            obstacle(labelX, labelY, timelinePrayerLabelWidth, timelinePrayerLabelHeight)
-                        }
-                    }
-
-                    // Non-alarm markers act as ordering barriers: alarms separated by a prayer/event
-                    // marker must never be reordered or merged across it (keeps before/after intact).
-                    val nonAlarmBarrierAngles = (
-                        listOf(
-                            sunriseAngleDegrees,
-                            sunriseAngleDegrees + 360f,
-                            sunsetAngleDegrees,
-                            secondThirdAngleDegrees,
-                            finalThirdAngleDegrees,
-                            fajrAngleDegrees,
-                        ) + timelinePrayerAngles
-                        ).distinct().sorted()
-                    fun barrierGapIndex(angleDegrees: Float): Int =
-                        nonAlarmBarrierAngles.count { barrierAngle -> barrierAngle < angleDegrees }
-
-                    data class TimelineAlarmCandidate(
-                        val alarm: NightTimelineAlarm,
-                        val angleDegrees: Float,
-                        val gapIndex: Int,
-                        val iconCenterX: Float,
-                        val iconCenterY: Float,
-                        val labelX: Float,
-                        val labelY: Float,
-                        val labelBounds: Rect,
-                        val markerBounds: Rect,
-                    )
-
-                    data class TimelineAlarmClusterDraft(
-                        val candidates: MutableList<TimelineAlarmCandidate>,
-                        var labelBounds: Rect,
-                        var markerBounds: Rect,
-                    )
-
-                    fun expandedRect(left: Float, top: Float, right: Float, bottom: Float, padding: Float): Rect = Rect(
-                        left = left - padding,
-                        top = top - padding,
-                        right = right + padding,
-                        bottom = bottom + padding,
-                    )
-
-                    fun combineRects(first: Rect, second: Rect): Rect = Rect(
-                        left = minOf(first.left, second.left),
-                        top = minOf(first.top, second.top),
-                        right = maxOf(first.right, second.right),
-                        bottom = maxOf(first.bottom, second.bottom),
-                    )
-
-                    fun rectsOverlap(first: Rect, second: Rect): Boolean =
-                        first.left < second.right &&
-                            second.left < first.right &&
-                            first.top < second.bottom &&
-                            second.top < first.bottom
-
-                    fun markerDistance(first: TimelineAlarmCandidate, second: TimelineAlarmCandidate): Float {
-                        val dx = first.iconCenterX - second.iconCenterX
-                        val dy = first.iconCenterY - second.iconCenterY
-                        return sqrt(dx * dx + dy * dy)
-                    }
-
-                    // Only merge alarms that physically collide on the ring AND share the same gap
-                    // between non-alarm barriers — this preserves before/after ordering (reqs 5 & 6).
-                    fun clusterCollides(cluster: TimelineAlarmClusterDraft, candidate: TimelineAlarmCandidate): Boolean =
-                        cluster.candidates.first().gapIndex == candidate.gapIndex &&
-                            cluster.candidates.any { existing -> existing.alarm.minuteOfDay == candidate.alarm.minuteOfDay }
-
-                    fun clustersCollide(first: TimelineAlarmClusterDraft, second: TimelineAlarmClusterDraft): Boolean =
-                        first.candidates.first().gapIndex == second.candidates.first().gapIndex &&
-                            first.candidates.any { left ->
-                                second.candidates.any { right -> left.alarm.minuteOfDay == right.alarm.minuteOfDay }
-                            }
-
-                    val markerHalfSize = timelineAlarmMarkerRadius + 1f
-                    val timelineAlarmCandidates = data.timelineAlarms.zip(timelineAlarmAngles).map { (alarm, angleDegrees) ->
-                        val radians = angleDegrees * PI / 180.0
-                        val radialX = cos(radians).toFloat()
-                        val radialY = sin(radians).toFloat()
-                        val iconCenterX = circleCenterX + circleRadius * radialX
-                        val iconCenterY = circleCenterY + circleRadius * radialY
-                        val labelRadius = (circleRadius - timelineAlarmMarkerLabelCenterDistance).coerceAtLeast(18f)
-                        val labelCenterX = circleCenterX + labelRadius * radialX
-                        val labelCenterY = circleCenterY + labelRadius * radialY
-                        val labelX = labelCenterX - timelineAlarmLabelWidth / 2f
-                        val labelY = labelCenterY - timelineAlarmLabelHeight / 2f
-                        TimelineAlarmCandidate(
-                            alarm = alarm,
-                            angleDegrees = angleDegrees,
-                            gapIndex = barrierGapIndex(angleDegrees),
-                            iconCenterX = iconCenterX,
-                            iconCenterY = iconCenterY,
-                            labelX = labelX,
-                            labelY = labelY,
-                            labelBounds = expandedRect(
-                                labelX,
-                                labelY,
-                                labelX + timelineAlarmLabelWidth,
-                                labelY + timelineAlarmLabelHeight,
-                                timelineAlarmCollisionPadding,
-                            ),
-                            markerBounds = expandedRect(
-                                iconCenterX - markerHalfSize,
-                                iconCenterY - markerHalfSize,
-                                iconCenterX + markerHalfSize,
-                                iconCenterY + markerHalfSize,
-                                0f,
-                            ),
-                        )
-                    }
-                    val timelineAlarmClusterDrafts = mutableListOf<TimelineAlarmClusterDraft>()
-                    timelineAlarmCandidates.sortedBy { candidate -> candidate.angleDegrees }.forEach { candidate ->
-                        val previousCluster = timelineAlarmClusterDrafts.lastOrNull()
-                        if (previousCluster != null && clusterCollides(previousCluster, candidate)) {
-                            previousCluster.candidates.add(candidate)
-                            previousCluster.labelBounds = combineRects(previousCluster.labelBounds, candidate.labelBounds)
-                            previousCluster.markerBounds = combineRects(previousCluster.markerBounds, candidate.markerBounds)
-                        } else {
-                            timelineAlarmClusterDrafts.add(
-                                TimelineAlarmClusterDraft(
-                                    candidates = mutableListOf(candidate),
-                                    labelBounds = candidate.labelBounds,
-                                    markerBounds = candidate.markerBounds,
-                                ),
-                            )
-                        }
-                    }
-                    if (timelineAlarmClusterDrafts.size > 1) {
-                        val firstCluster = timelineAlarmClusterDrafts.first()
-                        val lastCluster = timelineAlarmClusterDrafts.last()
-                        if (clustersCollide(lastCluster, firstCluster)) {
-                            lastCluster.candidates.addAll(firstCluster.candidates)
-                            lastCluster.labelBounds = combineRects(lastCluster.labelBounds, firstCluster.labelBounds)
-                            lastCluster.markerBounds = combineRects(lastCluster.markerBounds, firstCluster.markerBounds)
-                            timelineAlarmClusterDrafts.removeAt(0)
-                        }
-                    }
-
-                    val nonAlarmMarkerCenters = nonAlarmBarrierAngles.map { angleDegrees ->
-                        val radians = angleDegrees * PI / 180.0
-                        (circleCenterX + circleRadius * cos(radians).toFloat()) to
-                            (circleCenterY + circleRadius * sin(radians).toFloat())
-                    }
-                    // Non-alarm marker dots become small obstacles so alarm labels never sit on top of them.
-                    val nonAlarmMarkerObstacles = nonAlarmMarkerCenters.map { (markerX, markerY) ->
-                        expandedRect(markerX - 5.5f, markerY - 5.5f, markerX + 5.5f, markerY + 5.5f, 1.5f)
-                    }
-                    val placedAlarmMarkerCenters = mutableListOf<Pair<Float, Float>>()
-                    val allAlarmMarkerObstacles = mutableListOf<Rect>()
-                    val placedAlarmLabelBounds = mutableListOf<Rect>()
-
-                    data class TimelineAlarmMarkerPlacement(
-                        val cluster: TimelineAlarmClusterDraft,
-                        val anchor: TimelineAlarmCandidate,
-                        val alarms: List<NightTimelineAlarm>,
-                        val labelWidth: Float,
-                        val desiredAngleDegrees: Float,
-                        val visualAngleDegrees: Float,
-                        val markerX: Float,
-                        val markerY: Float,
-                        val markerWasNudged: Boolean,
-                    )
-
-                    data class TimelineAlarmMarkerDraft(
-                        val candidates: List<TimelineAlarmCandidate>,
-                        val desiredAngleDegrees: Float,
-                        val gapIndex: Int,
-                    ) {
-                        val alarms: List<NightTimelineAlarm> = candidates.map { candidate -> candidate.alarm }.sortedBy { alarm -> alarm.minuteOfDay }
-                        val anchor: TimelineAlarmCandidate = candidates.sortedBy { candidate -> candidate.angleDegrees }[candidates.size / 2]
-                        val labelWidth: Float = if (alarms.size > 1) timelineAlarmClusterLabelWidth else timelineAlarmLabelWidth
-                    }
-
-                    fun signedAngleDeltaDegrees(fromDegrees: Float, toDegrees: Float): Float =
-                        ((toDegrees - fromDegrees + 540f) % 360f) - 180f
-
-                    fun timelinePointAt(angleDegrees: Float): Pair<Float, Float> {
-                        val radians = angleDegrees * PI / 180.0
-                        return (circleCenterX + circleRadius * cos(radians).toFloat()) to
-                            (circleCenterY + circleRadius * sin(radians).toFloat())
-                    }
-
-                    fun pointDistance(first: Pair<Float, Float>, second: Pair<Float, Float>): Float {
-                        val dx = first.first - second.first
-                        val dy = first.second - second.second
-                        return sqrt(dx * dx + dy * dy)
-                    }
-
-                    val alarmMarkerMinGap = timelineAlarmMarkerRadius + 5.2f + 2f
-                    val alarmMarkerMinAngleGap = alarmMarkerMinGap / circleRadius * (180f / PI.toFloat())
-                    val alarmToAlarmMarkerMinAngleGap = timelineAlarmMinMarkerSpacing / circleRadius * (180f / PI.toFloat())
-
-                    fun gapBounds(gapIndex: Int): Pair<Float, Float> {
-                        val lower = if (gapIndex > 0) {
-                            nonAlarmBarrierAngles[gapIndex - 1]
-                        } else {
-                            nonAlarmBarrierAngles.first() - 360f
-                        }
-                        val upper = if (gapIndex < nonAlarmBarrierAngles.size) {
-                            nonAlarmBarrierAngles[gapIndex]
-                        } else {
-                            nonAlarmBarrierAngles.last() + 360f
-                        }
-                        return (lower + alarmMarkerMinAngleGap) to (upper - alarmMarkerMinAngleGap)
-                    }
-
-                    fun fitMarkerAngles(drafts: List<TimelineAlarmMarkerDraft>): List<Pair<TimelineAlarmMarkerDraft, Float>>? {
-                        if (drafts.isEmpty()) return emptyList()
-                        val gapIndex = drafts.first().gapIndex
-                        val (minAngle, maxAngle) = gapBounds(gapIndex)
-                        if (minAngle > maxAngle) return null
-                        val sortedDrafts = drafts.sortedBy { draft -> draft.desiredAngleDegrees }
-                        val angles = sortedDrafts.map { draft -> draft.desiredAngleDegrees.coerceIn(minAngle, maxAngle) }.toMutableList()
-                        angles[0] = angles[0].coerceAtLeast(minAngle)
-                        for (index in 1 until angles.size) {
-                            angles[index] = angles[index].coerceAtLeast(angles[index - 1] + alarmToAlarmMarkerMinAngleGap)
-                        }
-                        if (angles.last() > maxAngle) {
-                            angles[angles.lastIndex] = maxAngle
-                            for (index in angles.lastIndex - 1 downTo 0) {
-                                angles[index] = angles[index].coerceAtMost(angles[index + 1] - alarmToAlarmMarkerMinAngleGap)
-                            }
-                        }
-                        if (angles.first() < minAngle || angles.last() > maxAngle) return null
-                        return sortedDrafts.zip(angles)
-                    }
-
-                    fun mergeClosestMarkerDrafts(drafts: List<TimelineAlarmMarkerDraft>): List<TimelineAlarmMarkerDraft> {
-                        if (drafts.size < 2) return drafts
-                        val sortedDrafts = drafts.sortedBy { draft -> draft.desiredAngleDegrees }
-                        val mergeIndex = (0 until sortedDrafts.lastIndex).minByOrNull { index ->
-                            sortedDrafts[index + 1].desiredAngleDegrees - sortedDrafts[index].desiredAngleDegrees
-                        } ?: return sortedDrafts
-                        val mergedCandidates = sortedDrafts[mergeIndex].candidates + sortedDrafts[mergeIndex + 1].candidates
-                        val mergedDesiredAngle = mergedCandidates.map { candidate -> candidate.angleDegrees }.average().toFloat()
-                        val mergedDraft = TimelineAlarmMarkerDraft(
-                            candidates = mergedCandidates.sortedBy { candidate -> candidate.angleDegrees },
-                            desiredAngleDegrees = mergedDesiredAngle,
-                            gapIndex = sortedDrafts[mergeIndex].gapIndex,
-                        )
-                        return buildList {
-                            sortedDrafts.forEachIndexed { index, draft ->
-                                when (index) {
-                                    mergeIndex -> add(mergedDraft)
-                                    mergeIndex + 1 -> Unit
-                                    else -> add(draft)
-                                }
-                            }
-                        }
-                    }
-
-                    fun layoutMarkerDraftsForGap(drafts: List<TimelineAlarmMarkerDraft>): List<Pair<TimelineAlarmMarkerDraft, Float>> {
-                        var pendingDrafts = drafts
-                        while (pendingDrafts.size > 1) {
-                            fitMarkerAngles(pendingDrafts)?.let { return it }
-                            pendingDrafts = mergeClosestMarkerDrafts(pendingDrafts)
-                        }
-                        return fitMarkerAngles(pendingDrafts) ?: pendingDrafts.map { draft ->
-                            val (minAngle, maxAngle) = gapBounds(draft.gapIndex)
-                            // Close prayer markers can leave less room than the preferred padding.
-                            // Keep the remaining alarm group between them without an invalid range.
-                            draft to if (minAngle <= maxAngle) {
-                                draft.desiredAngleDegrees.coerceIn(minAngle, maxAngle)
-                            } else {
-                                (minAngle + maxAngle) / 2f
-                            }
-                        }
-                    }
-
-                    // Resolve the label position for one cluster: search outward from the marker dot
-                    // for the nearest free spot, preferring the radial direction (inside then outside the
-                    // ring) and only drifting tangentially when needed. Distance from the dot grows
-                    // gradually, so the chosen label is always as close to its marker as possible.
-                    fun resolveLabelCenter(angleDegrees: Float, labelWidth: Float): Pair<Float, Float> {
-                        val radians = angleDegrees * PI / 180.0
-                        val radialX = cos(radians).toFloat()
-                        val radialY = sin(radians).toFloat()
-                        val halfWidth = labelWidth / 2f
-                        val halfHeight = timelineAlarmLabelHeight / 2f
-                        val markerX = circleCenterX + circleRadius * radialX
-                        val markerY = circleCenterY + circleRadius * radialY
-                        // Minimum gap so the label box never overlaps its own marker dot.
-                        val minDistance = timelineAlarmMarkerRadius + timelineAlarmGap +
-                            (abs(radialX) * halfWidth + abs(radialY) * halfHeight)
-                        // Inward direction (marker -> circle centre); outward is the opposite.
-                        val inwardAngle = atan2((circleCenterY - markerY).toDouble(), (circleCenterX - markerX).toDouble())
-
-                        fun boxAtPoint(centerX: Float, centerY: Float): Rect =
-                            Rect(centerX - halfWidth, centerY - halfHeight, centerX + halfWidth, centerY + halfHeight)
-                        fun withinPanel(box: Rect): Boolean =
-                            box.left >= 2f && box.top >= 2f && box.right <= panelWidth - 2f && box.bottom <= panelHeight - 2f
-                        fun touchesTimelineCircle(box: Rect): Boolean {
-                            val closestX = circleCenterX.coerceIn(box.left, box.right)
-                            val closestY = circleCenterY.coerceIn(box.top, box.bottom)
-                            val closestDx = closestX - circleCenterX
-                            val closestDy = closestY - circleCenterY
-                            val closestDistance = sqrt(closestDx * closestDx + closestDy * closestDy)
-                            val farthestDistance = maxOf(
-                                sqrt((box.left - circleCenterX) * (box.left - circleCenterX) + (box.top - circleCenterY) * (box.top - circleCenterY)),
-                                sqrt((box.right - circleCenterX) * (box.right - circleCenterX) + (box.top - circleCenterY) * (box.top - circleCenterY)),
-                                sqrt((box.left - circleCenterX) * (box.left - circleCenterX) + (box.bottom - circleCenterY) * (box.bottom - circleCenterY)),
-                                sqrt((box.right - circleCenterX) * (box.right - circleCenterX) + (box.bottom - circleCenterY) * (box.bottom - circleCenterY)),
-                            )
-                            val circlePadding = 4f
-                            return closestDistance <= circleRadius + circlePadding && farthestDistance >= circleRadius - circlePadding
-                        }
-                        fun clears(box: Rect): Boolean =
-                            withinPanel(box) &&
-                                !touchesTimelineCircle(box) &&
-                                nonAlarmLabelObstacles.none { rectsOverlap(it, box) } &&
-                                nonAlarmMarkerObstacles.none { rectsOverlap(it, box) } &&
-                                allAlarmMarkerObstacles.none { rectsOverlap(it, box) } &&
-                                placedAlarmLabelBounds.none { rectsOverlap(it, box) }
-                        fun clearsHardObstacles(box: Rect): Boolean =
-                            withinPanel(box) &&
-                                !touchesTimelineCircle(box) &&
-                                nonAlarmLabelObstacles.none { rectsOverlap(it, box) } &&
-                                nonAlarmMarkerObstacles.none { rectsOverlap(it, box) } &&
-                                allAlarmMarkerObstacles.none { rectsOverlap(it, box) }
-
-                        // Direction offsets relative to the inward radial ray, ordered by preference:
-                        // straight inside, straight outside, then progressively larger tangential drifts.
-                        val directionOffsets = listOf(
-                            0f,
-                            180f,
-                            20f,
-                            -20f,
-                            160f,
-                            -160f,
-                            40f,
-                            -40f,
-                            140f,
-                            -140f,
-                            60f,
-                            -60f,
-                            120f,
-                            -120f,
-                            90f,
-                            -90f,
-                        )
-                        var fallbackCenter: Pair<Float, Float>? = null
-                        var distance = minDistance
-                        while (distance <= minDistance + 220f) {
-                            for (offset in directionOffsets) {
-                                val dir = inwardAngle + offset * PI / 180.0
-                                val centerX = markerX + distance * cos(dir).toFloat()
-                                val centerY = markerY + distance * sin(dir).toFloat()
-                                val box = boxAtPoint(centerX, centerY)
-                                if (fallbackCenter == null && clearsHardObstacles(box)) {
-                                    fallbackCenter = centerX to centerY
-                                }
-                                if (clears(box)) {
-                                    placedAlarmLabelBounds.add(
-                                        expandedRect(box.left, box.top, box.right, box.bottom, timelineAlarmCollisionPadding),
-                                    )
-                                    return centerX to centerY
-                                }
-                            }
-                            distance += 8f
-                        }
-                        val safeFallbackCenter = fallbackCenter ?: (
-                            (circleCenterX + (circleRadius - minDistance) * radialX) to
-                                (circleCenterY + (circleRadius - minDistance) * radialY)
-                            )
-                        val fallbackBox = boxAtPoint(safeFallbackCenter.first, safeFallbackCenter.second)
-                        placedAlarmLabelBounds.add(
-                            expandedRect(fallbackBox.left, fallbackBox.top, fallbackBox.right, fallbackBox.bottom, timelineAlarmCollisionPadding),
-                        )
-                        return safeFallbackCenter
-                    }
-
-                    val timelineAlarmMarkerDrafts = timelineAlarmClusterDrafts
-                        .map { cluster ->
-                            val sortedCandidates = cluster.candidates.sortedBy { candidate -> candidate.angleDegrees }
-                            val anchor = sortedCandidates[sortedCandidates.size / 2]
-                            TimelineAlarmMarkerDraft(
-                                candidates = sortedCandidates,
-                                desiredAngleDegrees = anchor.angleDegrees,
-                                gapIndex = anchor.gapIndex,
-                            )
-                        }
-
-                    val timelineAlarmMarkerPlacements = timelineAlarmMarkerDrafts
-                        .groupBy { draft -> draft.gapIndex }
-                        .toSortedMap()
-                        .flatMap { (_, gapDrafts) -> layoutMarkerDraftsForGap(gapDrafts) }
-                        .sortedBy { (draft, _) -> draft.desiredAngleDegrees }
-                        .map { (draft, visualAngleDegrees) ->
-                            val radians = visualAngleDegrees * PI / 180.0
-                            val radialX = cos(radians).toFloat()
-                            val radialY = sin(radians).toFloat()
-                            val markerX = circleCenterX + circleRadius * radialX
-                            val markerY = circleCenterY + circleRadius * radialY
-                            val markerWasNudgedForNonAlarm = nonAlarmMarkerCenters.any { markerCenter ->
-                                pointDistance(timelinePointAt(draft.desiredAngleDegrees), markerCenter) < alarmMarkerMinGap
-                            }
-
-                            TimelineAlarmMarkerPlacement(
-                                cluster = TimelineAlarmClusterDraft(
-                                    candidates = draft.candidates.toMutableList(),
-                                    labelBounds = draft.candidates.first().labelBounds,
-                                    markerBounds = draft.candidates.first().markerBounds,
-                                ),
-                                anchor = draft.anchor,
-                                alarms = draft.alarms,
-                                labelWidth = draft.labelWidth,
-                                desiredAngleDegrees = draft.desiredAngleDegrees,
-                                visualAngleDegrees = visualAngleDegrees,
-                                markerX = markerX,
-                                markerY = markerY,
-                                markerWasNudged = markerWasNudgedForNonAlarm,
-                            )
-                        }
-
-                    timelineAlarmMarkerPlacements.forEach { placement ->
-                        allAlarmMarkerObstacles.add(
-                            expandedRect(
-                                placement.markerX - timelineAlarmMarkerRadius,
-                                placement.markerY - timelineAlarmMarkerRadius,
-                                placement.markerX + timelineAlarmMarkerRadius,
-                                placement.markerY + timelineAlarmMarkerRadius,
-                                1.5f,
-                            ),
-                        )
-                    }
-
-                    val timelineAlarmPlacements = timelineAlarmMarkerPlacements.map { placement ->
-                        val (labelCenterX, labelCenterY) = resolveLabelCenter(placement.visualAngleDegrees, placement.labelWidth)
-
-                        NightTimelineAlarmPlacement(
-                            id = placement.alarms.joinToString("|") { alarm -> alarm.id },
-                            alarms = placement.alarms,
-                            iconCenterX = placement.markerX,
-                            iconCenterY = placement.markerY,
-                            nearNonAlarmMarker = placement.markerWasNudged,
-                            labelCenterX = labelCenterX,
-                            labelCenterY = labelCenterY,
-                            labelX = labelCenterX - placement.labelWidth / 2f,
-                            labelY = labelCenterY - timelineAlarmLabelHeight / 2f,
-                            labelWidth = placement.labelWidth,
-                            label = if (placement.alarms.size > 1) "+${placement.alarms.size}" else placement.alarms.first().title,
-                            time = placement.alarms.first().time,
-                        )
-                    }
 
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val scaleX = size.width / panelWidth
@@ -892,11 +245,8 @@ internal fun PrayerDayOverviewCard(
                         val sunsetPoint = Offset(sunsetX * scaleX, sunsetY * scaleY)
                         val sunriseSunCenter = Offset(sunriseSunX * scaleX, sunriseSunY * scaleY)
                         val sunsetSunCenter = Offset(sunsetSunX * scaleX, sunsetSunY * scaleY)
-                        val noonSunCenter = Offset(circleCenter.x, circleTopPx - 28f * scaleY)
-                        val midnightMoonCenter = Offset(
-                            x = circleCenter.x * 2f - noonSunCenter.x,
-                            y = circleCenter.y * 2f - noonSunCenter.y,
-                        )
+                        val noonSunCenter = layout.noonSun?.let { Offset(it.x * scaleX, it.y * scaleY) }
+                        val midnightMoonCenter = layout.moon?.let { Offset(it.x * scaleX, it.y * scaleY) }
                         val secondThirdPoint = Offset(secondThirdX * scaleX, secondThirdY * scaleY)
                         val finalThirdPoint = Offset(finalThirdX * scaleX, finalThirdY * scaleY)
                         val fajrPoint = Offset(fajrX * scaleX, fajrY * scaleY)
@@ -930,24 +280,16 @@ internal fun PrayerDayOverviewCard(
                             lineTo(circleCenter.x, circleCenter.y)
                             close()
                         }
-                        val lowerNightField = Path().apply {
-                            moveTo(0f, sunrisePoint.y)
-                            lineTo(sunrisePoint.x, sunrisePoint.y)
-                            lineTo(sunsetPoint.x, sunsetPoint.y)
-                            lineTo(sunsetBoundaryEnd.x, sunsetBoundaryEnd.y)
-                            lineTo(size.width, size.height)
-                            lineTo(0f, size.height)
+                        // The sky outside the ring, day above the horizon and the sunset ray, night below: both
+                        // outlines walk the panel's corners, so neither leaves a strip uncovered when the ray meets
+                        // the top edge (short days) or the bottom edge (long days).
+                        fun outline(points: List<Offset>) = Path().apply {
+                            moveTo(points.first().x * scaleX, points.first().y * scaleY)
+                            points.drop(1).forEach { lineTo(it.x * scaleX, it.y * scaleY) }
                             close()
                         }
-                        val daylightField = Path().apply {
-                            moveTo(0f, 0f)
-                            lineTo(size.width, 0f)
-                            lineTo(sunsetBoundaryEnd.x, sunsetBoundaryEnd.y)
-                            lineTo(sunsetPoint.x, sunsetPoint.y)
-                            lineTo(sunrisePoint.x, sunrisePoint.y)
-                            lineTo(0f, sunrisePoint.y)
-                            close()
-                        }
+                        val lowerNightField = outline(layout.nightSkyOutline)
+                        val daylightField = outline(layout.daySkyOutline)
                         val twilightField = Path().apply {
                             moveTo(0f, sunrisePoint.y)
                             lineTo(sunrisePoint.x, sunrisePoint.y)
@@ -1410,17 +752,25 @@ internal fun PrayerDayOverviewCard(
                             drawCloud(circleCenter.x - circleRadiusPx * 0.72f, circleTopPx + circleRadiusPx * 0.25f, 0.68f)
                             drawCloud(circleCenter.x + circleRadiusPx * 0.30f, circleTopPx + circleRadiusPx * 0.23f, 0.72f)
 
-                            listOf(sunrisePoint, sunsetPoint).forEach { daylightBoundaryEnd ->
-                                drawLine(
-                                    color = Color.White.copy(alpha = 0.74f),
-                                    start = circleCenter,
-                                    end = daylightBoundaryEnd,
-                                    strokeWidth = 2.6f * scaleY,
-                                )
-                            }
-                            listOf(secondThirdPoint, finalThirdPoint).forEach { separatorEnd ->
-                                drawLine(Color(0xFF071D31).copy(alpha = 0.24f), start = circleCenter, end = separatorEnd, strokeWidth = 1.4f * scaleY)
-                                drawLine(GoldLight.copy(alpha = 0.20f), start = circleCenter, end = separatorEnd, strokeWidth = 0.75f * scaleY)
+                            // The lines from the centre stop at the two big words instead of crossing them.
+                            fun wordPx(word: Rect?) = word?.inflate(2f)?.let { Rect(it.left * scaleX, it.top * scaleY, it.right * scaleX, it.bottom * scaleY) } ?: Rect.Zero
+                            val dayWordPx = wordPx(layout.dayWord)
+                            val nightWordPx = wordPx(layout.nightWord)
+                            clipRect(dayWordPx.left, dayWordPx.top, dayWordPx.right, dayWordPx.bottom, ClipOp.Difference) {
+                                clipRect(nightWordPx.left, nightWordPx.top, nightWordPx.right, nightWordPx.bottom, ClipOp.Difference) {
+                                    listOf(sunrisePoint, sunsetPoint).forEach { daylightBoundaryEnd ->
+                                        drawLine(
+                                            color = Color.White.copy(alpha = 0.74f),
+                                            start = circleCenter,
+                                            end = daylightBoundaryEnd,
+                                            strokeWidth = 2.6f * scaleY,
+                                        )
+                                    }
+                                    listOf(secondThirdPoint, finalThirdPoint).forEach { separatorEnd ->
+                                        drawLine(Color(0xFF071D31).copy(alpha = 0.24f), start = circleCenter, end = separatorEnd, strokeWidth = 1.4f * scaleY)
+                                        drawLine(GoldLight.copy(alpha = 0.20f), start = circleCenter, end = separatorEnd, strokeWidth = 0.75f * scaleY)
+                                    }
+                                }
                             }
 
                             listOf(
@@ -1444,8 +794,8 @@ internal fun PrayerDayOverviewCard(
                             )
 
                         }
-                        drawCrescent(midnightMoonCenter)
-                        drawHorizonSun(noonSunCenter, Color(0xFFFFB84D))
+                        midnightMoonCenter?.let { drawCrescent(it) }
+                        noonSunCenter?.let { drawHorizonSun(it, Color(0xFFFFB84D)) }
                         drawCircle(
                             color = Color.White.copy(alpha = 0.76f),
                             radius = circleRadiusPx,
@@ -1462,35 +812,36 @@ internal fun PrayerDayOverviewCard(
                             drawArc(
                                 color = Color(0xFFFFC247),
                                 startAngle = activeSegmentStartAngle,
-                                sweepAngle = clockwiseSweepDegrees(activeSegmentStartAngle, activeSegmentEndAngle),
+                                sweepAngle = activeSegmentSweep,
                                 useCenter = false,
                                 topLeft = Offset(circleLeftPx, circleTopPx),
                                 size = Size(circleRadiusPx * 2f, circleRadiusPx * 2f),
                                 style = Stroke(width = 3f * scaleX),
                             )
                         }
+                        // The same lines the layout kept clear of every other text, dot and line.
                         timelineAlarmPlacements.forEach { placement ->
-                            val marker = Offset(placement.iconCenterX * scaleX, placement.iconCenterY * scaleY)
-                            val labelCenter = Offset(placement.labelCenterX * scaleX, placement.labelCenterY * scaleY)
-                            val dx = labelCenter.x - marker.x
-                            val dy = labelCenter.y - marker.y
-                            val distance = sqrt(dx * dx + dy * dy)
-                            if (distance > 19f * scaleX) {
-                                val unitX = dx / distance
-                                val unitY = dy / distance
+                            placement.leader?.let { (from, to) ->
+                                val onDaySky = layout.onDaySky(Offset(placement.labelCenterX, placement.labelCenterY))
                                 drawLine(
-                                    color = Color(0xFFFFC247).copy(alpha = if (placement.nearNonAlarmMarker) 0.72f else 0.46f),
-                                    start = Offset(
-                                        x = marker.x + unitX * 7f * scaleX,
-                                        y = marker.y + unitY * 7f * scaleY,
-                                    ),
-                                    end = Offset(
-                                        x = labelCenter.x - unitX * 10f * scaleX,
-                                        y = labelCenter.y - unitY * 10f * scaleY,
-                                    ),
+                                    color = if (onDaySky) {
+                                        Color(0xFF173F68).copy(alpha = 0.45f)
+                                    } else {
+                                        Color(0xFFFFC247).copy(alpha = if (placement.nearNonAlarmMarker) 0.72f else 0.46f)
+                                    },
+                                    start = Offset(from.x * scaleX, from.y * scaleY),
+                                    end = Offset(to.x * scaleX, to.y * scaleY),
                                     strokeWidth = 1.15f * scaleX,
                                 )
                             }
+                        }
+                        leaderLines.forEach { (ends, onDaySky) ->
+                            drawLine(
+                                color = if (onDaySky) Color(0xFF22364F).copy(alpha = 0.45f) else Color.White.copy(alpha = 0.45f),
+                                start = Offset(ends.first.x * scaleX, ends.first.y * scaleY),
+                                end = Offset(ends.second.x * scaleX, ends.second.y * scaleY),
+                                strokeWidth = 1.1f * scaleX,
+                            )
                         }
                         fun drawTimelineMarker(center: Offset) {
                             drawCircle(Color.White.copy(alpha = 0.96f), radius = 5.2f * scaleX, center = center)
@@ -1537,7 +888,7 @@ internal fun PrayerDayOverviewCard(
                             )
                         }
                         if (data.showCurrentTime && data.sunAltitudeDeg != null) {
-                            val radians = minuteToTimelineAngleDegrees(data.currentMinuteOfDay) * PI / 180.0
+                            val radians = currentAngleDegrees * PI / 180.0
                             val sunCenter = Offset(
                                 x = (circleCenterX + circleRadius * cos(radians).toFloat()) * scaleX,
                                 y = (circleCenterY + circleRadius * sin(radians).toFloat()) * scaleY,
@@ -1557,18 +908,29 @@ internal fun PrayerDayOverviewCard(
                         }
                     }
 
+                    val readByLabel = timelineAlarmPlacements.filter { it.showsLabel }.flatMap { it.labelAlarms }.map { it.id }.toSet()
+
                     timelineAlarmPlacements.forEach { placement ->
                         key(placement.id) {
-                            val accessibilityDescription = timelineAlarmAccessibilityDescription(placement)
-                            val actionLabel = timelineAlarmActionLabel(placement)
+                            val accessibilityDescription = timelineAlarmAccessibilityDescription(placement.alarms)
+                            val actionLabel = timelineAlarmActionLabel(placement.alarms)
                             // Transparent hit target over the alarm dot (the dot itself is drawn in the
                             // Canvas below the non-alarm markers). Single → edit directly; cluster → sheet.
-                            val touchSize = 30f
+                            // A dot whose time is written next to it is read once, with that time.
+                            // Its target is as large as it can be without reaching a neighbouring alarm dot's, so a
+                            // tap between two dots never opens the wrong alarm.
+                            val nearestDot = timelineAlarmPlacements.filter { it !== placement }
+                                .minOfOrNull { other -> hypot(other.iconCenterX - placement.iconCenterX, other.iconCenterY - placement.iconCenterY) }
+                            val touchSize = (nearestDot ?: 30f).coerceIn(12f, 30f)
+                            val readByItsTime = placement.alarms.all { it.id in readByLabel }
                             Box(
                                 modifier = Modifier
                                     .offset(x = (placement.iconCenterX - touchSize / 2f).dp, y = (placement.iconCenterY - touchSize / 2f).dp)
                                     .size(touchSize.dp)
                                     .testTag("prayer_original_alarm")
+                                    // Cleared before the click: a dot TalkBack reads through its time is not a second,
+                                    // unnamed button. A finger still opens it.
+                                    .then(if (readByItsTime) Modifier.clearAndSetSemantics {} else Modifier)
                                     .clip(CircleShape)
                                     .clickable(role = Role.Button, onClickLabel = actionLabel) {
                                         if (placement.isCluster) {
@@ -1577,123 +939,164 @@ internal fun PrayerDayOverviewCard(
                                             onEditWakeAlarm(placement.alarms.first().wakeAlarmId)
                                         }
                                     }
-                                    .semantics { contentDescription = accessibilityDescription },
+                                    .then(
+                                        if (readByItsTime) {
+                                            Modifier
+                                        } else {
+                                            Modifier.semantics {
+                                                contentDescription = accessibilityDescription
+                                                traversalIndex = readOrder(placement.alarms.first().minuteOfDay)
+                                            }
+                                        },
+                                    ),
                             )
                         }
                     }
 
-                    if (data.showCurrentTime) data.sunAltitudeDeg?.let { altitude ->
-                        val formattedAngle = String.format(Locale.US, "%.1f°", if (abs(altitude) < 0.05) 0.0 else altitude)
-                        val altitudeDescription = stringResource(R.string.prayer_day_overview_sun_angle_description, "\u2066$formattedAngle\u2069")
+                    // The line at the top: the sun's altitude now, or, on another day, which day the dial shows.
+                    val altitude = data.sunAltitudeDeg.takeIf { data.showCurrentTime }
+                    if (altitude != null) {
+                        // A real minus sign (U+2212), kept left of the digits by the isolate around it.
+                        val formattedAngle = String.format(Locale.US, "%.1f°", if (abs(altitude) < 0.05) 0.0 else altitude).replace('-', '−')
+                        val altitudeDescription = stringResource(R.string.prayer_day_overview_sun_angle_description, "⁦$formattedAngle⁩")
                         Text(
-                            text = "${stringResource(R.string.prayer_day_overview_sun_angle)}  \u2066$formattedAngle\u2069",
+                            text = "${stringResource(R.string.prayer_day_overview_sun_angle)}  ⁦$formattedAngle⁩",
                             modifier = Modifier.offset(x = 12.dp, y = 14.dp).width((panelWidth - 24f).dp)
                                 .testTag("prayer_day_sun_angle")
-                                .semantics { contentDescription = altitudeDescription },
+                                .semantics {
+                                    contentDescription = altitudeDescription
+                                    traversalIndex = -1f
+                                },
                             color = Color(0xFF22364F),
-                            fontSize = 11.sp,
-                            lineHeight = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
-                            style = TextStyle(textDirection = TextDirection.Rtl),
+                            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Rtl).merge(SunAngleStyle),
+                        )
+                    } else {
+                        Text(
+                            text = data.selectedDateLabel,
+                            modifier = Modifier.offset(x = 12.dp, y = 14.dp).width((panelWidth - 24f).dp)
+                                .testTag("prayer_day_date")
+                                .semantics { traversalIndex = -1f },
+                            color = Color(0xFF22364F),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Rtl).merge(SunAngleStyle),
                         )
                     }
 
-                    Text(
-                        text = "النهار",
-                        modifier = Modifier.offset(x = (panelWidth / 2f - 47f).dp, y = dayLabelY.dp).width(94.dp),
-                        fontSize = 24.sp,
-                        lineHeight = 26.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF22364F),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = "الليل",
-                        modifier = Modifier.offset(x = (panelWidth / 2f - 61f).dp, y = nightLabelY.dp).width(122.dp),
-                        fontSize = 24.sp,
-                        lineHeight = 26.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = "الشفق",
-                        modifier = Modifier.offset(x = twilightLabelX.dp, y = twilightLabelY.dp).width(56.dp),
-                        fontSize = 11.sp,
-                        lineHeight = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.88f),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                    )
-                    DayNightHorizonTime(
-                        label = "الشروق",
-                        time = data.sunriseTime,
-                        dark = false,
-                        modifier = Modifier.offset(x = sunriseLabelX.dp, y = sunriseLabelY.dp).width(sunriseLabelWidth.dp),
-                    )
-                    DayNightHorizonTime(
-                        label = "المغرب",
-                        time = data.timelinePrayers.firstOrNull { it.prayer == Prayer.MAGHRIB }?.time ?: data.thirds[0].startTime,
-                        dark = false,
-                        modifier = Modifier.offset(x = maghribLabelX.dp, y = maghribLabelY.dp).width(maghribLabelWidth.dp),
-                    )
-                    DayNightHorizonTime(
-                        label = "الفجر",
-                        time = data.timelinePrayers.firstOrNull { it.prayer == Prayer.FAJR }?.time ?: data.thirds[2].endTime,
-                        dark = false,
-                        modifier = Modifier.offset(x = fajrLabelX.dp, y = fajrLabelY.dp).width(fajrLabelWidth.dp),
-                    )
-                    DayNightHorizonTime(
-                        label = "الثلث الأخير",
-                        time = data.thirds[2].startTime,
-                        dark = false,
-                        modifier = Modifier.offset(x = finalThirdLabelX.dp, y = finalThirdLabelY.dp).width(thirdLabelWidth.dp),
-                    )
-                    DayNightHorizonTime(
-                        label = "الثلث الثاني",
-                        time = data.thirds[1].startTime,
-                        dark = false,
-                        modifier = Modifier.offset(x = secondThirdLabelX.dp, y = secondThirdLabelY.dp).width(thirdLabelWidth.dp),
-                    )
-                    timelineAlarmPlacements.forEach { placement ->
+                    // Each text sits in the box the layout measured and placed for it; one spare dp on each side
+                    // keeps a rounding step from cutting its last letter.
+                    fun Modifier.placedAt(box: Rect): Modifier = offset(x = (box.left - 1f).dp, y = box.top.dp).width((box.width + 2f).dp)
+                    // The big words and the wedge's name only name what the picture shows: TalkBack skips them.
+                    layout.dayWord?.let { word ->
+                        Text(
+                            text = "النهار",
+                            modifier = Modifier.placedAt(word).clearAndSetSemantics {},
+                            color = Color(0xFF22364F),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            style = LocalTextStyle.current.merge(BigWordStyle),
+                        )
+                    }
+                    layout.nightWord?.let { word ->
+                        Text(
+                            text = "الليل",
+                            modifier = Modifier.placedAt(word).clearAndSetSemantics {},
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            style = LocalTextStyle.current.merge(BigWordStyle),
+                        )
+                    }
+                    layout.twilight?.let { wedgeName ->
+                        Text(
+                            text = DIAL_FAJR_TIME,
+                            modifier = Modifier.placedAt(wedgeName).clearAndSetSemantics {},
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            // The wedge brightens towards sunrise: a dark halo keeps the white name readable on it.
+                            style = LocalTextStyle.current.merge(TwilightStyle).merge(TextStyle(shadow = NightTextHalo)),
+                        )
+                    }
+                    // Each text takes the colour that reads on the sky it sits on: navy on day, white on night.
+                    @Composable
+                    fun horizonTime(label: String, time: String, placed: DialLabel, minuteOfDay: Int) {
+                        if (placed.inList) return
+                        DayNightHorizonTime(
+                            label = label,
+                            time = time,
+                            dark = layout.onDaySky(placed.rect.center),
+                            modifier = Modifier.placedAt(placed.rect).semantics { traversalIndex = readOrder(minuteOfDay) },
+                        )
+                    }
+                    horizonTime(DIAL_SUNRISE, data.sunriseTime, layout.sunrise, data.sunriseMinuteOfDay)
+                    val maghrib = data.timelinePrayers.firstOrNull { it.prayer == Prayer.MAGHRIB }
+                    horizonTime(DIAL_MAGHRIB, maghrib?.time ?: data.thirds[0].startTime, layout.maghrib, maghrib?.minuteOfDay ?: data.thirds[0].startMinuteOfDay)
+                    val fajr = data.timelinePrayers.firstOrNull { it.prayer == Prayer.FAJR }
+                    horizonTime(DIAL_FAJR, fajr?.time ?: data.thirds[2].endTime, layout.fajr, fajrMinute)
+                    horizonTime(DIAL_FINAL_THIRD, data.thirds[2].startTime, layout.finalThird, data.thirds[2].startMinuteOfDay)
+                    horizonTime(DIAL_SECOND_THIRD, data.thirds[1].startTime, layout.secondThird, data.thirds[1].startMinuteOfDay)
+                    // A time stands for one dot, or, as a range, for a run of dots too close to show each time.
+                    timelineAlarmPlacements.filter { it.showsLabel }.forEach { placement ->
                         key("label_${placement.id}") {
-                            val accessibilityDescription = timelineAlarmAccessibilityDescription(placement)
-                            val actionLabel = timelineAlarmActionLabel(placement)
+                            val accessibilityDescription = timelineAlarmAccessibilityDescription(placement.labelAlarms)
+                            val actionLabel = timelineAlarmActionLabel(placement.labelAlarms)
+                            val labelBox = Rect(placement.labelX, placement.labelY, placement.labelX + placement.labelWidth, placement.labelY + placement.labelHeight)
                             val labelModifier = Modifier
-                                .offset(x = placement.labelX.dp, y = placement.labelY.dp)
-                                .width(placement.labelWidth.dp)
+                                .placedAt(labelBox)
                                 .then(
-                                    if (placement.isCluster) {
+                                    if (placement.labelAlarms.size > 1) {
                                         Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .clickable(role = Role.Button, onClickLabel = actionLabel) { selectedAlarmCluster = placement.alarms }
+                                            .clickable(role = Role.Button, onClickLabel = actionLabel) { selectedAlarmCluster = placement.labelAlarms }
                                     } else {
                                         Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .clickable(role = Role.Button, onClickLabel = actionLabel) { onEditWakeAlarm(placement.alarms.first().wakeAlarmId) }
+                                            .clickable(role = Role.Button, onClickLabel = actionLabel) { onEditWakeAlarm(placement.labelAlarms.first().wakeAlarmId) }
                                     },
                                 )
-                                .semantics { contentDescription = accessibilityDescription }
+                                .semantics {
+                                    contentDescription = accessibilityDescription
+                                    traversalIndex = readOrder(placement.labelAlarms.first().minuteOfDay)
+                                }
                             DayNightHorizonAlarmTime(
                                 time = placement.time,
+                                onDaySky = layout.onDaySky(labelBox.center),
                                 modifier = labelModifier,
                             )
                         }
                     }
-                    timelinePrayerLabels.forEach { (prayer, labelX, labelY) ->
+                    layout.prayerLabels.filterNot { (_, label) -> label.inList }.forEach { (prayer, label) ->
                         key(prayer.prayer.name) {
                             DayNightHorizonPrayerTime(
                                 label = prayer.title,
                                 time = prayer.time,
-                                dark = prayer.prayer == Prayer.DHUHR || prayer.prayer == Prayer.JOMOAA || prayer.prayer == Prayer.ASR,
-                                modifier = Modifier.offset(x = labelX.dp, y = labelY.dp).width(timelinePrayerLabelWidth.dp),
+                                dark = layout.onDaySky(label.rect.center),
+                                modifier = Modifier.placedAt(label.rect).semantics { traversalIndex = readOrder(prayer.minuteOfDay) },
                             )
                         }
+                    }
+                    }
+                    // The names the dial had no room for (the largest text sizes): listed under it, in the day's order.
+                    val maghribPrayer = data.timelinePrayers.firstOrNull { it.prayer == Prayer.MAGHRIB }
+                    val fajrPrayer = data.timelinePrayers.firstOrNull { it.prayer == Prayer.FAJR }
+                    val unplaced = buildList {
+                        if (layout.sunrise.inList) add(DialListEntry(DIAL_SUNRISE, data.sunriseTime, data.sunriseMinuteOfDay))
+                        if (layout.maghrib.inList) {
+                            add(DialListEntry(DIAL_MAGHRIB, maghribPrayer?.time ?: data.thirds[0].startTime, maghribPrayer?.minuteOfDay ?: data.thirds[0].startMinuteOfDay))
+                        }
+                        if (layout.fajr.inList) add(DialListEntry(DIAL_FAJR, fajrPrayer?.time ?: data.thirds[2].endTime, fajrMinute))
+                        if (layout.secondThird.inList) add(DialListEntry(DIAL_SECOND_THIRD, data.thirds[1].startTime, data.thirds[1].startMinuteOfDay))
+                        if (layout.finalThird.inList) add(DialListEntry(DIAL_FINAL_THIRD, data.thirds[2].startTime, data.thirds[2].startMinuteOfDay))
+                        layout.prayerLabels.filter { (_, label) -> label.inList }.forEach { (prayer, _) ->
+                            add(DialListEntry(prayer.title, prayer.time, prayer.minuteOfDay))
+                        }
+                    }.sortedBy { readOrder(it.minuteOfDay) }
+                    if (unplaced.isNotEmpty()) {
+                        DialUnplacedList(unplaced, readOrder = ::readOrder)
+                    }
                     }
                 }
             }
@@ -1702,24 +1105,73 @@ internal fun PrayerDayOverviewCard(
 }
 }
 
+/** A soft dark halo round light text on the night sky, which brightens towards sunrise. */
+private val NightTextHalo = Shadow(color = Color(0xFF061D32).copy(alpha = 0.9f), offset = Offset.Zero, blurRadius = 4f)
+
+// The dial's text styles: the texts below are drawn with them and the layout measures them, so the two agree.
+// Names were 8 and 9 sp, too small to read at a glance; the layout makes room for these sizes.
+private val HorizonNameStyle = TextStyle(fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold)
+private val HorizonTimeStyle = TextStyle(fontSize = 12.sp, lineHeight = 13.sp, fontWeight = FontWeight.Black)
+private val PrayerNameStyle = TextStyle(fontSize = 10.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold)
+private val PrayerTimeStyle = TextStyle(fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Black)
+// Alarm times stay at 10 sp: a run of close alarms then still fits as one time per dot.
+private val AlarmTimeStyle = TextStyle(fontSize = 10.sp, lineHeight = 11.sp, fontWeight = FontWeight.Black)
+private val TwilightStyle = TextStyle(fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold)
+private val BigWordStyle = TextStyle(fontSize = 24.sp, lineHeight = 26.sp, fontWeight = FontWeight.Black)
+private val SunAngleStyle = TextStyle(fontSize = 11.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold)
+
+/** The dial's text sizes (dp) at the phone's font and font size. */
 @Composable
-private fun timelineAlarmAccessibilityDescription(placement: NightTimelineAlarmPlacement): String {
-    val mainAlarm = stringResource(R.string.prayer_day_overview_main_alarm)
-    val extraAlarm = stringResource(R.string.prayer_day_overview_extra_alarm)
-    val alarms = placement.alarms.joinToString("؛ ") { alarm ->
-        "${if (alarm.isSubAlarm) extraAlarm else mainAlarm}، ${alarm.title}، ${alarm.time}"
+internal fun rememberDialTextSizes(): DialTextSizes {
+    val textMeasurer = rememberTextMeasurer(cacheSize = 32)
+    val density = LocalDensity.current
+    val baseStyle = LocalTextStyle.current
+    val sunAngleLabel = stringResource(R.string.prayer_day_overview_sun_angle)
+    return remember(textMeasurer, density, baseStyle, sunAngleLabel) {
+        fun line(text: String, style: TextStyle): DialSize {
+            val size = textMeasurer.measure(text, style = style, softWrap = false, maxLines = 1, density = density).size
+            return with(density) { DialSize(size.width.toDp().value, size.height.toDp().value) }
+        }
+        fun twoLines(top: DialSize, bottom: DialSize, gap: Float) =
+            DialSize(maxOf(top.width, bottom.width), top.height + gap + bottom.height)
+        val horizonName = baseStyle.merge(HorizonNameStyle)
+        val horizonTime = baseStyle.merge(HorizonTimeStyle)
+        val prayerName = baseStyle.merge(PrayerNameStyle)
+        val prayerTime = baseStyle.merge(PrayerTimeStyle)
+        val alarmTime = TextStyle(fontFamily = AppFontFamily).merge(AlarmTimeStyle)
+        val bigWord = baseStyle.merge(BigWordStyle)
+        DialTextSizes(
+            horizon = { name, time -> twoLines(line(name, horizonName), line(time, horizonTime), 1f) },
+            prayer = { name, time -> twoLines(line(name, prayerName), line(time, prayerTime), 0f) },
+            alarmTime = { time -> line(time, alarmTime) },
+            twilight = line(DIAL_FAJR_TIME, baseStyle.merge(TwilightStyle)),
+            dayWord = line("النهار", bigWord),
+            nightWord = line("الليل", bigWord),
+            // Measured with its widest value, so it never grows past the space kept for it.
+            sunAngle = line("$sunAngleLabel  ⁦−88.8°⁩", TextStyle(fontFamily = AppFontFamily).merge(SunAngleStyle)),
+            dateLine = { date -> line(date, TextStyle(fontFamily = AppFontFamily).merge(SunAngleStyle)) },
+        )
     }
-    return if (placement.isCluster) {
-        "${stringResource(R.string.prayer_day_overview_alarm_count, placement.alarms.size)}. $alarms"
-    } else alarms
 }
 
 @Composable
-private fun timelineAlarmActionLabel(placement: NightTimelineAlarmPlacement): String? =
-    if (placement.isCluster) null else stringResource(
+private fun timelineAlarmAccessibilityDescription(alarms: List<NightTimelineAlarm>): String {
+    val mainAlarm = stringResource(R.string.prayer_day_overview_main_alarm)
+    val extraAlarm = stringResource(R.string.prayer_day_overview_extra_alarm)
+    val described = alarms.joinToString("؛ ") { alarm ->
+        "${if (alarm.isSubAlarm) extraAlarm else mainAlarm}، ${alarm.title}، ${alarm.time}"
+    }
+    return if (alarms.size > 1) {
+        "${stringResource(R.string.prayer_day_overview_alarm_count, alarms.size)}. $described"
+    } else described
+}
+
+@Composable
+private fun timelineAlarmActionLabel(alarms: List<NightTimelineAlarm>): String? =
+    if (alarms.size > 1) null else stringResource(
         R.string.prayer_day_overview_edit_named_alarm,
-        placement.alarms.first().title,
-        placement.alarms.first().time,
+        alarms.first().title,
+        alarms.first().time,
     )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1812,6 +1264,43 @@ private fun TimelineAlarmClusterRow(
     }
 }
 
+/** A name and time the dial had no free spot for. */
+private data class DialListEntry(val label: String, val time: String, val minuteOfDay: Int)
+
+private val DialListNameStyle = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold)
+private val DialListTimeStyle = TextStyle(fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Black)
+
+/**
+ * At the largest text sizes, the names and times the dial had no free spot for: under the dial, each name with its
+ * time, in the day's order. TalkBack reads each at its place in the day.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DialUnplacedList(entries: List<DialListEntry>, readOrder: (Int) -> Float) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 2.dp)
+                .testTag("prayer_day_unplaced"),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            entries.forEach { entry ->
+                Row(
+                    // Read as one: its name, then its time.
+                    modifier = Modifier.semantics(mergeDescendants = true) { traversalIndex = readOrder(entry.minuteOfDay) },
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(text = entry.label, color = Color(0xFF22364F), maxLines = 1, style = LocalTextStyle.current.merge(DialListNameStyle))
+                    Text(text = entry.time, color = Color(0xFF22364F), maxLines = 1, style = LocalTextStyle.current.merge(DialListTimeStyle))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DayNightHorizonTime(
     label: String,
@@ -1820,27 +1309,24 @@ private fun DayNightHorizonTime(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier,
+        // Read as one: its name, then its time.
+        modifier = modifier.semantics(mergeDescendants = true) {},
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
         Text(
             text = label,
-            fontSize = 9.sp,
-            lineHeight = 11.sp,
-            fontWeight = FontWeight.Bold,
             color = if (dark) Color(0xFF22364F) else Color.White,
             textAlign = TextAlign.Center,
             maxLines = 1,
+            style = LocalTextStyle.current.merge(HorizonNameStyle).merge(TextStyle(shadow = if (dark) null else NightTextHalo)),
         )
         Text(
             text = time,
-            fontSize = 12.sp,
-            lineHeight = 13.sp,
-            fontWeight = FontWeight.Black,
             color = if (dark) Color(0xFF22364F) else Color.White,
             textAlign = TextAlign.Center,
             maxLines = 1,
+            style = LocalTextStyle.current.merge(HorizonTimeStyle).merge(TextStyle(shadow = if (dark) null else NightTextHalo)),
         )
     }
 }
@@ -1848,6 +1334,7 @@ private fun DayNightHorizonTime(
 @Composable
 private fun DayNightHorizonAlarmTime(
     time: String,
+    onDaySky: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1855,21 +1342,16 @@ private fun DayNightHorizonAlarmTime(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Amber with a dark shadow reads on the night; on the day sky the time is navy, as the prayers there are.
         Text(
             text = time,
-            fontSize = 10.sp,
-            lineHeight = 11.sp,
-            fontWeight = FontWeight.Black,
-            color = Color(0xFFFFD479),
+            color = if (onDaySky) Color(0xFF173F68) else Color(0xFFFFD479),
             textAlign = TextAlign.Center,
             maxLines = 1,
             style = TextStyle(
-                shadow = Shadow(
-                    color = Color(0xFF061D32).copy(alpha = 0.72f),
-                    offset = Offset(0f, 0.8f),
-                    blurRadius = 1.8f,
-                ),
-            ),
+                fontFamily = AppFontFamily,
+                shadow = if (onDaySky) null else NightTextHalo,
+            ).merge(AlarmTimeStyle),
         )
     }
 }
@@ -1882,36 +1364,25 @@ private fun DayNightHorizonPrayerTime(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier,
+        // Read as one: its name, then its time.
+        modifier = modifier.semantics(mergeDescendants = true) {},
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         Text(
             text = label,
-            fontSize = 8.sp,
-            lineHeight = 9.sp,
-            fontWeight = FontWeight.Bold,
             color = if (dark) Color(0xFF173F68) else Color.White.copy(alpha = 0.92f),
             textAlign = TextAlign.Center,
             maxLines = 1,
+            style = LocalTextStyle.current.merge(PrayerNameStyle).merge(TextStyle(shadow = if (dark) null else NightTextHalo)),
         )
         Text(
             text = time,
             modifier = Modifier.offset(y = (-2).dp),
-            fontSize = 10.sp,
-            lineHeight = 10.sp,
-            fontWeight = FontWeight.Black,
             color = if (dark) Color(0xFF173F68) else Color.White,
             textAlign = TextAlign.Center,
             maxLines = 1,
+            style = LocalTextStyle.current.merge(PrayerTimeStyle).merge(TextStyle(shadow = if (dark) null else NightTextHalo)),
         )
     }
-}
-
-private fun normalizedMinuteOfDay(minuteOfDay: Int): Int =
-    ((minuteOfDay % (24 * 60)) + (24 * 60)) % (24 * 60)
-
-private fun minutesBetweenInDay(startMinuteOfDay: Int, endMinuteOfDay: Int): Int {
-    val totalMinutes = 24 * 60
-    return (normalizedMinuteOfDay(endMinuteOfDay) - normalizedMinuteOfDay(startMinuteOfDay) + totalMinutes) % totalMinutes
 }

@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -179,8 +180,8 @@ internal fun HifzHomeSheet(
     val density = LocalDensity.current
     val allLinesInList = allPlan != null && allPlan.points.isNotEmpty() && remember(allCountLine, window, density) {
         val lines = androidx.compose.ui.unit.Constraints(maxWidth = (window.width - with(density) { 32.dp.roundToPx() }).coerceAtLeast(1))
-        val height = measurer.measure(allCountLine.orEmpty(), androidx.compose.ui.text.TextStyle(fontSize = 13.sp), constraints = lines).size.height +
-            measurer.measure(allRuleLine, androidx.compose.ui.text.TextStyle(fontSize = 12.sp), constraints = lines).size.height
+        val height = measurer.measure(allCountLine.orEmpty(), androidx.compose.ui.text.TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp), constraints = lines).size.height +
+            measurer.measure(allRuleLine, androidx.compose.ui.text.TextStyle(fontFamily = AppFontFamily, fontSize = 12.sp), constraints = lines).size.height
         height > window.height * 0.2f
     }
     fun openRow(point: HifzPoint) {
@@ -200,6 +201,7 @@ internal fun HifzHomeSheet(
         surahFilter = null
         notebook = true
     }
+    val listScroll = if (notebook) notebookScroll else homeScroll
     ModalBottomSheet(onDismissRequest = actions::dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         BackHandler(enabled = notebook) { returnHome() }
         Column(Modifier.fillMaxWidth().quranSheetHeight().testTag("hifz_home")) {
@@ -219,8 +221,8 @@ internal fun HifzHomeSheet(
                 IconButton(onClick = actions::dismiss) { Icon(painterResource(R.drawable.ic_adhkar_close), "إغلاق") }
             }
             LazyColumn(
-                Modifier.weight(1f).testTag(if (notebook) "hifz_notebook" else "hifz_home_content"),
-                state = if (notebook) notebookScroll else homeScroll,
+                Modifier.weight(1f).nestedScroll(rememberSheetScrollGuard(listScroll)).testTag(if (notebook) "hifz_notebook" else "hifz_home_content"),
+                state = listScroll,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -536,9 +538,11 @@ internal fun HifzSettingsSheet(
     onPauseReminders: () -> Unit = {},
     onResumeReminders: () -> Unit = {},
 ) {
+    val scroll = rememberScrollState()
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp).testTag("hifz_settings_sheet"),
+            Modifier.fillMaxWidth().nestedScroll(rememberSheetScrollGuard(scroll)).verticalScroll(scroll)
+                .padding(horizontal = 16.dp).padding(bottom = 24.dp).testTag("hifz_settings_sheet"),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             QuranPanelHeader("إعدادات المراجعة", onDismiss)
@@ -571,11 +575,16 @@ private fun HifzSwitch(label: String, checked: Boolean, onChange: (Boolean) -> U
 /** A count as a subject: «موضع واحد», «موضعان», «3 مواضع», «11 موضعًا». */
 internal fun hifzCountLabel(count: Int): String = HifzReminder.pointsLabel(count)
 
-/** Pending questions whose answers would be visible on this page, before the reader chooses to expose them. */
+/** Pending questions exposed by reading the page, or by opening just one verse while the others stay hidden. */
 internal fun hifzReadingGate(
     points: List<HifzPoint>, eligibleIds: Set<Long>, pageVerses: Set<QuranVerseReference>, declinedIds: Set<Long>,
-): List<HifzPoint> = points.filter { point ->
-    point.id in eligibleIds && point.id !in declinedIds && point.answerVerses().any { it in pageVerses }
+    versesHidden: Boolean = false, revealVerse: QuranVerseReference? = null,
+): List<HifzPoint> {
+    val visible = if (versesHidden) setOfNotNull(revealVerse).intersect(pageVerses) else pageVerses
+    if (visible.isEmpty()) return emptyList()
+    return points.filter { point ->
+        point.id in eligibleIds && point.id !in declinedIds && point.answerVerses().any { it in visible }
+    }
 }
 
 /** A delay is explained only for genuinely due spaced checks; future checks and fresh waiting use their own copy. */

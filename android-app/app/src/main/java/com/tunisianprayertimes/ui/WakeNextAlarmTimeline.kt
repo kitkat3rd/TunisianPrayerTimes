@@ -355,7 +355,7 @@ private fun TimelineStop(
             color = timeColor,
             maxLines = 1,
             softWrap = false,
-            style = TextStyle(textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
+            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
         )
         Text(
             text = gapText,

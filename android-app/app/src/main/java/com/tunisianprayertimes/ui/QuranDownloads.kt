@@ -42,6 +42,8 @@ internal class QuranMedia(
     val source: QuranPackSource?,
     private val bundled: Set<String>,
     private val metered: () -> Boolean = { false },
+    /** The build carries the book itself: the pages need no pack (a debug build made with -PquranFonts). */
+    private val bookBundled: Boolean = false,
 ) {
     // A new reader must start with the source's current snapshot. Starting empty briefly labelled
     // already downloaded pages as missing on every return to the tab.
@@ -56,15 +58,15 @@ internal class QuranMedia(
     fun downloaded(pack: QuranPack): Boolean = source != null && pack.name !in bundled && states[pack.name]?.available == true
 
     /**
-     * The pack the reader's pages come from: the book (the mushaf in the print's own type, with the appendix's scans)
-     * where the layout has one, else the page scans.
+     * The pack the reader's pages come from: the book (the mushaf in the print's own type) where the layout has one,
+     * else the page scans.
      */
     val pages: QuranPack? get() = layout?.book ?: layout?.pages
 
-    val pagesReady: Boolean get() = pages?.let { state(it).available } ?: true
+    val pagesReady: Boolean get() = bookBundled || (pages?.let { state(it).available } ?: true)
 
     /** An empty source snapshot means it is still checking the device, not that pages are missing. */
-    val pagesStateKnown: Boolean get() = pages?.let { it.name in bundled || it.name in states } ?: true
+    val pagesStateKnown: Boolean get() = bookBundled || (pages?.let { it.name in bundled || it.name in states } ?: true)
 
     fun recitationPacks(reciterId: String, surahs: IntRange): List<QuranPack> = layout?.audioPacks(reciterId, surahs).orEmpty()
 
@@ -92,7 +94,8 @@ internal fun rememberQuranMedia(): QuranMedia? {
             runCatching {
                 val layout = QuranAssets.layout(context)
                 if (layout == null) QuranMedia.Bundled
-                else QuranMedia(layout, QuranAssets.source(context), QuranAssets.bundledPacks(context), { isMeteredNetwork(context) })
+                else QuranMedia(layout, QuranAssets.source(context), QuranAssets.bundledPacks(context), { isMeteredNetwork(context) },
+                    QuranAssets.bookBundled(context))
             }.getOrElse { QuranMedia.Bundled }
         }
     }

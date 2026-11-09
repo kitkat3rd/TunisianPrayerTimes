@@ -396,7 +396,7 @@ internal fun HifzVerseText(
                 }
                 masked = false
                 if (i == partAt && i > from) {
-                    withStyle(SpanStyle(color = QuranHifzViolet, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, fontFamily = null)) { append("‹هنا تفترقان› ") }
+                    withStyle(SpanStyle(color = QuranHifzViolet, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, fontFamily = AppFontFamily)) { append("‹هنا تفترقان› ") }
                 }
                 if (i in marked) withStyle(SpanStyle(color = markColor, textDecoration = TextDecoration.Underline, fontWeight = FontWeight.SemiBold)) { append(words.printed[i]) }
                 else append(words.printed[i])

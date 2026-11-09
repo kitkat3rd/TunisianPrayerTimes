@@ -75,12 +75,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.tunisianprayertimes.MathDifficulty
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.WakeUpCheckStep
 import com.tunisianprayertimes.WakeUpCheckType
-import kotlinx.coroutines.delay
+import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import java.util.Calendar
 import java.util.Locale
 
 class WakeAlertActivity : AppCompatActivity() {
@@ -181,7 +187,7 @@ class WakeAlertActivity : AppCompatActivity() {
         }
 
         setContent {
-            TunisianPrayerTimesTheme {
+            TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
                 val displayedPayload = payload
                 WakeAlertScreen(
                     payload = displayedPayload,
@@ -299,6 +305,7 @@ internal fun WakeAlertScreen(
     payload: WakeTriggerPayload?,
     pendingCount: Int,
     motivation: WakeMotivation? = null,
+    clock: () -> Long = System::currentTimeMillis,
     onStop: (Boolean) -> Unit,
 ) {
     val checkEnabled = payload?.wakeUpCheckEnabled == true
@@ -337,7 +344,7 @@ internal fun WakeAlertScreen(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                WakeAlarmHeader(payload = payload, pendingCount = pendingCount, compact = compactHeader)
+                WakeAlarmHeader(payload = payload, pendingCount = pendingCount, compact = compactHeader, clock = clock)
 
                 if (steps.size > 1 && !allDone) {
                     WakeStepProgress(completed = completedSteps, total = steps.size)
@@ -445,9 +452,20 @@ private fun WakeAlarmHeader(
     payload: WakeTriggerPayload?,
     pendingCount: Int,
     compact: Boolean,
+    clock: () -> Long,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var currentTime by remember(clock) { mutableStateOf(currentWakeTime(clock())) }
+    LaunchedEffect(lifecycle, clock) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                currentTime = currentWakeTime(clock())
+                delay(1_000L)
+            }
+        }
+    }
     val queueText = if (pendingCount > 0) {
         pluralStringResource(R.plurals.wake_alarm_queue, pendingCount, pendingCount)
     } else {
@@ -489,9 +507,8 @@ private fun WakeAlarmHeader(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val clockSize = minOf(if (compact) 52f else 76f, maxWidth.value / (density.fontScale * 2.85f)).sp
             Text(
-                text = payload?.let { formatWakeTime(it.hour, it.minute) }
-                    ?: stringResource(R.string.wake_alarm_time_placeholder),
-                modifier = Modifier.fillMaxWidth(),
+                text = currentTime,
+                modifier = Modifier.fillMaxWidth().testTag("wake_alarm_clock"),
                 style = MaterialTheme.typography.displayLarge.copy(
                     fontFamily = FontFamily.SansSerif,
                     fontWeight = FontWeight.Light,
@@ -515,6 +532,10 @@ private fun WakeAlarmHeader(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+private fun currentWakeTime(nowMillis: Long): String = Calendar.getInstance().apply { timeInMillis = nowMillis }.let { now ->
+    formatWakeTime(now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE))
 }
 
 /** "Challenge 2 of 3" with one segment per challenge. */

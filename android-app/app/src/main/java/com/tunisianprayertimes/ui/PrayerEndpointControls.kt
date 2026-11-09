@@ -239,6 +239,7 @@ private fun ClockNumberField(
             .padding(horizontal = 8.dp)
             .semantics { contentDescription = label },
         textStyle = TextStyle(
+            fontFamily = AppFontFamily,
             fontSize = 24.sp,
             fontWeight = FontWeight.SemiBold,
             color = PrayerSilencePalette.PrimaryText,
@@ -332,6 +333,7 @@ internal fun EndpointMinuteStepper(
                     .padding(horizontal = 8.dp)
                     .semantics { contentDescription = unitLabel },
                 textStyle = TextStyle(
+                    fontFamily = AppFontFamily,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = PrayerSilencePalette.PrimaryText,
@@ -428,7 +430,7 @@ internal fun EndpointClockButton(
             color = PrayerSilencePalette.PrimaryText,
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            style = TextStyle(textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
+            style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
             maxLines = 1,
         )
     }
@@ -444,7 +446,7 @@ internal fun EndpointModeChoices(
 ) {
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val optionLabelStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    val optionLabelStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     BoxWithConstraints(
         Modifier.fillMaxWidth().selectableGroup()
             .background(PrayerSilencePalette.TintedStrip, RoundedCornerShape(12.dp))

@@ -144,7 +144,7 @@ internal class HifzSessionCoordinator(
         scope.launch {
             snapshotFlow { encode().toString() to busy }.collect {
                 if (!busy && pending == null) {
-                    runCatching { persist() }.onFailure { error = "تعذّر حفظ موضع المراجعة. أعد المحاولة." }
+                    persistSafely()
                     changed()
                 }
             }
@@ -220,7 +220,7 @@ internal class HifzSessionCoordinator(
         notePlayback(QuranAudioController.state.value, force = true)
         paused = true
         changed()
-        scope.launch { runCatching { persist() } }
+        persistAsync()
     }
 
     /** A closed surface keeps an unfinished attempt for the other surface. */
@@ -545,6 +545,18 @@ internal class HifzSessionCoordinator(
                     writtenVersion = request
                 }
             }
+        }
+    }
+
+    /** A playback service can stop without cancelling the shared session's final save. */
+    fun persistAsync() = scope.launch { persistSafely() }
+
+    private suspend fun persistSafely() {
+        try { persist() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            error = "تعذّر حفظ موضع المراجعة. أعد المحاولة."
+            changed()
         }
     }
 

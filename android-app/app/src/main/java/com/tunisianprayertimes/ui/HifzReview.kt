@@ -25,7 +25,6 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -558,6 +557,8 @@ internal fun HifzReviewSheet(
     nextCheckLabel: String? = null,
     /** When each fresh point of the review is asked next, as the reminders will ask it, by its id; see [HifzReminder.nextAsk]. */
     nextFor: Map<Long, String> = emptyMap(),
+    /** Other unanswered verses stay covered, even among the earlier context. */
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
 ) {
     val point = state.point(queue)
     state.shown(point, audio)
@@ -638,7 +639,8 @@ internal fun HifzReviewSheet(
                     // missing-image fallback, never a duplicate below the image.
                     if (!talkBack) QuranVerseExcerpt(
                         catalog, point.verse, "${hifzVerseAbout(catalog, point.verse)} مغطاة في المصحف",
-                        linesBefore = if (previous != null) 1 else 0, cover = true, fallback = inText,
+                        linesBefore = if (previous != null) 1 else 0, cover = true,
+                        showPrevious = true, protectedVerses = protectedVerses, fallback = inText,
                     )
                     if (talkBack) inText()
                     HifzReviewHint(state, point, actions)
@@ -704,6 +706,8 @@ internal fun HifzReviewCard(
     nextCheckLabel: String? = null,
     /** When each fresh point of the review is asked next, as the reminders will ask it, by its id; see [HifzReminder.nextAsk]. */
     nextFor: Map<Long, String> = emptyMap(),
+    /** Other unanswered verses stay covered, even among the earlier context. */
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
 ) {
     val point = state.point(queue)
     state.shown(point, audio)
@@ -719,8 +723,11 @@ internal fun HifzReviewCard(
                 if (point != null && !state.atEnd(queue)) IconButton(onClick = { deleting = point }, modifier = Modifier.size(36.dp).testTag("hifz_review_delete")) {
                     Icon(painterResource(R.drawable.ic_delete), "حذف الموضع", Modifier.size(18.dp), tint = GreenPrimaryDark)
                 }
-                IconButton(onClick = { state.howItWorks = true }, modifier = Modifier.size(36.dp).testTag("hifz_how_it_works")) {
-                    Icon(painterResource(R.drawable.ic_adhkar_info), "كيف تعمل مراجعة اليوم؟", Modifier.size(18.dp), tint = GreenPrimaryDark)
+                // While grading, the info button beside the recall question includes the general help too.
+                if (point == null || !state.revealed(point) || state.training(point) || state.folded || state.stopping) {
+                    IconButton(onClick = { state.howItWorks = true }, modifier = Modifier.size(36.dp).testTag("hifz_how_it_works")) {
+                        Icon(painterResource(R.drawable.ic_adhkar_info), "كيف تعمل مراجعة اليوم؟", Modifier.size(18.dp), tint = GreenPrimaryDark)
+                    }
                 }
                 IconButton(onClick = state::toggleFold, modifier = Modifier.size(36.dp).testTag("hifz_review_fold")) {
                     Icon(
@@ -756,6 +763,7 @@ internal fun HifzReviewCard(
                         val previous = QuranVerseReference(point.verse.surah, point.verse.ayah - 1)
                         QuranVerseExcerpt(
                             catalog, previous, "الآية السابقة، ${hifzVerseAbout(catalog, previous)}",
+                            showPrevious = true, protectedVerses = protectedVerses,
                             fallback = { HifzReviewCueText(catalog, previous, fontSize = 18.sp) },
                         )
                     }
@@ -1071,36 +1079,14 @@ private fun ColumnScope.HifzReviewControls(
         else -> {
             fixes.forEach { HifzAnswerLine(it) }
             HifzReviewNote(state, point, actions, editable = false)
-            Text("هل تذكّرتها قبل أن تكشفها؟", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
-            // Why «دون مساعدة» is not offered: the note opened, or some of the verse seen, before «أظهر».
-            if (state.assisted(point)) Text(
-                if (state.hinted(point)) "استعنت بملاحظتك قبل أن تكشفها." else "رأيت منها شيئًا قبل أن تكشفها.",
-                fontSize = 12.sp, color = QuranHifzViolet,
-            )
-            val grades = if (state.assisted(point)) listOf(HifzGrade.Hesitated, HifzGrade.Again) else HifzGrade.entries.toList()
-            fun label(grade: HifzGrade): String = hifzGradeLabel(grade, state.assisted(point))
-            val outcomes = grades.associateWith { hifzGradeOutcome(point, it, freshAgain, tomorrow, short = compact) }
-            // The same time on every answer is said once, under them; each answer then says only what it does.
-            val shared = outcomes.values.map { it.back }.distinct().singleOrNull()
-            fun detail(grade: HifzGrade): String = outcomes.getValue(grade).text(withBack = shared == null, short = compact)
-            val sideBySide = compact && LocalDensity.current.fontScale <= 1.3f
-            if (sideBySide) Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                grades.forEach { grade ->
-                    HifzGradeChip(label(grade), detail(grade), grade, tag = "hifz_grade_${grade.name.lowercase()}", modifier = Modifier.weight(1f)) {
-                        state.grade(queue, actions, grade)
-                    }
-                }
-            } else {
-                grades.forEach { grade ->
-                    HifzGradeButton(label(grade), detail(grade), grade, tag = "hifz_grade_${grade.name.lowercase()}") { state.grade(queue, actions, grade) }
-                }
-            }
-            if (shared != null) Text(
-                "نسألك عنها $shared أيًّا كان جوابك.", fontSize = 12.sp, color = TextMuted,
-                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().testTag("hifz_grade_shared_back"),
-            )
-            if (!compact) TextButton(onClick = { state.howItWorks = true }, contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.testTag("hifz_how_it_works")) {
-                Text("كيف تعمل مراجعة اليوم؟", fontSize = 13.sp)
+            val assisted = state.assisted(point)
+            val grades = if (assisted) listOf(HifzGrade.Hesitated, HifzGrade.Again) else HifzGrade.entries.toList()
+            HifzGradeChoices(
+                point.id, grades.associateWith { hifzGradeOutcome(point, it, freshAgain, tomorrow) }, assisted, compact,
+                notice = if (!assisted) null else if (state.hinted(point)) "استعنت بملاحظتك قبل أن تكشفها." else "رأيت منها شيئًا قبل أن تكشفها.",
+                onHowItWorks = { state.howItWorks = true },
+            ) { grade ->
+                state.grade(queue, actions, grade)
             }
         }
     }
@@ -1483,7 +1469,7 @@ private fun hifzGradeTone(grade: HifzGrade): HifzGradeTone = when (grade) {
     HifzGrade.Again -> HifzGradeTone(BannerBg, BannerStroke.copy(alpha = 0.75f), Color(0xFF7A3B12))
 }
 
-/** A grade: its name, and under it what it means and, unless every answer shares it, when the verse comes back. */
+/** A grade: its name and, unless every answer shares it, when the verse comes back. */
 @Composable
 internal fun HifzGradeButton(label: String, detail: String, grade: HifzGrade, tag: String, onClick: () -> Unit) {
     val tone = hifzGradeTone(grade)
@@ -1502,9 +1488,9 @@ internal fun HifzGradeButton(label: String, detail: String, grade: HifzGrade, ta
     )
 }
 
-/** A grade side by side with the others, on the page's card: its name and, under it, what it does. */
+/** Equal-height choices on the page's card, with only the label and next review visible. */
 @Composable
-private fun HifzGradeChip(label: String, detail: String, grade: HifzGrade, tag: String, modifier: Modifier, onClick: () -> Unit) {
+internal fun HifzGradeChip(label: String, detail: String, grade: HifzGrade, tag: String, modifier: Modifier, onClick: () -> Unit) {
     val tone = hifzGradeTone(grade)
     val padding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
     val content: @Composable RowScope.() -> Unit = {

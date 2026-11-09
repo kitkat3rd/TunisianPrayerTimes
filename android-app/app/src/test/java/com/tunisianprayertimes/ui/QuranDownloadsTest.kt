@@ -59,7 +59,7 @@ class QuranDownloadsTest {
     private val layout = QuranPackLayout("https://cdn.example/", listOf(pages, first, second, rest))
 
     private fun media(source: FakeSource, metered: Boolean = false, bundled: Set<String> = emptySet()) =
-        QuranMedia(layout, source, bundled) { metered }
+        QuranMedia(layout, source, bundled, metered = { metered })
 
     @Test
     fun returningToDownloadedPagesStartsWithTheSourcesCurrentSnapshot() {
@@ -175,7 +175,7 @@ class QuranDownloadsTest {
     fun theReaderDownloadsTheBookWhereTheLayoutHasOne() {
         val book = pack("quran_book", QuranPack.Kind.Book, bytes = 90_000_000L)
         val source = FakeSource()
-        val media = QuranMedia(QuranPackLayout("https://cdn.example/", listOf(book, first, second, rest)), source, emptySet()) { false }
+        val media = QuranMedia(QuranPackLayout("https://cdn.example/", listOf(book, first, second, rest)), source, emptySet(), metered = { false })
         assertEquals(book, media.pages)
         assertTrue(!media.pagesReady)
         media.fetch(listOfNotNull(media.pages), allowMetered = false)

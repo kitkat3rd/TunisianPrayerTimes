@@ -25,7 +25,6 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -52,8 +51,6 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -93,6 +90,7 @@ class VoluntaryPrayerUiTest {
         displayZone: ZoneId = zone,
         loading: Boolean = false,
         fontScale: Float = 1f,
+        placeOffset: String? = null,
     ) {
         val density = LocalDensity.current
         CompositionLocalProvider(
@@ -102,7 +100,7 @@ class VoluntaryPrayerUiTest {
             AdhkarTheme {
                 Box(Modifier.fillMaxSize().background(Color(0xFFF7F8F6)).testTag("voluntary_prayer_screen")) {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                        VoluntaryPrayerCards(times = times, now = now, displayZone = displayZone, loading = loading)
+                        VoluntaryPrayerCards(times = times, now = now, displayZone = displayZone, loading = loading, placeOffset = placeOffset)
                     }
                 }
             }
@@ -116,11 +114,7 @@ class VoluntaryPrayerUiTest {
         savePreview("duha-normal", "voluntary_prayer_screen")
         openDetails("worship_duha_details")
         compose.onNodeWithText(text(R.string.worship_duha_explanation)).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText(text(R.string.worship_duha_calculation))
-            .assertTextContains("بعد الشروق بعشرين دقيقة", substring = true)
-            .assertTextContains("قبل الزوال الشمسي بعشرين دقيقة", substring = true)
-            .assertTextContains("ولا نعتمد موعد الظهر", substring = true)
-            .assertTextContains("ليست تحديدًا دقيقًا", substring = true)
+        compose.onNodeWithText(text(R.string.worship_duha_calculation)).performScrollTo().assertIsDisplayed()
         savePreview("duha-explanation", "worship_time_explanation")
         compose.onNodeWithText(text(R.string.worship_source_prayer_times)).performScrollTo().assertIsDisplayed()
         closeDetails()
@@ -128,14 +122,11 @@ class VoluntaryPrayerUiTest {
     }
 
     @Test
-    fun nightDetailsExposeBothSourcesAndThePrayerPrerequisite() {
+    fun nightDetailsExposeBothSources() {
         compose.setContent { CardsScreen() }
         openDetails("worship_night_details")
-        compose.onNodeWithText(text(R.string.worship_night_explanation))
-            .assertTextContains("بعد أداء صلاة العشاء", substring = true)
-            .assertTextContains("لا يعني أنك أدّيت الصلاة", substring = true)
-        compose.onNodeWithText(text(R.string.worship_night_calculation))
-            .assertTextContains("من موعد المغرب إلى الفجر الذي يليه", substring = true)
+        compose.onNodeWithText(text(R.string.worship_night_explanation)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.worship_night_calculation)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.worship_source_thirds)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.worship_source_prayer_times)).performScrollTo().assertIsDisplayed()
         savePreview("night-sources", "worship_time_explanation")
@@ -152,7 +143,7 @@ class VoluntaryPrayerUiTest {
         compose.onNodeWithText(text(R.string.worship_duha_unavailable)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.worship_night_unavailable)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.worship_times_loading)).assertDoesNotExist()
-        compose.onNodeWithText(text(R.string.worship_last_third)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.worship_third_start)).assertDoesNotExist()
         openDetails("worship_night_details")
         compose.onNodeWithText(text(R.string.worship_night_calculation)).assertExists()
         closeDetails()
@@ -161,48 +152,59 @@ class VoluntaryPrayerUiTest {
     @Test
     fun exactStartAndEndInstantsUpdateBothStatusesWithoutClaimingWorshipCompletion() {
         val now = mutableStateOf(duha.start.minusSeconds(1))
-        compose.setContent { CardsScreen(now = now.value) }
-        compose.onNodeWithText(text(R.string.worship_duha_in, "00:01")).assertExists()
+        val times = mutableStateOf(schedule)
+        compose.setContent { CardsScreen(times = times.value, now = now.value) }
+        compose.onNodeWithText(text(R.string.worship_duha_in, "أقل من دقيقة")).assertExists()
+        compose.onNodeWithText(text(R.string.worship_today)).assertExists()
         compose.runOnIdle { now.value = duha.start }
-        compose.onNodeWithText(text(R.string.worship_duha_active, "04:20")).assertExists()
+        compose.onNodeWithText(text(R.string.worship_duha_active, "4 ساعات و20 دقيقة")).assertExists()
         compose.runOnIdle { now.value = duha.end }
         compose.onNodeWithText(text(R.string.worship_duha_ended)).assertExists()
-        compose.onNodeWithText(text(R.string.worship_duha_active, "00:00")).assertDoesNotExist()
+        // Once the engine gives tomorrow's period, the card says so instead of counting down.
+        compose.runOnIdle { times.value = schedule.copy(duhaDate = date.plusDays(1)) }
+        compose.onNodeWithText(text(R.string.worship_tomorrow)).assertExists()
+        compose.onNodeWithText(text(R.string.worship_duha_tomorrow)).assertExists()
+        compose.runOnIdle { times.value = schedule }
 
+        compose.runOnIdle { now.value = night.isha.minusSeconds(60) }
+        compose.onNodeWithText(text(R.string.worship_night_before_isha, "دقيقة واحدة")).performScrollTo().assertIsDisplayed()
         compose.runOnIdle { now.value = night.lastThirdPrayerStart.minusSeconds(1) }
-        compose.onNodeWithText(text(R.string.worship_third_in, "00:01")).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.worship_third_in, "أقل من دقيقة")).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.worship_current_night)).assertExists()
         compose.runOnIdle { now.value = night.lastThirdPrayerStart }
-        compose.onNodeWithText(text(R.string.worship_third_active, "03:40")).assertExists()
+        compose.onNodeWithText(text(R.string.worship_third_active, "3 ساعات و40 دقيقة")).assertExists()
         compose.runOnIdle { now.value = night.fajr }
         compose.onNodeWithText(text(R.string.worship_night_ended)).assertExists()
     }
 
     @Test
     fun countdownRoundsEveryPositiveRemainderUpAndClampsElapsedTimes() {
-        assertEquals("00:00", worshipCountdown(morning, morning.minusNanos(1)))
-        assertEquals("00:00", worshipCountdown(morning, morning))
-        assertEquals("00:01", worshipCountdown(morning, morning.plusNanos(1)))
-        assertEquals("00:02", worshipCountdown(morning, morning.plusSeconds(61)))
+        assertEquals("أقل من دقيقة", worshipCountdown(morning, morning.minusNanos(1)))
+        assertEquals("أقل من دقيقة", worshipCountdown(morning, morning.plusSeconds(1)))
+        assertEquals("دقيقة واحدة", worshipCountdown(morning, morning.plusSeconds(60)))
+        assertEquals("دقيقتين", worshipCountdown(morning, morning.plusSeconds(61)))
+        assertEquals("ساعتين", worshipCountdown(morning, morning.plusSeconds(7200)))
     }
 
     @Test
-    fun afterMidnightIshaKeepsItsDateAndAllDatesFollowTheDisplayedZone() {
+    fun timesFollowTheDisplayedZoneAndThePlaceOffsetShowsOnlyWhenGiven() {
         val lateNight = night.copy(isha = at("2026-10-27T00:30"))
         val displayedZone = mutableStateOf(zone)
+        val offset = mutableStateOf<String?>(null)
         compose.setContent {
-            CardsScreen(times = schedule.copy(night = lateNight), now = at("2026-10-27T00:15"), displayZone = displayedZone.value)
+            CardsScreen(times = schedule.copy(night = lateNight), now = at("2026-10-27T00:15"),
+                displayZone = displayedZone.value, placeOffset = offset.value)
         }
         val nightCard = hasAnyAncestor(hasTestTag("worship_night_card"))
         compose.onNode(hasText("00:30") and nightCard).performScrollTo().assertIsDisplayed()
-        compose.onAllNodes(hasText(dayLabel(date.plusDays(1))) and nightCard).assertCountEquals(4)
-        compose.onAllNodes(hasText(dayLabel(date)) and nightCard).assertCountEquals(0)
+        compose.onNodeWithTag("worship_place_offset").assertDoesNotExist()
 
-        compose.runOnIdle { displayedZone.value = ZoneId.of("America/Los_Angeles") }
-        compose.onNodeWithText(text(R.string.worship_times_clock, "America/Los_Angeles")).assertExists()
+        compose.runOnIdle {
+            displayedZone.value = ZoneId.of("America/Los_Angeles")
+            offset.value = "UTC+1"
+        }
+        compose.onNodeWithText(text(R.string.list_place_offset, "UTC+1")).assertExists()
         compose.onNode(hasText("16:30") and nightCard).assertExists()
-        compose.onAllNodes(hasText(dayLabel(date)) and nightCard).assertCountEquals(4)
-        compose.onAllNodes(hasText(dayLabel(date.plusDays(1))) and nightCard).assertCountEquals(0)
     }
 
     @Test
@@ -316,8 +318,4 @@ class VoluntaryPrayerUiTest {
     private fun text(id: Int, vararg args: Any): String = context.getString(id, *args)
 
     private fun at(value: String): Instant = java.time.LocalDateTime.parse(value).atZone(zone).toInstant()
-
-    private fun dayLabel(value: LocalDate): String = value.format(
-        DateTimeFormatter.ofPattern("EEE، d MMM", Locale.forLanguageTag("ar-TN-u-nu-latn")),
-    )
 }

@@ -37,29 +37,41 @@ internal class AlarmAudioController(
     fun startWakeAlarm(payload: WakeTriggerPayload) {
         stop()
 
-        if (payload.useAutoSilenceConflictPlayback) {
-            startAutoSilenceConflictWakeAlarm(payload)
-            return
-        }
-
         if (payload.vibrationOnly) {
-            startVibrationPattern()
+            startVibrationPattern(strong = payload.useAutoSilenceConflictPlayback)
             return
         }
 
+        val vibrationMillis = payload.initialVibrationSeconds.coerceIn(0, 300) * 1_000L
+        if (vibrationMillis > 0L) {
+            startVibrationPattern(strong = payload.useAutoSilenceConflictPlayback)
+            delayedRingtoneJob = scope.launch {
+                delay(vibrationMillis)
+                vibrator?.cancel()
+                vibrator = null
+                startWakeRingtone(payload)
+            }
+        } else {
+            startWakeRingtone(payload)
+        }
+    }
+
+    private fun startWakeRingtone(payload: WakeTriggerPayload) {
         forceMaxAlarmVolume()
+        val volumeStepMillis = (payload.volumeStepIntervalSeconds.coerceIn(1, 300) * 1_000L)
+            .takeIf { payload.progressiveVolume }
         val preferredUri = ringtoneUri(payload.ringtone, payload.customRingtoneUri)
-        if (preferredUri != null && playUri(preferredUri, payload.progressiveVolume.rampDurationMillis())) {
+        if (preferredUri != null && playUri(preferredUri, null, volumeStepMillis)) {
             return
         }
 
         val fallbackUri = fallbackRingtoneUri()
-        if (fallbackUri != null && fallbackUri != preferredUri && playUri(fallbackUri, payload.progressiveVolume.rampDurationMillis())) {
+        if (fallbackUri != null && fallbackUri != preferredUri && playUri(fallbackUri, null, volumeStepMillis)) {
             return
         }
 
         restoreAlarmVolume()
-        startVibrationPattern()
+        startVibrationPattern(strong = payload.useAutoSilenceConflictPlayback)
     }
 
     fun startRingtone(
@@ -153,40 +165,11 @@ internal class AlarmAudioController(
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
-    private fun startAutoSilenceConflictWakeAlarm(payload: WakeTriggerPayload) {
-        startStrongVibrationThenRingtone(
-            ringtonePreset = payload.ringtone,
-            customRingtoneUri = payload.customRingtoneUri,
-        )
-    }
-
-    private fun startStrongVibrationThenRingtone(
-        ringtonePreset: RingtonePreset?,
-        customRingtoneUri: String?,
-    ) {
-        startVibrationPattern(strong = true)
-        delayedRingtoneJob = scope.launch {
-            delay(STRONG_VIBRATION_MILLIS)
-            vibrator?.cancel()
-            vibrator = null
-
-            forceMaxAlarmVolume()
-            val preferredUri = ringtonePreset?.let { preset -> ringtoneUri(preset, customRingtoneUri) }
-            if (preferredUri != null && playUri(preferredUri, LONG_RAMP_MILLIS)) {
-                return@launch
-            }
-
-            val fallbackUri = fallbackRingtoneUri()
-            if (fallbackUri != null && fallbackUri != preferredUri && playUri(fallbackUri, LONG_RAMP_MILLIS)) {
-                return@launch
-            }
-
-            restoreAlarmVolume()
-            startVibrationPattern(strong = true)
-        }
-    }
-
-    private fun playUri(uri: Uri, volumeRampDurationMillis: Long?): Boolean {
+    private fun playUri(
+        uri: Uri,
+        volumeRampDurationMillis: Long?,
+        volumeStepIntervalMillis: Long? = null,
+    ): Boolean {
         val player = MediaPlayer()
         var route: SpeakerPlaybackRoute? = null
         return try {
@@ -198,15 +181,19 @@ internal class AlarmAudioController(
             player.isLooping = true
             player.prepare()
             playbackRoute.applyNow()
-            val initialVolume = if (volumeRampDurationMillis != null) {
-                WakeProgressiveVolumeRamp.ringtoneVolumeAt(0L, volumeRampDurationMillis)
+            val initialVolume = if (volumeRampDurationMillis != null || volumeStepIntervalMillis != null) {
+                WakeProgressiveVolumeRamp.START_RINGTONE_VOLUME
             } else {
                 1f
             }
             player.setVolume(initialVolume, initialVolume)
             player.start()
             playbackRoute.start()
-            if (volumeRampDurationMillis != null) {
+            if (volumeStepIntervalMillis != null) {
+                startSteppedVolumeIncrease(volumeStepIntervalMillis) { volume ->
+                    player.setVolume(volume, volume)
+                }
+            } else if (volumeRampDurationMillis != null) {
                 startProgressiveVolumeRamp(volumeRampDurationMillis) { volume ->
                     player.setVolume(volume, volume)
                 }
@@ -218,6 +205,19 @@ internal class AlarmAudioController(
             route?.release()
             runCatching { player.release() }
             false
+        }
+    }
+
+    private fun startSteppedVolumeIncrease(
+        intervalMillis: Long,
+        onVolumeChanged: (Float) -> Unit,
+    ) {
+        volumeRampJob?.cancel()
+        volumeRampJob = scope.launch {
+            for (step in 1..WakeProgressiveVolumeRamp.VOLUME_INCREASE_STEPS) {
+                delay(intervalMillis)
+                runCatching { onVolumeChanged(WakeProgressiveVolumeRamp.ringtoneVolumeAfterStep(step)) }
+            }
         }
     }
 
