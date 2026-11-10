@@ -98,7 +98,7 @@ object HifzReminder {
         when {
             !settings.reminder || askable.isEmpty() -> clearReminder(app)
             gone && showing(app) -> if (still.isEmpty()) clearReminder(app)
-                else runCatching { post(app, still.reviewBatch(today, now, HifzRoundSize), still.size, quiet = true) }
+                else runCatching { post(app, still.reviewBatch(today, now, HifzBatchSize), askable.size, quiet = true) }
             gone -> prefs.edit().remove("posted").apply()
         }
         if (!settings.reminder || points.isEmpty()) {
@@ -730,9 +730,9 @@ object HifzReminder {
             HifzRepository.load(app)
             val today = epochDay(now)
             val learning = HifzLearning.read(app, today)
-            val due = HifzRepository.points.value.filter { it.id in ids }.askable(today, now, learning.seen, learning.exposed)
-            val batch = due.reviewBatch(today, now, HifzRoundSize)
-            if (batch.isNotEmpty() && runCatching { post(app, batch, due.size) }.getOrDefault(false)) {
+            val askable = HifzRepository.points.value.askable(today, now, learning.seen, learning.exposed)
+            val batch = askable.filter { it.id in ids }.reviewBatch(today, now, HifzBatchSize)
+            if (batch.isNotEmpty() && runCatching { post(app, batch, askable.size) }.getOrDefault(false)) {
                 countAlert(app, now)
                 saveAsked(prefs, "checks_asked", checksAsked(prefs, HifzRepository.points.value), batch.filter { it.fresh == 0 }.associate { it.id to today }, today)
                 saveAsked(prefs, "daily_asked", dailyAsked(prefs), batch.filter { it.fresh > 0 && it.daily }.associate { it.id to today }, today)
@@ -792,12 +792,13 @@ object HifzReminder {
         // It asks what it rang for: the slips of this time and, at the settings' times, the day's checks; a slip set
         // for other times waits for its own.
         val slot = fresh + checks
-        val batch = slot.reviewBatch(today, now, HifzRoundSize)
-        val posted = runCatching { post(context, batch, slot.size) }.getOrDefault(false)
+        val batch = slot.reviewBatch(today, now, HifzBatchSize)
+        // Its count is that of the review it opens, which goes on from its questions to everything else due now.
+        val posted = runCatching { post(context, batch, due.size) }.getOrDefault(false)
         if (!posted) return
         countAlert(context, now)
         saveAsked(prefs, "checks_asked", checksAsked, batch.filter { it.fresh == 0 }.associate { it.id to checksDay!! }, today)
-        // Only those it shows count as asked today: one left for another round still rings at its next time.
+        // Only those it shows count as asked today: one it left out still rings at its next time.
         val dailyNow = batch.filter { it.daily && it.fresh > 0 }.mapNotNull { point -> freshDay[point]?.let { point.id to it } }.toMap()
         saveAsked(prefs, "daily_asked", asked, dailyNow, today)
     }
@@ -830,8 +831,8 @@ object HifzReminder {
     }
 
     /**
-     * [due] the review's points, [dueAll] every point to ask now, also those beyond one review's. [quiet]: the reminder
-     * already shown, asking fewer points now, without sounding again.
+     * [due] the questions it lists, which the review it opens asks first; [dueAll] every point due now, which that review
+     * goes on to. [quiet]: the reminder already shown, asking fewer points now, without sounding again.
      */
     private fun post(context: Context, due: List<HifzPoint>, dueAll: Int, quiet: Boolean = false): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return false

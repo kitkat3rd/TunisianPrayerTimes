@@ -104,6 +104,69 @@ class HifzSessionCoordinatorTest {
         assertEquals(2L, coordinator.view().point!!.id)
     }
 
+    /** Mid-morning today: a review and the 45 minutes after it stay within the day. */
+    private fun midMorning() = java.time.LocalDate.now().atTime(10, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    @Test fun aDailyReviewAsksEveryPointDueNow() {
+        install(*(1..7).map { point(it.toLong(), ayah = it * 2) }.toTypedArray())
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        assertEquals(7, coordinator.view().total)
+    }
+
+    @Test fun goingOnTakesInWhatFellDueSinceTheReviewBegan() {
+        clock = midMorning()
+        val spaced = point()
+        install(spaced, point(2, 5).copy(fresh = 2, lastSlipAt = clock, dueDay = epochDay(clock)))
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        assertEquals(1, coordinator.view().total)
+        coordinator.pause()
+        clock += HifzFreshGapMs + 60_000L
+        assertTrue(coordinator.dailyCanContinue(setOf(spaced.id, 2L)))
+        assertTrue(coordinator.startDaily())
+        assertEquals(2, coordinator.view().total)
+        assertEquals(spaced.id, coordinator.view().point!!.id)
+    }
+
+    @Test fun aPointAnsweredAndDueAgainStartsANewReview() {
+        clock = midMorning()
+        val fresh = point().copy(fresh = 3, lastSlipAt = clock - 7_200_000L, dueDay = epochDay(clock))
+        install(fresh, point(2, 9))
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        assertEquals(fresh.id, coordinator.view().point!!.id)
+        reveal(coordinator)
+        coordinator.assess(HifzGrade.Held)
+        await { !coordinator.savingAnswer && coordinator.view().tally.held == 1 }
+        coordinator.pause()
+        clock += HifzFreshGapMs + 60_000L
+        assertFalse(coordinator.dailyCanContinue(setOf(fresh.id, 2L)))
+        assertTrue(coordinator.startDaily())
+        // The answered point again, with the one left: the day keeps the earlier answer.
+        assertEquals(0, coordinator.view().tally.graded)
+        assertEquals(2, coordinator.view().total)
+        assertEquals(1, coordinator.dayTally().graded)
+    }
+
+    @Test fun aFinishedCarReviewOffersMoreOnlyOnceSomethingFellDue() {
+        clock = midMorning()
+        install(point(), point(2, 5).copy(fresh = 2, lastSlipAt = clock, dueDay = epochDay(clock)))
+        val coordinator = coordinator()
+        assertTrue(coordinator.startDaily())
+        reveal(coordinator)
+        coordinator.assess(HifzGrade.Held)
+        await { !coordinator.savingAnswer && coordinator.view().phase == HifzSessionPhase.Finished }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            val adapter = adapter(coordinator, scope)
+            fun offersMore() = adapter.playbackState().customActions.any { it.action.endsWith("/more") }
+            assertFalse(offersMore())
+            clock += HifzFreshGapMs + 60_000L
+            assertTrue(offersMore())
+        } finally { scope.cancel() }
+    }
+
     @Test fun playbackPauseAndMediaNextDoNotSupplyAnAssessment() {
         val first = point()
         install(first)
@@ -297,7 +360,7 @@ class HifzSessionCoordinatorTest {
         coordinator.startNotebook(listOf(first.id))
         settle()
         assertTrue(coordinator.reveal(exposeAnswer = false))
-        assertTrue(coordinator.startDaily(newRound = true))
+        assertTrue(coordinator.startDaily(restart = true))
         reveal(coordinator)
         assertFalse(coordinator.practiceActions.tryGrade(first, HifzGrade.Held, true, "stale notebook"))
         assertFalse(coordinator.reviewActions.tryGrade(second, HifzGrade.Again))

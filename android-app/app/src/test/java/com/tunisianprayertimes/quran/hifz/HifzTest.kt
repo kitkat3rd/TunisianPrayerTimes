@@ -634,6 +634,65 @@ class HifzTest {
     }
 
     @Test
+    fun aReview_asksEveryPointDue_whatMattersMostFirst_eachFiveInMushafOrder() {
+        val care = point(HifzKind.Word, verse(9, 1), slips = 3, due = 99L)
+        val oldest = point(HifzKind.Word, verse(2, 1), due = 95L)
+        val b = point(HifzKind.Word, verse(4, 1), due = 96L)
+        val c = point(HifzKind.Word, verse(3, 1), due = 97L)
+        val d = point(HifzKind.Word, verse(6, 1), due = 98L)
+        val e = point(HifzKind.Word, verse(1, 1), due = 99L)
+        val f = point(HifzKind.Word, verse(5, 1), due = 99L)
+        // Seven due, seven asked: the five that matter most in mushaf order, then the rest.
+        assertEquals(listOf(oldest, c, b, d, care, e, f), listOf(f, e, d, c, b, oldest, care).reviewSitting(100L, 0L))
+    }
+
+    @Test
+    fun aReview_asksAVerseJustBeforeTheAnswerThatShowsIt_howeverLateItRanks() {
+        // 2:10 needs care, and its correction shows its look-alike 7:5, due but ranked last: 7:5 is asked just before
+        // 2:10, not given away by it and put off.
+        val lookAlike = point(HifzKind.Similar, verse(2, 10), other = verse(7, 5), slips = 3, due = 99L)
+        val others = listOf(3, 4, 5, 6, 8).mapIndexed { i, surah -> point(HifzKind.Word, verse(surah, 1), due = 90L + i) }
+        val shown = point(HifzKind.Word, verse(7, 5), due = 99L)
+        assertEquals(listOf(shown, lookAlike) + others, (others + shown + lookAlike).reviewSitting(100L, 0L))
+    }
+
+    @Test
+    fun aReview_asksItsLeadFirstAndLeavesOutWhatTheLeadShows() {
+        val chosen = point(HifzKind.Similar, verse(2, 58), other = verse(7, 161), due = 99L)
+        val lookAlike = point(HifzKind.Word, verse(7, 161), due = 99L)
+        val apart = point(HifzKind.Word, verse(3, 7), due = 99L)
+        val elsewhere = point(HifzKind.Word, verse(1, 4), due = 99L)
+        assertEquals(
+            listOf(chosen, elsewhere, apart),
+            listOf(lookAlike, apart, elsewhere, chosen).reviewSitting(100L, 0L, lead = listOf(chosen)),
+        )
+    }
+
+    @Test
+    fun aReview_asksOneOfAPairThatShowEachOther_theOneAnsweredLongestAgo() {
+        val near = point(HifzKind.Similar, verse(2, 58), other = verse(7, 161), due = 99L)
+            .copy(checks = listOf(HifzCheck(90L, HifzGrade.Held, 9_000L)))
+        val far = point(HifzKind.Similar, verse(7, 161), other = verse(2, 58), due = 99L)
+            .copy(checks = listOf(HifzCheck(80L, HifzGrade.Held, 8_000L)))
+        val between = point(HifzKind.Word, verse(3, 7), due = 99L)
+        assertEquals(listOf(between, far), listOf(near, between, far).reviewSitting(100L, 0L))
+    }
+
+    @Test
+    fun prerequisitesFirst_bringsWhatAQuestionShowsJustBeforeIt() {
+        // Each question shows the end of the verse before it: 2:8, then 2:9, then 2:10, where 2:10 stood.
+        val ten = point(HifzKind.Word, verse(2, 10))
+        val nine = point(HifzKind.Word, verse(2, 9))
+        val eight = point(HifzKind.Word, verse(2, 8))
+        val apart = point(HifzKind.Word, verse(3, 1))
+        assertEquals(listOf(eight, nine, ten, apart), listOf(ten, apart, nine, eight).prerequisitesFirst())
+        // On a loop, the point reached first goes last.
+        val a = point(HifzKind.Similar, verse(4, 1), other = verse(4, 9))
+        val b = point(HifzKind.Similar, verse(4, 9), other = verse(4, 1))
+        assertEquals(listOf(b, a), listOf(a, b).prerequisitesFirst())
+    }
+
+    @Test
     fun settingsThatAreNoMore_areDeletedFromStorage() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val prefs = context.getSharedPreferences("quran_hifz", android.content.Context.MODE_PRIVATE)

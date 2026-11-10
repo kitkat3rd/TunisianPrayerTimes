@@ -184,7 +184,7 @@ internal class QuranAutoReview(
                 else { sessions.dismissError(); onPlay() }
             "return" -> { sessions.close(); selected = false }
             "continue" -> { sessions.resume(); player.refresh() }
-            "more" -> { sessions.startDaily(newRound = true); player.refresh() }
+            "more" -> { sessions.startDaily(restart = true); player.refresh() }
         }
         player.refresh()
         return true
@@ -228,7 +228,8 @@ internal class QuranAutoReview(
             HifzSessionPhase.Training -> add("drill", R.string.quran_auto_review_drill, R.drawable.ic_quran_repeat)
             HifzSessionPhase.Finished -> {
                 if (sessions.reviewState.stopping) add("continue", R.string.quran_auto_review_continue, R.drawable.ic_play_arrow)
-                else add("more", R.string.quran_auto_review_more, R.drawable.ic_quran_repeat)
+                // Only with something due since the review began, or due again: never an action with nothing to ask.
+                else if (sessions.anythingDue()) add("more", R.string.quran_auto_review_more, R.drawable.ic_quran_repeat)
             }
         }
         add("return", R.string.quran_auto_review_return, R.drawable.ic_stop)

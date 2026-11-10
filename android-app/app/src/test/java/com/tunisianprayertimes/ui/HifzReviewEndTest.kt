@@ -52,12 +52,12 @@ class HifzReviewEndTest {
         state.grade(queue, actions, HifzGrade.Held)
     }
 
-    private fun show(state: HifzReviewState, queue: List<HifzPoint>) {
+    private fun show(state: HifzReviewState, queue: List<HifzPoint>, due: Set<Long> = emptySet()) {
         compose.setContent {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 AdhkarTheme {
                     HifzReviewCard(
-                        state, catalog, null, queue, null, HifzAudioControls({}, {}, {}), emptySet(), 1L, actions,
+                        state, catalog, null, queue, null, HifzAudioControls({}, {}, {}), due, 1L, actions,
                         maxHeight = 500.dp, beforeHidden = false, pointInView = true,
                         eraserHint = false, onEraserHintClosed = {},
                     )
@@ -67,7 +67,7 @@ class HifzReviewEndTest {
     }
 
     @Test
-    fun aQuestionExposedDuringTheRoundIsExplainedWithoutOpeningDetails() {
+    fun aQuestionExposedDuringTheReviewIsExplainedWithoutOpeningDetails() {
         val queue = listOf(point(20), point(30))
         val state = HifzReviewState(clock = { now })
         state.follow(queue, actions)
@@ -76,10 +76,37 @@ class HifzReviewEndTest {
         assertEquals(setOf(queue[1].id), state.deferredIds)
         show(state, state.questions(queue))
 
-        compose.onNodeWithTag("hifz_review_deferred").assertIsDisplayed()
-        compose.onNodeWithText("أكملت هذه الجولة").assertIsDisplayed()
-        compose.onNodeWithText("أكملت المراجعة").assertDoesNotExist()
+        compose.onNodeWithTag("hifz_review_deferred").assertTextEquals("موضع واحد ظهرت آيته أثناء المراجعة؛ نسألك عنه في تذكير لاحق.")
+        // The review asked everything due: a question put off ends it all the same.
+        compose.onNodeWithText("أكملت المراجعة").assertIsDisplayed()
+        compose.onNodeWithTag("hifz_review_more").assertDoesNotExist()
         compose.onNodeWithTag("hifz_review_progress").assertDoesNotExist()
+    }
+
+    @Test
+    fun whatFellDueDuringTheReviewIsOfferedAfterIt() {
+        val queue = listOf(point(20))
+        val state = HifzReviewState(clock = { now })
+        state.follow(queue, actions)
+        answer(state, queue)
+        show(state, queue, due = setOf(40L, 50L))
+
+        compose.onNodeWithText("أكملت المراجعة").assertIsDisplayed()
+        compose.onNodeWithTag("hifz_review_remaining").assertTextEquals("ينتظرك الآن موضعان آخران.")
+        compose.onNodeWithTag("hifz_review_more").assertTextEquals("راجعهما الآن")
+    }
+
+    @Test
+    fun aStoppedReviewSaysWhatIsLeftToAsk() {
+        val queue = listOf(point(20), point(30), point(40))
+        val state = HifzReviewState(clock = { now })
+        state.follow(queue, actions)
+        answer(state, queue)
+        state.requestEnd(queue, actions)
+        show(state, queue)
+
+        compose.onNodeWithText("توقّفت المراجعة").assertIsDisplayed()
+        compose.onNodeWithText("بقي أن نسألك عن موضعين.").assertIsDisplayed()
     }
 
     @Test

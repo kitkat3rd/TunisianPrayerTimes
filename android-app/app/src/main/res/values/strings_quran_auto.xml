@@ -33,7 +33,7 @@
     <string name="quran_auto_review">المراجعة</string>
     <string name="quran_auto_review_hint">مراجعة اليوم والدفتر، كما على الهاتف</string>
     <string name="quran_auto_review_daily">مراجعة اليوم</string>
-    <string name="quran_auto_review_daily_hint">جولة من الأسئلة المستحقة الآن</string>
+    <string name="quran_auto_review_daily_hint">الأسئلة المستحقة الآن</string>
     <string name="quran_auto_review_notebook">مراجعة الدفتر</string>
     <string name="quran_auto_review_notebook_hint">راجع مواضعك بالترتيب المحفوظ</string>
     <string name="quran_auto_review_continue">تابع المراجعة</string>

@@ -4,7 +4,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,6 +52,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -68,7 +73,6 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.HijriCalendarDate
 import com.tunisianprayertimes.HijriCalendarMonth
 import com.tunisianprayertimes.TunisianHijriCalendar
-import com.tunisianprayertimes.ui.theme.BgCream
 import com.tunisianprayertimes.ui.theme.Divider
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
@@ -79,6 +83,12 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DecimalStyle
 import java.time.format.TextStyle
 import java.time.temporal.WeekFields
+import kotlin.math.abs
+
+private val CALENDAR_SIDE_MARGIN = 8.dp
+private val CALENDAR_CONTENT_PADDING = 8.dp
+private val MIN_DAY_COLUMN = 44.dp
+private val SWIPE_MONTH_DISTANCE = 56.dp
 
 @Composable
 internal fun HijriCalendarDialog(
@@ -110,7 +120,6 @@ internal fun HijriCalendarDialog(
         mutableIntStateOf(calendar.monthFor(openingDate).month)
     }
     val pickedDate = LocalDate.ofEpochDay(pickedEpoch)
-    val pickedHijriDate = remember(pickedDate, calendar) { calendar.date(pickedDate) }
     val hijriMonth = remember(viewedYear, viewedMonth, calendar) { calendar.month(viewedYear, viewedMonth) }
     val monthStart = hijriMonth.start
     val monthEnd = hijriMonth.endExclusive.minusDays(1)
@@ -124,6 +133,19 @@ internal fun HijriCalendarDialog(
     val navigateToMonth: (HijriCalendarMonth) -> Unit = {
         viewedYear = it.year
         viewedMonth = it.month
+    }
+    // A swipe goes where the arrows go, and stops where they stop, at the end of the available dates.
+    val swipeToMonth: (towardsNext: Boolean) -> Unit = { towardsNext ->
+        val target = if (towardsNext) nextMonth else previousMonth
+        if (target != null && bounds.intersectsMonth(target)) navigateToMonth(target)
+    }
+    val currentSwipeToMonth by rememberUpdatedState(swipeToMonth)
+    val goToToday: () -> Unit = {
+        val currentToday = LocalDate.now()
+        if (bounds.contains(currentToday)) {
+            pickedEpoch = currentToday.toEpochDay()
+            navigateToMonth(calendar.monthFor(currentToday))
+        }
     }
     val monthFormatter = remember {
         DateTimeFormatter.ofPattern("MMMM yyyy", calendarLocale).withDecimalStyle(DecimalStyle.STANDARD)
@@ -143,7 +165,7 @@ internal fun HijriCalendarDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             BoxWithConstraints(
-                Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 12.dp, vertical = 16.dp),
+                Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = CALENDAR_SIDE_MARGIN, vertical = 16.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 val availableHeight = maxHeight
@@ -167,84 +189,66 @@ internal fun HijriCalendarDialog(
                         val widestWeekday = weekdays.maxOf {
                             measurer.measure(it.getDisplayName(TextStyle.NARROW, calendarLocale), secondaryStyle).size.width
                         }
-                        val todayWidth = measurer.measure(
-                            stringResource(R.string.calendar_today), secondaryStyle,
-                        ).size.width
+                        // Each cell is 64dp tall, so a column a little under 48dp wide is still a comfortable target,
+                        // and it lets seven columns fit a 360dp phone at its normal text size.
                         val minimumColumn = with(density) {
-                            maxOf(widestNumber.toDp() + 20.dp, widestWeekday.toDp() + 8.dp,
-                                todayWidth.toDp() + 8.dp, 48.dp)
+                            maxOf(widestNumber.toDp() + 8.dp, widestWeekday.toDp() + 8.dp, MIN_DAY_COLUMN)
                         }
-                        val useDayList = maxWidth - 24.dp < minimumColumn * 7
+                        val useDayList = maxWidth - CALENDAR_CONTENT_PADDING * 2 < minimumColumn * 7
                         val scroll = rememberLazyListState()
                         LaunchedEffect(viewedYear, viewedMonth, useDayList) { scroll.scrollToItem(0) }
+                        val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
                         Column(Modifier.fillMaxSize()) {
                             LazyColumn(
                                 state = scroll,
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                contentPadding = PaddingValues(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().weight(1f).pointerInput(rtl) {
+                                    val swipeDistance = SWIPE_MONTH_DISTANCE.toPx()
+                                    var travelled = 0f
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { travelled = 0f },
+                                        onDragCancel = { travelled = 0f },
+                                        // The month follows the finger, as pages do: in a right-to-left layout the next
+                                        // month is on the left, so a drag to the right brings it in.
+                                        onDragEnd = { if (abs(travelled) >= swipeDistance) currentSwipeToMonth((travelled > 0) == rtl) },
+                                        onHorizontalDrag = { _, dragAmount -> travelled += dragAmount },
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = CALENDAR_CONTENT_PADDING, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                item(key = "selection") {
-                                    Column(
-                                        Modifier.fillMaxWidth().background(BgCream, RoundedCornerShape(16.dp)).padding(16.dp),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        Text(stringResource(R.string.calendar_selected_date), fontSize = 12.sp, color = GreenPrimary)
-                                        Text(hijriDateLabel(pickedHijriDate), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark)
-                                        Text(gregorianDateLabel(pickedDate), fontSize = 14.sp, color = TextMuted)
-                                        if (!pickedHijriDate.isEstimated) Text(
-                                            stringResource(R.string.calendar_official_start_short),
-                                            fontSize = 12.sp, color = TextMuted,
-                                        )
-                                    }
-                                }
+                                // The picked day is the filled cell of the grid, and both of its dates are in the
+                                // cell, so there is no separate summary of it: the month and the arrows come first.
                                 item(key = "month") {
-                                    Column(
-                                        Modifier.fillMaxWidth().padding(top = 8.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                    ) {
-                                        Text(
-                                            hijriMonthLabel(hijriMonth.year, hijriMonth.month),
-                                            modifier = Modifier.semantics { heading() },
-                                            fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center, color = GreenPrimaryDark,
-                                        )
-                                        Text(
-                                            stringResource(R.string.calendar_gregorian_month, solarRange),
-                                            fontSize = 14.sp, color = TextMuted, textAlign = TextAlign.Center,
-                                        )
-                                        if (!hijriMonth.isEstimated) Text(
-                                            stringResource(R.string.calendar_official_start_short),
-                                            fontSize = 12.sp, color = TextMuted, textAlign = TextAlign.Center,
-                                        )
-                                    }
-                                }
-                                item(key = "navigation") {
-                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        CalendarMonthArrow(
-                                            previous = true,
-                                            enabled = previousMonth?.let(bounds::intersectsMonth) == true,
-                                            onClick = { previousMonth?.let(navigateToMonth) },
-                                        )
-                                        TextButton(
-                                            onClick = {
-                                                val currentToday = LocalDate.now()
-                                                if (bounds.contains(currentToday)) {
-                                                    pickedEpoch = currentToday.toEpochDay()
-                                                    navigateToMonth(calendar.monthFor(currentToday))
-                                                }
-                                            },
-                                            enabled = bounds.contains(today),
-                                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                                        ) {
-                                            Text(stringResource(R.string.calendar_today), color = if (bounds.contains(today)) GreenPrimary else TextMuted,
-                                                fontSize = 16.sp, textAlign = TextAlign.Center)
+                                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                            CalendarMonthArrow(
+                                                previous = true,
+                                                enabled = previousMonth?.let(bounds::intersectsMonth) == true,
+                                                onClick = { previousMonth?.let(navigateToMonth) },
+                                            )
+                                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                    hijriMonthLabel(hijriMonth.year, hijriMonth.month),
+                                                    modifier = Modifier.semantics { heading() },
+                                                    fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                                                    textAlign = TextAlign.Center, color = GreenPrimaryDark,
+                                                )
+                                                Text(
+                                                    stringResource(R.string.calendar_gregorian_month, solarRange),
+                                                    fontSize = 14.sp, color = TextMuted, textAlign = TextAlign.Center,
+                                                )
+                                                if (!hijriMonth.isEstimated) Text(
+                                                    stringResource(R.string.calendar_official_start_short),
+                                                    fontSize = 12.sp, color = TextMuted, textAlign = TextAlign.Center,
+                                                )
+                                            }
+                                            CalendarMonthArrow(
+                                                previous = false,
+                                                enabled = nextMonth?.let(bounds::intersectsMonth) == true,
+                                                onClick = { nextMonth?.let(navigateToMonth) },
+                                            )
                                         }
-                                        CalendarMonthArrow(
-                                            previous = false,
-                                            enabled = nextMonth?.let(bounds::intersectsMonth) == true,
-                                            onClick = { nextMonth?.let(navigateToMonth) },
-                                        )
+                                        CalendarTodayChip(enabled = bounds.contains(today), onClick = goToToday)
                                     }
                                 }
                                 if (useDayList) {
@@ -286,13 +290,6 @@ internal fun HijriCalendarDialog(
                                             }
                                         }
                                     }
-                                }
-                                item(key = "method") {
-                                    Text(
-                                        stringResource(R.string.calendar_calculation_method),
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                        fontSize = 12.sp, color = TextMuted, textAlign = TextAlign.Center,
-                                    )
                                 }
                             }
                             HorizontalDivider(color = Divider)
@@ -342,28 +339,20 @@ private fun CalendarDay(
             .then(if (today) Modifier.border(BorderStroke(1.dp, GreenPrimary), shape) else Modifier)
             .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .semantics { contentDescription = description }
-            .padding(horizontal = if (expanded) 12.dp else 2.dp, vertical = 8.dp),
+            .padding(horizontal = if (expanded) 12.dp else 2.dp, vertical = 6.dp),
         horizontalAlignment = if (expanded) Alignment.Start else Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                if (expanded) hijriDateLabel(hijriDate) else hijriDate.day.toString(),
-                modifier = Modifier.weight(1f, fill = false).clearAndSetSemantics {},
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold), color = mainColor,
-            )
-            if (selected) Canvas(Modifier.size(12.dp)) {
-                drawLine(mainColor, Offset(size.width * 0.15f, size.height * 0.5f), Offset(size.width * 0.4f, size.height * 0.75f), 2.dp.toPx(), StrokeCap.Round)
-                drawLine(mainColor, Offset(size.width * 0.4f, size.height * 0.75f), Offset(size.width * 0.85f, size.height * 0.25f), 2.dp.toPx(), StrokeCap.Round)
-            }
-        }
+        Text(
+            if (expanded) hijriDateLabel(hijriDate) else hijriDate.day.toString(),
+            modifier = Modifier.clearAndSetSemantics {},
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold), color = mainColor,
+        )
         Text(
             if (expanded) gregorianDateLabel(date) else date.dayOfMonth.toString(),
             modifier = Modifier.clearAndSetSemantics {},
             style = MaterialTheme.typography.bodySmall.copy(fontSize = if (expanded) 14.sp else 12.sp), color = smallColor,
         )
-        if (today) Text(todayLabel, modifier = Modifier.clearAndSetSemantics {},
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp), color = mainColor)
     }
 }
 
@@ -413,6 +402,25 @@ private fun CalendarConfirmation(modifier: Modifier, enabled: Boolean, onConfirm
             confirmButton(Modifier.weight(1f))
             cancelButton(Modifier.weight(1f))
         }
+    }
+}
+
+/** Brings the calendar back to today: a small pill under the month it moves, not a button of the dialog. */
+@Composable
+private fun CalendarTodayChip(enabled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val color = if (enabled) GreenPrimary else TextMuted.copy(alpha = 0.55f)
+    Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+        Text(
+            text = stringResource(R.string.calendar_today),
+            modifier = Modifier
+                .clip(shape)
+                .background(if (enabled) GreenPrimary.copy(alpha = 0.10f) else Color.Transparent)
+                .border(1.dp, color.copy(alpha = 0.45f), shape)
+                .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+                .padding(horizontal = 18.dp, vertical = 6.dp),
+            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color, textAlign = TextAlign.Center,
+        )
     }
 }
 

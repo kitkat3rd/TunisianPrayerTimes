@@ -214,7 +214,7 @@ class HifzReminderEligibilityTest {
 
         invokeRemind(app, mapOf(today to setOf(first)), now)
         val initial = HifzReminder.postedIds(app)
-        assertEquals(HifzRoundSize, initial.size)
+        assertEquals(HifzBatchSize, initial.size)
         invokeRemind(app, mapOf(today to setOf(later)), now + 2 * 60 * 60_000L)
         val remaining = HifzReminder.postedIds(app)
 

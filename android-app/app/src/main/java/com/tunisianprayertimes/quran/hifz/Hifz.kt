@@ -570,7 +570,8 @@ fun List<HifzPoint>.dueToday(today: Long, now: Long, limit: Int = Int.MAX_VALUE)
 }
 
 /**
- * A review's batch, at most [limit] points, taken by [dueToday]'s priority; [first], chosen by the reader, asked first.
+ * At most [limit] points due, taken by [dueToday]'s priority: what a reminder lists, or with no limit, what a review can
+ * ask ([reviewSitting]); [first], chosen by the reader, asked first.
  * No point is asked after another one shows its verse (R3): a point whose question or answer [shows] another one's verse
  * comes after it, so that both are asked, a look-alike after the verse it was confused with, a verse after the one
  * before it; otherwise mushaf order, as a hafiz goes through the pages. Points that would each see the other's answer
@@ -611,7 +612,7 @@ fun List<HifzPoint>.reviewBatch(today: Long, now: Long, limit: Int, first: HifzP
         val behind = reach { a, b -> sees(b, a) }
         return chosen.filter { it.id in ahead && it.id in behind }
     }
-    /** Takes [point] if it fits as the round stands: room left, and no loop. */
+    /** Takes [point] if it fits as the batch stands: room left, and no loop. */
     fun offer(point: HifzPoint, reserved: Boolean) {
         if (chosen.none { it.id == point.id } && hasRoom(point, reserved) && loopWith(point).isEmpty()) chosen += point
     }
@@ -651,8 +652,8 @@ fun List<HifzPoint>.reviewBatch(today: Long, now: Long, limit: Int, first: HifzP
 
 /**
  * [this] in its own order, except that a point comes once every one whose verse it [shows] is asked, so that no answer
- * gives away a question still to come; on a loop, which cannot be ordered so, the first one left goes. A review's order
- * after its first question, and the order of «مراجعة الدفتر».
+ * gives away a question still to come; on a loop, which cannot be ordered so, the first one left goes. A
+ * [reviewBatch]'s order after its first question, and the order of «مراجعة الدفتر».
  */
 internal fun List<HifzPoint>.answerSafeOrder(): List<HifzPoint> {
     val rest = toMutableList()
@@ -681,6 +682,46 @@ internal fun List<HifzPoint>.answerSafeOrder(): List<HifzPoint> {
             rest.remove(next)
         }
     }
+}
+
+/**
+ * One review of everything due now. [lead], the questions the reminder that opens it listed or the point the reader
+ * chose, is asked first, in its order; a point whose verse a lead question or answer shows is left for later, as after
+ * any answer that shows it. Which of the rest can be asked is [reviewBatch]'s choice with no limit: of points that would
+ * each see the other's answer first, the one answered last waits for the next reminder. They come by [dueToday]'s
+ * priority in groups of [HifzBatchSize], each group in mushaf order, so that a reader who stops early has answered what
+ * matters most; a point whose verse another one shows comes just before it ([prerequisitesFirst]).
+ */
+fun List<HifzPoint>.reviewSitting(today: Long, now: Long, lead: List<HifzPoint> = emptyList()): List<HifzPoint> {
+    val leadIds = lead.mapTo(HashSet()) { it.id }
+    val rest = filter { point -> point.id !in leadIds && lead.none { it.shows(point.verse) } }
+    val asked = rest.reviewBatch(today, now, rest.size).mapTo(HashSet()) { it.id }
+    return lead + rest.dueToday(today, now).filter { it.id in asked }.chunked(HifzBatchSize)
+        .flatMap { group -> group.sortedWith(compareBy<HifzPoint>({ it.verse }, { it.id })) }
+        .prerequisitesFirst()
+}
+
+/**
+ * [this] in its own order, except that a point whose verse another one [shows] comes just before it, after any whose
+ * verse it shows in turn: no answer gives away a question still to come, and what comes first stays first. On a loop,
+ * which cannot be ordered so, the point reached first goes last.
+ */
+internal fun List<HifzPoint>.prerequisitesFirst(): List<HifzPoint> {
+    // Worked out once: a review may hold every point of the notebook.
+    val shown = associate { point -> point.id to point.answerVerses() }
+    fun sees(a: HifzPoint, b: HifzPoint) = a.id != b.id &&
+        (b.verse in shown.getValue(a.id) || (b.verse.surah == a.verse.surah && b.verse.ayah == a.verse.ayah - 1))
+    val placed = mutableSetOf<Long>()
+    val reached = mutableSetOf<Long>()
+    val order = mutableListOf<HifzPoint>()
+    fun place(point: HifzPoint) {
+        if (point.id in placed || !reached.add(point.id)) return
+        forEach { other -> if (other.id !in placed && sees(point, other)) place(other) }
+        placed += point.id
+        order += point
+    }
+    forEach(::place)
+    return order
 }
 
 /**
@@ -1078,8 +1119,11 @@ private fun HifzPoint.withCurrentLearningPlan(): HifzPoint {
     return changed.copy(step = retained, masteredAt = null, dueDay = minOf(dueDay, next))
 }
 
-/** Points in one review and in a reminder; more due points wait for the next review, «تابع مراجعة اليوم». */
-const val HifzRoundSize = 5
+/**
+ * The questions a reminder lists. A review asks everything due, by priority in groups of this many, each group in
+ * mushaf order; see [reviewSitting].
+ */
+const val HifzBatchSize = 5
 
 /**
  * The drill after a wrong answer: one pause after each passage, as long as what is to be said in it. The drill, the

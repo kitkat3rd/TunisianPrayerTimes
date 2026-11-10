@@ -173,7 +173,7 @@ import com.tunisianprayertimes.quran.hifz.hifzWords
 import com.tunisianprayertimes.quran.hifz.HifzPoint
 import com.tunisianprayertimes.quran.hifz.HifzReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminderControlState
-import com.tunisianprayertimes.quran.hifz.HifzRoundSize
+import com.tunisianprayertimes.quran.hifz.HifzBatchSize
 import com.tunisianprayertimes.quran.hifz.HifzPace
 import com.tunisianprayertimes.quran.hifz.epochDay
 import com.tunisianprayertimes.quran.hifz.HifzRepository
@@ -712,7 +712,6 @@ private fun QuranReader(
     // Phone and head unit use the same saved question state, not separate review queues.
     var reviewIds by hifzSessions.reviewIds
     var reviewSession by hifzSessions.reviewSession
-    var reviewStartedDay by hifzSessions.reviewStartedDay
     var reviewDayDraft by hifzSessions.reviewDayDraft
     fun reviewDayTally(): HifzTally = hifzSessions.dayTally()
     val reviewState = hifzSessions.reviewState
@@ -941,13 +940,11 @@ private fun QuranReader(
         val day = epochDay(now)
         val stored = HifzLearning.read(context, day)
         learning = stored
-        // The review a reminder opens asks what the reminder asked: a slip set for other times waits for its own, or for
-        // «تابع مراجعة اليوم».
+        // The review a reminder opens asks first the questions it listed, in their order, then the rest of what is due
+        // now, which its count includes.
+        val due = if (action == "hifz_review") HifzRepository.points.value.askable(day, now, stored.seen, stored.exposed) else emptyList()
         val posted = if (action == "hifz_review") HifzReminder.postedIds(context) else emptySet()
-        val due = if (action == "hifz_review") HifzRepository.points.value
-            .askable(day, now, stored.seen, stored.exposed)
-            .let { all -> all.filter { it.id in posted }.ifEmpty { all } }
-            .reviewBatch(day, now, HifzRoundSize).map { it.id } else emptyList()
+        val lead = due.filter { it.id in posted }.reviewBatch(day, now, HifzBatchSize).map { it.id }
         if (reviewActive) endReviewNow[0]?.invoke(due.isEmpty())
         stackedFix = null
         editingPoint = null
@@ -956,7 +953,7 @@ private fun QuranReader(
                 HifzReminder.clearReminder(context)
                 hifzSessions.initialize()
                 hifzSessions.usePhone()
-                if (due.isNotEmpty()) hifzSessions.startDaily(selectedIds = due, newRound = true)
+                if (due.isNotEmpty()) hifzSessions.startDaily(lead, restart = true)
                 else reviewIds = emptyList()
                 panel = if (reviewIds.isEmpty()) "hifz" else "hifzReview"
                 if (reviewIds.isNotEmpty()) {
@@ -1744,15 +1741,15 @@ private fun QuranReader(
         }
     }
     /**
-     * The day's review: the questions due, in mushaf order, linked points together; [first], chosen in the notebook or
-     * on the page, asked first. The day's answers add up.
+     * The day's review: everything due now, what matters most first, no answer before a question it gives away; [first],
+     * chosen in the notebook or on the page, asked first. The day's answers add up.
      */
     fun startReview(first: HifzPoint? = null) {
         if (hifzSessions.savingAnswer) return
         scope.launch {
             hifzSessions.initialize()
             hifzSessions.usePhone()
-            if (!hifzSessions.startDaily(first, newRound = true)) return@launch
+            if (!hifzSessions.startDaily(listOfNotNull(first?.id), restart = true)) return@launch
             clearTransient()
             panel = "hifzReview"
             keepPlaceForReview()
@@ -3098,10 +3095,7 @@ private fun QuranReader(
             audio = activeHifzAudio, audioControls = hifzAudioControls,
             eligibleDueIds = eligibleDueIds,
             later = hifzLaterTimes,
-            dailyReviewRemaining = if (hifzSessions.initialized && hifzSessions.mode == HifzSessionMode.Daily &&
-                reviewStartedDay == today && reviewState.point(reviewQueue) != null) {
-                reviewState.unanswered(reviewQueue, eligibleDueIds).takeIf { it > 0 }
-            } else null,
+            continueDailyReview = hifzSessions.dailyCanContinue(eligibleDueIds),
             continueNotebookReview = hifzSessions.initialized && hifzSessions.mode == HifzSessionMode.Notebook &&
                 practiceCards.drop(practiceState.index).any { practiceState.answer(it) == null },
             actions = object : HifzHomeActions {

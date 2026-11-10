@@ -163,17 +163,20 @@ internal class HifzSessionCoordinator(
 
     fun keepDay() { if (mode == HifzSessionMode.Daily) reviewDayDraft.value = "${day()}:${reviewState.day.encode()}" }
 
-    fun startDaily(first: HifzPoint? = null, selectedIds: List<Long>? = null, newRound: Boolean = false): Boolean {
+    /**
+     * The day's review: everything due now ([reviewSitting]), [lead] first, as a reminder listed them or the reader chose
+     * one. Without [lead], or [restart], the review left unfinished goes on when it can ([dailyCanContinue]).
+     */
+    fun startDaily(lead: List<Long> = emptyList(), restart: Boolean = false): Boolean {
         if (!initialized || savingAnswer) return false
         refresh()
-        if (!newRound && first == null && selectedIds == null && mode == HifzSessionMode.Daily && !view().let { it.phase == HifzSessionPhase.Finished }) {
+        val learning = HifzLearning.read(context, day())
+        val eligible = HifzRepository.points.value.askable(day(), now(), learning.seen, learning.exposed)
+        if (!restart && lead.isEmpty() && dailyCanContinue(eligible.mapTo(HashSet()) { it.id })) {
             resume(); return true
         }
         keepDay()
-        val learning = HifzLearning.read(context, day())
-        val eligible = HifzRepository.points.value.askable(day(), now(), learning.seen, learning.exposed)
-        val chosen = (selectedIds?.let { ids -> eligible.filter { it.id in ids } } ?: eligible)
-            .reviewBatch(day(), now(), HifzRoundSize, first?.let { p -> eligible.firstOrNull { it.id == p.id } })
+        val chosen = eligible.reviewSitting(day(), now(), lead.mapNotNull { id -> eligible.firstOrNull { it.id == id } })
         if (chosen.isEmpty()) { error = "لا توجد أسئلة مستحقة الآن. تبقى مواعيد المراجعة كما هي."; changed(); return false }
         captureListening()
         reviewState = HifzReviewState(elapsed, dayTally(), learning.exposed, learning.seen, now)
@@ -214,7 +217,34 @@ internal class HifzSessionCoordinator(
     fun useCar() { carActive = true; paused = false; changed() }
     fun leaveCar() { carActive = false; changed() }
     fun audioError(message: String) { error = message; changed() }
-    fun resume() { if (!savingAnswer) { captureListening(); paused = false; reviewState.resume(); refresh(); changed() } else retry() }
+    fun resume() { if (!savingAnswer) { captureListening(); paused = false; reviewState.resume(); takeInDue(); refresh(); changed() } else retry() }
+
+    /** The points a daily review may ask now. */
+    private fun dueNow(): List<HifzPoint> {
+        val learning = HifzLearning.read(context, day())
+        return HifzRepository.points.value.askable(day(), now(), learning.seen, learning.exposed)
+    }
+
+    /** Something is due now, for a new daily review to ask. */
+    fun anythingDue(): Boolean = dueNow().isNotEmpty()
+
+    /**
+     * The daily review left unfinished can go on: today's, with a question left, and none of [eligibleIds], the points
+     * due now, a point it already answered or put off, which only a new review can ask again. What fell due since it
+     * began joins it as it goes on.
+     */
+    fun dailyCanContinue(eligibleIds: Set<Long>): Boolean =
+        initialized && mode == HifzSessionMode.Daily && reviewStartedDay.longValue == day() && reviewState.point(queue()) != null &&
+            eligibleIds.none { it in reviewState.gradedIds || it in reviewState.deferredIds }
+
+    /** What fell due since the daily review began joins it, after the questions it holds. */
+    private fun takeInDue() {
+        if (mode != HifzSessionMode.Daily || reviewState.point(queue()) == null) return
+        val held = reviewIds.value.toSet()
+        val due = dueNow().filter { it.id !in held }
+        if (due.isNotEmpty()) reviewIds.value = reviewIds.value + due.reviewSitting(day(), now()).map { it.id }
+    }
+
     fun pause() {
         bridge()?.pause()
         notePlayback(QuranAudioController.state.value, force = true)
@@ -396,7 +426,7 @@ internal class HifzSessionCoordinator(
         override fun listen(point: HifzPoint) { if (view().point?.id == point.id) play(catalog?.let { hifzListen(it, listOf(point)) }) }
         override fun drill(point: HifzPoint) { if (view().point?.id == point.id) play(catalog?.let { hifzDrill(it, point) }) }
         override fun leaveCard() { if (reviewAudio.value) bridge()?.pause(); reviewAudio.value = false; clip = null }
-        override fun more() { startDaily(newRound = true) }
+        override fun more() { startDaily(restart = true) }
         override fun listenTo(ids: List<Long>) { play(catalog?.let { hifzListen(it, HifzRepository.points.value.filter { p -> p.id in ids }) }) }
         override fun dismiss() { close() }
     }

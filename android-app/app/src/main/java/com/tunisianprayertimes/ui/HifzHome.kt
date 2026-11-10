@@ -41,7 +41,6 @@ import com.tunisianprayertimes.quran.hifz.HifzReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminderControlState
 import com.tunisianprayertimes.quran.hifz.HifzReminder.NB
 import com.tunisianprayertimes.quran.hifz.HifzFreshGapMs
-import com.tunisianprayertimes.quran.hifz.HifzRoundSize
 import com.tunisianprayertimes.quran.hifz.HifzSettings
 import com.tunisianprayertimes.quran.hifz.dueToday
 import com.tunisianprayertimes.quran.hifz.answerVerses
@@ -122,14 +121,16 @@ internal fun HifzHomeSheet(
     /** When the fresh points not asked now come. */
     later: HifzLaterTimes = HifzLaterTimes(),
     actions: HifzHomeActions,
-    /** Questions in the saved daily session that remain eligible to answer now; null when there are none. */
-    dailyReviewRemaining: Int? = null,
+    /**
+     * The daily review left unfinished can go on, taking in what fell due since it began: it asks everything due now, as
+     * a new one would; see [com.tunisianprayertimes.quran.hifz.HifzSessionCoordinator.dailyCanContinue].
+     */
+    continueDailyReview: Boolean = false,
     continueNotebookReview: Boolean = false,
 ) {
-    /** Every point due, the next review's first: «اليوم» is the day's, not one review's. */
+    /** Every point due now, by the priority the review takes them in. */
     val eligible = remember(points, eligibleDueIds) { points.filter { eligibleDueIds == null || it.id in eligibleDueIds } }
     val dueAll = remember(eligible, today, now) { eligible.dueToday(today, now) }
-    val batch = remember(eligible, today, now) { eligible.dueToday(today, now, HifzRoundSize) }
     var howItWorks by rememberSaveable { mutableStateOf(false) }
     var notebook by rememberSaveable { mutableStateOf(false) }
     val focus = LocalFocusManager.current
@@ -156,8 +157,7 @@ internal fun HifzHomeSheet(
     // The notebook as listed: its filters, then what needs care, then by surah. A correction opened from it goes on
     // through it in this order.
     val shown = if (!notebook) emptyList() else when (tab) {
-        // The next review's first, then the rest of the day's.
-        0 -> batch + dueAll.filterNot { it in batch }
+        0 -> dueAll
         2 -> points.filter { it.mastered }
         else -> points
     }.filter {
@@ -248,14 +248,15 @@ internal fun HifzHomeSheet(
                 if (!notebook) item(key = "today") {
                     // A saved session alone never makes deferred or future questions available now.
                     val reviewAvailable = dueAll.isNotEmpty()
-                    val resumeRemaining = dailyReviewRemaining?.takeIf { it > 0 && reviewAvailable }
+                    val resume = continueDailyReview && reviewAvailable
                     Surface(
                         shape = RoundedCornerShape(16.dp), color = if (reviewAvailable) GoldLight else Color.White,
                         border = if (reviewAvailable) null else BorderStroke(1.dp, CardBorder),
                     ) {
                         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (resumeRemaining != null) {
-                                Text("بقي في هذه المراجعة ${hifzCountLabel(resumeRemaining)}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                            if (resume) {
+                                // Counted as for a new review: going on asks everything due now.
+                                Text("بقي أن نسألك عن ${HifzReminder.pointsAbout(dueAll.size)}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                             } else if (dueAll.isNotEmpty()) {
                                 // Only the questions available now, matching the notebook's «الآن» chip.
                                 Text("نسألك الآن عن ${HifzReminder.pointsAbout(dueAll.size)}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
@@ -278,11 +279,11 @@ internal fun HifzHomeSheet(
                             }
                             if (reviewAvailable) {
                                 Button(
-                                    onClick = if (resumeRemaining != null) actions::continueReview else actions::review,
+                                    onClick = if (resume) actions::continueReview else actions::review,
                                     colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-                                    modifier = Modifier.testTag(if (resumeRemaining != null) "hifz_continue_shared" else "hifz_start_review"),
+                                    modifier = Modifier.testTag(if (resume) "hifz_continue_shared" else "hifz_start_review"),
                                 ) {
-                                    Text(if (resumeRemaining != null) "تابع المراجعة" else "ابدأ مراجعة اليوم")
+                                    Text(if (resume) "تابع المراجعة" else "ابدأ مراجعة اليوم")
                                 }
                             }
                         }
@@ -524,8 +525,8 @@ internal fun HifzAwayDialog(
 }
 
 /**
- * «إعدادات المراجعة»: when the questions come, and nothing else. The round's size, the drill's pause and speed are
- * fixed; the page markers are the reader menu's «مواضعي على الصفحات».
+ * «إعدادات المراجعة»: when the questions come, and nothing else. The drill's pause and speed are fixed; the page
+ * markers are the reader menu's «مواضعي على الصفحات».
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable

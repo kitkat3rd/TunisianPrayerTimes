@@ -17,8 +17,10 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -27,6 +29,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.ResolvedTextDirection
@@ -56,6 +62,7 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.time.LocalDate
+import java.time.temporal.WeekFields
 import java.util.TimeZone
 
 /** Real calendar composition and gestures, with isolated announcement IO and no phone/server. */
@@ -75,10 +82,11 @@ class HijriCalendarUiTest {
     private val fitr = LocalDate.of(2026, 3, 20)
     private var confirmed: Long? = null
     private var dismissals = 0
+    private var fontScale = 2f
 
     @Before
     fun isolateOfficialDates() {
-        RuntimeEnvironment.setFontScale(2f)
+        RuntimeEnvironment.setFontScale(fontScale)
         val application = ApplicationProvider.getApplicationContext<Application>()
         // Android grants this merged-manifest signature permission on install;
         // Robolectric's bare Application needs the same grant explicitly on API26.
@@ -105,7 +113,7 @@ class HijriCalendarUiTest {
     }
 
     @Test
-    fun narrowLargeTextRowShowsBothDatesWithoutClippingAndKeepsRtlControlsUsable() {
+    fun narrowLargeTextRowShowsBothDatesWithoutClippingAndKeepsRtlControlsBesideTheDate() {
         publishDates(includeFitr = true)
         var previousClicks = 0
         var nextClicks = 0
@@ -126,7 +134,10 @@ class HijriCalendarUiTest {
         val previousBounds = previous.fetchSemanticsNode().boundsInRoot
         val nextBounds = next.fetchSemanticsNode().boundsInRoot
         assertTrue("RTL previous day belongs to the right", previousBounds.left >= nextBounds.right)
-        assertTrue("Large text moves controls below the label", previousBounds.top >= label.bottom)
+        assertTrue("Previous day sits right of the date, not below it", previousBounds.left >= label.right - 1f)
+        assertTrue("Next day sits left of the date, not below it", nextBounds.right <= label.left + 1f)
+        assertTrue("Previous day shares the date's row", previousBounds.center.y in label.top..label.bottom)
+        assertTrue("Next day shares the date's row", nextBounds.center.y in label.top..label.bottom)
         assertTrue("Previous target remains at least 48dp", previousBounds.width >= 48f && previousBounds.height >= 48f)
         assertTrue("Next target remains at least 48dp", nextBounds.width >= 48f && nextBounds.height >= 48f)
         previous.performClick()
@@ -139,8 +150,8 @@ class HijriCalendarUiTest {
     fun largeTextDayListCanReachAndChooseTheLastDayWithBothDatesAccessible() {
         publishDates(includeFitr = true)
         showDialog(ramadanStart, ramadanStart to fitr)
-        assertCompleteText(hijriDateLabel(TunisianHijriCalendar(OfficialIslamicDates.updates.value).date(ramadanStart)))
-        assertCompleteText(gregorianDateLabel(ramadanStart))
+        // The cell's description carries the Hijri and the Gregorian date, and the opening day is the picked one.
+        scrollToDay(ramadanStart).assertIsDisplayed().assertIsSelected()
         val lastDay = fitr.minusDays(1)
         val day = scrollToDay(lastDay).assertIsDisplayed().assertIsEnabled()
         assertTrue("Large-text dates use a full-width list", day.fetchSemanticsNode().boundsInRoot.width > 200f)
@@ -149,6 +160,40 @@ class HijriCalendarUiTest {
         compose.onNodeWithText(text(R.string.calendar_confirm)).performClick()
         assertEquals(calendarDateMillis(lastDay), confirmed)
         assertEquals(1, dismissals)
+    }
+
+    @Test
+    @Config(qualifiers = "ar-rTN-w360dp-h740dp-mdpi")
+    fun typicalPhoneAtSlightlyLargeTextShowsAMonthGridNotAList() {
+        fontScale = 1.15f
+        RuntimeEnvironment.setFontScale(fontScale)
+        publishDates(includeFitr = true)
+        showDialog(ramadanStart, ramadanStart to fitr)
+        val first = scrollToDay(ramadanStart).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val second = scrollToDay(ramadanStart.plusDays(1)).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("Days are grid cells, not full-width rows: ${first.width}", first.width < 100f)
+        assertTrue("Neighbouring days share a row", first.top == second.top)
+        assertTrue("Cells remain comfortable to hit: ${first.width}x${first.height}", first.width >= 44f && first.height >= 48f)
+    }
+
+    @Test
+    @Config(qualifiers = "ar-rTN-w360dp-h740dp-mdpi")
+    fun wholeMonthAndTheButtonsFitWithoutScrollingEvenWhenTheMonthSpansSixWeeks() {
+        fontScale = 1.15f
+        RuntimeEnvironment.setFontScale(fontScale)
+        publishDates(includeFitr = true)
+        val calendar = TunisianHijriCalendar(OfficialIslamicDates.updates.value)
+        val weekStart = WeekFields.of(calendarLocale).firstDayOfWeek
+        val sixWeeks = generateSequence(calendar.monthFor(ramadanStart)) { calendar.adjacentMonth(it.year, it.month, 1) }
+            .take(36)
+            .first { ((it.start.dayOfWeek.value - weekStart.value + 7) % 7 + it.lengthOfMonth + 6) / 7 == 6 }
+        showDialog(sixWeeks.start, calendar.supportedFirst to calendar.supportedLast)
+        compose.onNodeWithText(hijriMonthLabel(sixWeeks.year, sixWeeks.month)).assertIsDisplayed()
+        dayCell(calendar, sixWeeks.start).assertIsDisplayed()
+        dayCell(calendar, sixWeeks.endExclusive.minusDays(1)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.calendar_confirm)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.calendar_today)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.calendar_cancel)).assertIsDisplayed()
     }
 
     @Test
@@ -171,12 +216,54 @@ class HijriCalendarUiTest {
     }
 
     @Test
+    fun swipingTheCalendarMovesTheMonthLikeTheArrowsAndStopsAtTheEndOfTheRange() {
+        publishDates(includeFitr = true)
+        showDialog(ramadanStart, ramadanStart to fitr)
+        val calendarArea = compose.onNode(hasScrollToIndexAction())
+        val ramadan = hijriMonthLabel(1447, 9)
+        val shawwal = hijriMonthLabel(1447, 10)
+        compose.onNodeWithText(ramadan).assertIsDisplayed()
+        // Right to left: the next month is on the left, so a drag to the right brings it in.
+        calendarArea.performTouchInput { swipeRight() }
+        compose.onNodeWithText(shawwal).assertIsDisplayed()
+        calendarArea.performTouchInput { swipeRight() }
+        compose.onNodeWithText(shawwal).assertIsDisplayed()
+        calendarArea.performTouchInput { swipeLeft() }
+        compose.onNodeWithText(ramadan).assertIsDisplayed()
+        calendarArea.performTouchInput { swipeLeft() }
+        compose.onNodeWithText(ramadan).assertIsDisplayed()
+        // Scrolling the days up and down is not a month change.
+        calendarArea.performTouchInput { swipeUp() }
+        calendarArea.performScrollToNode(hasText(ramadan))
+        compose.onNodeWithText(ramadan).assertIsDisplayed()
+        assertNull("Swiping never confirms a date", confirmed)
+    }
+
+    @Test
+    @Config(qualifiers = "ar-rTN-w360dp-h740dp-mdpi")
+    fun swipingAcrossTheDayGridMovesTheMonthWithoutPickingADay() {
+        fontScale = 1.15f
+        RuntimeEnvironment.setFontScale(fontScale)
+        publishDates(includeFitr = true)
+        showDialog(ramadanStart, ramadanStart to fitr)
+        val calendarArea = compose.onNode(hasScrollToIndexAction())
+        val first = dayCell(TunisianHijriCalendar(OfficialIslamicDates.updates.value), ramadanStart).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue("This runs against the grid, not the list: ${first.width}", first.width < 100f)
+        calendarArea.performTouchInput { swipeRight() }
+        compose.onNodeWithText(hijriMonthLabel(1447, 10)).assertIsDisplayed()
+        calendarArea.performTouchInput { swipeLeft() }
+        compose.onNodeWithText(hijriMonthLabel(1447, 9)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.calendar_confirm)).performClick()
+        assertEquals("The picked day is still the day the calendar opened on", calendarDateMillis(ramadanStart), confirmed)
+    }
+
+    @Test
     fun openingSelectionIsClampedAndUnavailableDaysCannotBeChosen() {
         publishDates(includeFitr = true)
         val first = ramadanStart.plusDays(5)
         val last = first.plusDays(2)
         showDialog(ramadanStart, first to last)
-        assertCompleteText(gregorianDateLabel(first))
+        scrollToDay(first).assertIsSelected()
         scrollToDay(first.minusDays(1)).assertIsNotEnabled()
         scrollToDay(last.plusDays(1)).assertIsNotEnabled()
         compose.onNodeWithText(text(R.string.calendar_confirm)).performClick()
@@ -189,13 +276,15 @@ class HijriCalendarUiTest {
         showDialog(fitr, ramadanStart to fitr.plusDays(30))
         val provisional = hijriDateLabel(TunisianHijriCalendar(OfficialIslamicDates.updates.value).date(fitr))
         assertTrue("Fixture exercises provisional Ramadan 30", provisional.startsWith("30 "))
-        assertCompleteText(provisional)
+        scrollToDay(fitr).assertIsSelected()
         compose.runOnIdle { publishDates(includeFitr = true) }
         val confirmedLabel = hijriDateLabel(TunisianHijriCalendar(OfficialIslamicDates.updates.value).date(fitr))
         assertTrue("Same civil day becomes Shawwal 1", confirmedLabel.startsWith("1 "))
-        assertCompleteText(confirmedLabel)
-        assertCompleteText(gregorianDateLabel(fitr))
-        compose.onNodeWithText(hijriMonthLabel(1447, 9)).performScrollTo().assertIsDisplayed()
+        // Ramadan lost its 30th day, so the viewed month stays Ramadan and the picked day now lives in the next month.
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(hijriMonthLabel(1447, 9)))
+        compose.onNodeWithText(hijriMonthLabel(1447, 9)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(text(R.string.calendar_next_month)).performClick()
+        scrollToDay(fitr).assertIsSelected()
         compose.onNodeWithText(text(R.string.calendar_confirm)).performClick()
         assertEquals(calendarDateMillis(fitr), confirmed)
     }
@@ -237,7 +326,7 @@ class HijriCalendarUiTest {
 
     private fun show(content: @Composable () -> Unit) {
         compose.setContent {
-            assertEquals("Exercise the platform's largest font setting", 2f, LocalDensity.current.fontScale, 0f)
+            assertEquals("Exercise the configured font setting", fontScale, LocalDensity.current.fontScale, 0f)
             CompositionLocalProvider(
                 LocalLayoutDirection provides LayoutDirection.Rtl,
                 LocalLifecycleOwner provides lifecycleOwner,
@@ -266,6 +355,13 @@ class HijriCalendarUiTest {
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(matcher)
         return compose.onNode(matcher)
     }
+
+    /** The day's cell where it already is, without scrolling to it. */
+    private fun dayCell(calendar: TunisianHijriCalendar, date: LocalDate): SemanticsNodeInteraction =
+        compose.onNode(hasContentDescription(
+            text(R.string.calendar_day_description, hijriDateLabel(calendar.date(date)), gregorianDateLabel(date)),
+            substring = true,
+        ))
 
     private fun assertCompleteText(label: String) {
         val node = compose.onNodeWithText(label, useUnmergedTree = true).assertIsDisplayed()

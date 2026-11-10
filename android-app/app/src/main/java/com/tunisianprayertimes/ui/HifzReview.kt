@@ -84,7 +84,7 @@ internal interface HifzReviewActions {
     fun delete(point: HifzPoint) {}
     /** The card is left, or the review ends: the audio it started stops. */
     fun leaveCard()
-    /** Another review, of the points still due beyond this one's. */
+    /** A new review of what is due now that this one could not ask: due since it began, or due again. */
     fun more()
     /**
      * «استمع إلى ما راجعته للتوّ», once the checks are done: hearing them before would have been no check. The points of
@@ -289,15 +289,14 @@ internal class HifzReviewState private constructor(
     fun questions(queue: List<HifzPoint>): List<HifzPoint> = if (deferredIds.isEmpty()) queue else queue.filterNot { it.id in deferredIds }
 
     /**
-     * The round's questions as the reader will meet them: [queue] (already [questions]) up to the card in view, then
+     * The review's questions as the reader will meet them: [queue] (already [questions]) up to the card in view, then
      * those after it whose answer has not been seen since, nor will be with the card in view or one asked before them;
      * the others are deferred when the review reaches them. For «سؤال 2 من 3» and for «التالي» or «نتيجة المراجعة».
      */
     fun count(queue: List<HifzPoint>): Int = kept(queue).size
 
-    /** The unanswered questions from the card in view on, optionally limited to those eligible now. */
-    fun unanswered(queue: List<HifzPoint>, eligibleIds: Set<Long>? = null): Int =
-        kept(queue).drop(index(queue)).count { it.id !in gradedIds && (eligibleIds == null || it.id in eligibleIds) }
+    /** The unanswered questions from the card in view on. */
+    fun unanswered(queue: List<HifzPoint>): Int = kept(queue).drop(index(queue)).count { it.id !in gradedIds }
 
     private fun kept(queue: List<HifzPoint>): List<HifzPoint> {
         val at = index(queue)
@@ -1210,9 +1209,9 @@ internal fun hifzDaySummary(day: HifzTally, before: Int): String {
     else "$head، ${if (single) "و" else ""}$grades."
 }
 
-/** This round alone: earlier rounds and future checks belong in the optional details. */
+/** This review alone: earlier reviews and future checks belong in the optional details. */
 internal fun hifzRoundSummary(round: HifzTally): String {
-    if (round.graded == 0) return "لم تُسجَّل إجابات في هذه الجولة."
+    if (round.graded == 0) return "لم تُسجَّل إجابات في هذه المراجعة."
     return "راجعت ${HifzReminder.pointsObject(round.graded)}."
 }
 
@@ -1234,8 +1233,8 @@ private fun HifzRoundResults(round: HifzTally) {
 }
 
 /**
- * Separate finishing a round from finishing the work due now. The summary and remaining count come first;
- * individual schedules, the day's totals and listening stay behind details. Actions stay visible when details scroll.
+ * The review's end, or its stop: what was answered first, with what is left; individual schedules, the day's totals
+ * and listening stay behind details. Actions stay visible when details scroll.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1275,16 +1274,13 @@ private fun HifzReviewEnd(
             stopped -> {
                 Text("توقّفت المراجعة", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                 Text(hifzRoundSummary(state.round), fontSize = 14.sp, color = TextDark, textAlign = TextAlign.Center)
-                if (remaining > 0) Text("بقي في هذه المراجعة ${hifzCountLabel(remaining)}.", fontSize = 14.sp, color = TextMuted)
+                if (remaining > 0) Text("بقي أن نسألك عن ${HifzReminder.pointsAbout(remaining)}.", fontSize = 14.sp, color = TextMuted)
             }
             state.graded > 0 -> {
-                Text(
-                    if (stillDue > 0 || deferred > 0) "أكملت هذه الجولة" else "أكملت المراجعة",
-                    fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, textAlign = TextAlign.Center,
-                )
+                Text("أكملت المراجعة", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, textAlign = TextAlign.Center)
                 Text(hifzRoundSummary(state.round), fontSize = 14.sp, color = TextDark, textAlign = TextAlign.Center)
             }
-            else -> Text(if (stillDue > 0) "انتهت هذه الجولة" else "لا أسئلة الآن", fontSize = 16.sp, color = GreenPrimaryDark)
+            else -> Text(if (stillDue > 0) "انتهت المراجعة" else "لا أسئلة الآن", fontSize = 16.sp, color = GreenPrimaryDark)
         }
         if (state.graded > 0) HifzRoundResults(state.round)
         if (!stopped) {
@@ -1294,8 +1290,9 @@ private fun HifzReviewEnd(
                 nextCheckIn != null -> nextCheckLabel ?: hifzWhen(nextCheckIn)
                 else -> null
             }
+            // Due now, yet not in this review: due since it began, or due again.
             if (stillDue > 0) Text(
-                "بقي للمراجعة الآن ${HifzReminder.pointsLabel(stillDue)}.",
+                "ينتظرك الآن ${HifzReminder.otherPoints(stillDue)}.",
                 fontSize = 14.sp, color = GreenPrimaryDark, textAlign = TextAlign.Center,
                 modifier = Modifier.testTag("hifz_review_remaining"),
             )
@@ -1303,8 +1300,8 @@ private fun HifzReviewEnd(
         }
         // Deferrals explain what was not answered, even when the individual schedules are hidden.
         if (deferred > 0) Text(
-            if (deferred == 1) "موضع واحد ظهرت آيته في هذه المراجعة؛ نسألك عنه في تذكير لاحق."
-            else if (deferred == 2) "موضعان ظهرت آيتاهما في هذه المراجعة؛ نسألك عنهما في تذكير لاحق." else "${hifzCountLabel(deferred)} ظهرت آياتها في هذه المراجعة؛ نسألك عنها في تذكير لاحق.",
+            if (deferred == 1) "موضع واحد ظهرت آيته أثناء المراجعة؛ نسألك عنه في تذكير لاحق."
+            else if (deferred == 2) "موضعان ظهرت آيتاهما أثناء المراجعة؛ نسألك عنهما في تذكير لاحق." else "${hifzCountLabel(deferred)} ظهرت آياتها أثناء المراجعة؛ نسألك عنها في تذكير لاحق.",
             fontSize = 13.sp, color = TextMuted, textAlign = TextAlign.Center,
             modifier = Modifier.testTag("hifz_review_deferred"),
         )
@@ -1339,11 +1336,11 @@ private fun HifzReviewEnd(
             }
             return@Column
         }
-        // The way on is the widest: more questions when some are due, else back to the reading.
+        // The way on is the widest: those questions when some are due, else back to the reading.
         if (stillDue > 0) Button(
             onClick = actions::more, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
             modifier = Modifier.fillMaxWidth().testTag("hifz_review_more"),
-        ) { Text("راجع المواضع المتبقية") }
+        ) { Text(when (stillDue) { 1 -> "راجعه الآن"; 2 -> "راجعهما الآن"; else -> "راجعها الآن" }) }
         else Button(
             onClick = actions::dismiss, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
             modifier = Modifier.fillMaxWidth().testTag("hifz_review_done"),
