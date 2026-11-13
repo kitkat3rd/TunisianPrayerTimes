@@ -110,18 +110,8 @@ __pycache__/
 *.py[cod]
 .venv/
 
-# ── Claude Code session state (settings.json, launch.json, skills/ stay shareable)
-/.claude/*.lock
-/.claude/scheduled_tasks.json
-/.claude/settings.local.json
-/.claude/worktrees/
-/.claude/checkpoints/
-/.claude/mailbox/
-/.claude/routines/.state/
-/.claude/agent-registry.json
-/.claude/agent-memory-local
-/.claude/first-run
-/.claude/assistant-daemon-state.json
+# ── Claude Code folder (entirely local) ─────────────────────────────────
+/.claude/
 
 # ── Local working folder (locality-automation venv, transactions, device captures)
 /work/
@@ -145,3 +135,8 @@ android-app/app/build/
 /docs/
 
 native_listing_page
+
+# ── Mushaf research work folders stay local: gigabytes of data and outputs (pickles, renders). On 2026-11-13 a
+#    working-tree snapshot hashed 3.9 GB of them into .git/objects.
+/mushaf-vector-poc-backup-2026-11-12/
+/poc-review-2026-11-13/evidence/
