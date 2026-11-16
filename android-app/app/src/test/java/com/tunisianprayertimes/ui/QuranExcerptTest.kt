@@ -100,15 +100,17 @@ class QuranExcerptTest {
         val cue = verse(39, 30)
         val earlier = verse(39, 29)
         val page = catalog.pagesForVerse(cue.surah, cue.ayah).single()
-        val band = quranExcerpts(highlights, catalog, cue, showPrevious = true).single()
+        val band = quranExcerpts(highlights, catalog, cue, mark = QuranExcerptMark.None, showPrevious = true).single()
         val earlierCovers = highlights.covers(page, rects(page, earlier)).filter { it.bottom > band.top && it.top < band.bottom }
         assertTrue("the earlier verse shares the cue's band", earlierCovers.isNotEmpty())
         assertTrue("the visible context counts as seen", earlier in band.context)
         assertTrue("the earlier verse is not covered", earlierCovers.none { it in band.covered })
-        assertEquals(rects(page, cue), band.marked)
+        assertTrue("previous verses have no highlight", band.marked.isEmpty())
+        assertTrue("previous verses have no grey marking", band.muted.isEmpty())
 
         // Other excerpts keep their answer-safe default.
         val ordinary = quranExcerpts(highlights, catalog, cue).single()
+        assertEquals(rects(page, cue), ordinary.marked)
         assertTrue(ordinary.covered.containsAll(earlierCovers))
         assertTrue(ordinary.context.isEmpty())
     }
@@ -118,7 +120,9 @@ class QuranExcerptTest {
         val cue = verse(39, 30)
         val earlier = verse(39, 29)
         val page = catalog.pagesForVerse(cue.surah, cue.ayah).single()
-        val band = quranExcerpts(highlights, catalog, cue, showPrevious = true, protectedVerses = setOf(earlier)).single()
+        val band = quranExcerpts(
+            highlights, catalog, cue, mark = QuranExcerptMark.None, showPrevious = true, protectedVerses = setOf(earlier),
+        ).single()
         val earlierCovers = highlights.covers(page, rects(page, earlier)).filter { it.bottom > band.top && it.top < band.bottom }
         assertTrue(earlierCovers.isNotEmpty())
         assertTrue(band.covered.containsAll(earlierCovers))

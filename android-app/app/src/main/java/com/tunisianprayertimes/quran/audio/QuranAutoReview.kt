@@ -8,7 +8,7 @@ import android.media.session.PlaybackState
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.quran.assets.QuranAssets
 import com.tunisianprayertimes.quran.hifz.*
-import com.tunisianprayertimes.ui.hifzVerseName
+import com.tunisianprayertimes.ui.hifzPointName
 import kotlinx.coroutines.*
 import java.util.UUID
 
@@ -32,11 +32,13 @@ internal class QuranAutoReview(
     private var request: Job? = null
     private var preparing = false
     private var listenId: String? = null
+    private var lastMediaId = DAILY_ID
     val active get() = selected || sessions.hasSession && (sessions.carActive || sessions.active)
     val listeningOnly get() = listenId != null && QuranAudioController.state.value.playlist?.requestId == listenId
     fun owns(requestId: String?) = sessions.owns(requestId) || requestId != null && requestId == listenId
 
     fun start(mediaId: String) {
+        lastMediaId = mediaId
         request?.cancel()
         player.pause()
         player.foreground()
@@ -48,18 +50,24 @@ internal class QuranAutoReview(
                     sessions.pause()
                     sessions.leaveCar()
                     selected = false
-                    val list = sessions.catalog?.let { hifzListen(it, HifzRepository.points.value) }
+                    // As the phone's «الاستماع إلى المواضع» chose last: what waits for its question is asked first.
+                    val settings = HifzListenSettings.read(context)
+                    val list = sessions.catalog?.let { hifzListen(it, sessions.listenableNow().toHear(settings), settings) }
                     if (list != null) {
                         listenId = "auto-hifz-listen:${UUID.randomUUID()}"
                         prepare(list.copy(requestId = listenId), QuranAudioController.state.value.reciterId)
-                    } else { selected = true; sessions.audioError(context.getString(R.string.quran_auto_review_empty)) }
+                    } else {
+                        selected = true
+                        sessions.inform(context.getString(if (HifzRepository.points.value.isEmpty()) R.string.quran_auto_review_empty
+                            else R.string.quran_auto_review_listen_waiting))
+                    }
                 } else {
                     selected = true
                     val ready = when (mediaId) {
                         DAILY_ID -> sessions.startDaily()
                         NOTEBOOK_ID -> sessions.startNotebook()
                         else -> {
-                            if (!sessions.hasSession) sessions.audioError(context.getString(R.string.quran_auto_review_no_session))
+                            if (!sessions.hasSession) sessions.inform(context.getString(R.string.quran_auto_review_no_session))
                             sessions.resume(); sessions.hasSession
                         }
                     }
@@ -148,7 +156,7 @@ internal class QuranAutoReview(
                     sessions.audioError(context.getString(R.string.quran_auto_review_download))
                     player.idle(); player.refresh(); return@launch
                 }
-                sessions.dismissError()
+                if (sessions.problem?.kind == HifzSessionProblemKind.Audio) sessions.dismissError()
                 if (ready != null) ready() else player.play(list, reciterId, index, round, position, surah)
             } catch (cancelled: CancellationException) { preparing = false; throw cancelled }
             catch (_: Exception) {
@@ -179,9 +187,10 @@ internal class QuranAutoReview(
             "again" -> sessions.assess(HifzGrade.Again)
             "drill" -> sessions.drill()
             "cue" -> sessions.cue()
-            "retry" -> if (sessions.savingAnswer) sessions.retry()
-                else if (!sessions.hasSession) start(DAILY_ID)
+            "retry" -> if (sessions.savingAnswer || sessions.problem?.retrySave == true) sessions.retry()
+                else if (!sessions.hasSession || lastMediaId == LISTEN_ID) start(lastMediaId)
                 else { sessions.dismissError(); onPlay() }
+            "dismiss" -> { sessions.dismissError(); sessions.refresh() }
             "return" -> { sessions.close(); selected = false }
             "continue" -> { sessions.resume(); player.refresh() }
             "more" -> { sessions.startDaily(restart = true); player.refresh() }
@@ -214,7 +223,9 @@ internal class QuranAutoReview(
         fun add(command: String, label: Int, icon: Int) {
             state.addCustomAction(PlaybackState.CustomAction.Builder("$ACTION_PREFIX${view.token}/$command", context.getString(label), icon).build())
         }
-        if (sessions.savingAnswer || failure != null) add("retry", R.string.quran_auto_review_retry, R.drawable.ic_quran_repeat)
+        if (sessions.savingAnswer || sessions.problem?.retrySave == true || sessions.problem?.kind == HifzSessionProblemKind.Audio || audio && current.error != null) {
+            add("retry", R.string.quran_auto_review_retry, R.drawable.ic_quran_repeat)
+        } else if (failure != null) add("dismiss", R.string.quran_auto_review_dismiss, R.drawable.ic_adhkar_close)
         else when (view.phase) {
             HifzSessionPhase.Question -> {
                 add("reveal", R.string.quran_auto_review_reveal, R.drawable.ic_quran_auto_reveal)
@@ -241,12 +252,12 @@ internal class QuranAutoReview(
         val view = sessions.view()
         val current = QuranAudioController.state.value
         val title = when {
-            sessions.error != null && view.point == null -> context.getString(R.string.quran_auto_review)
+            (sessions.error != null || sessions.notice != null) && view.point == null -> context.getString(R.string.quran_auto_review)
             view.phase == HifzSessionPhase.Finished -> context.getString(R.string.quran_auto_review_result)
             view.phase == HifzSessionPhase.Question -> view.question
-            else -> view.point?.let { p -> sessions.catalog?.let { hifzVerseName(it, p.verse) } }.orEmpty()
+            else -> view.point?.let { p -> sessions.catalog?.let { hifzPointName(it, p) } }.orEmpty()
         }
-        val subtitle = sessions.error ?: when (view.phase) {
+        val subtitle = sessions.error ?: sessions.notice ?: when (view.phase) {
             HifzSessionPhase.Question -> context.getString(R.string.quran_auto_review_question_hint)
             HifzSessionPhase.Assessment -> context.getString(if (view.assisted) R.string.quran_auto_review_assisted_hint else R.string.quran_auto_review_assessment_hint)
             HifzSessionPhase.Training -> context.getString(R.string.quran_auto_review_training_hint)

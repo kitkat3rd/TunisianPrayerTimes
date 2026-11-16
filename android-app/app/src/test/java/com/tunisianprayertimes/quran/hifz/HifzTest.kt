@@ -383,8 +383,8 @@ class HifzTest {
         // غفور رحيم»), an ending said wrong. Qaloun's numbering.
         assertEquals(HifzKind.Similar, com.tunisianprayertimes.ui.hifzLookAlikeKind(catalog, verse(2, 171), verse(2, 182)))
         assertEquals(HifzKind.Ending, com.tunisianprayertimes.ui.hifzLookAlikeKind(catalog, verse(2, 172), verse(2, 181)))
-        // Three choices, the word first; an older kind shows as the choice it now belongs to.
-        assertEquals(listOf("word", "lookalike", "skip"), com.tunisianprayertimes.ui.HifzSlipChoice.entries.map { it.key })
+        // The word first, a forgotten passage last; an older kind shows as the choice it now belongs to.
+        assertEquals(listOf("word", "lookalike", "skip", "passage"), com.tunisianprayertimes.ui.HifzSlipChoice.entries.map { it.key })
         assertEquals(com.tunisianprayertimes.ui.HifzSlipChoice.Word, com.tunisianprayertimes.ui.HifzSlipChoice.of(HifzKind.Start))
         assertEquals(com.tunisianprayertimes.ui.HifzSlipChoice.LookAlike, com.tunisianprayertimes.ui.HifzSlipChoice.of(HifzKind.Ending))
     }
@@ -1024,7 +1024,7 @@ class HifzTest {
         val similar = hifzFix(catalog, point(HifzKind.Similar, verse(4, 47), other = verse(4, 115)))!!
         assertEquals(17, similar.partAt)
         // 67 verses lie between 47 and 115.
-        assertTrue(similar.reasons.toString(), similar.reasons.contains("في السورة نفسها، بينهما 67\u00A0آية"))
+        assertTrue(similar.reasons.toString(), similar.reasons.any { "بينهما 67\u00A0آية" in it })
 
         val ending = hifzFix(catalog, point(HifzKind.Ending, verse(2, 17), other = verse(2, 170)))!!
         assertEquals(5, ending.partAt)
@@ -1034,7 +1034,9 @@ class HifzTest {
         val skip = hifzFix(catalog, point(HifzKind.Skip, verse(2, 68)))!!
         assertTrue(skip.reasons.toString(), skip.reasons.none { "69" in it })
         val link = hifzFix(catalog, point(HifzKind.Skip, verse(2, 69)))!!
-        assertTrue(link.reasons.toString(), link.reasons.first().startsWith("تشترك الآيتان 68 و69 في أول 7\u00A0كلمات"))
+        // 68 and 69 open with the same 7 words: the line names the verse before and where the two part.
+        val linkLine = link.reasons.first()
+        assertTrue(linkLine, "الآية التي قبلها" in linkLine && "أول 7\u00A0كلمات" in linkLine && "«${link.words.text(7, 10)}»" in linkLine)
         assertNotNull(skip.before)
         assertNotNull(skip.after)
         // Where it went, told before 22 October, is not read: the same facts of the text around it.
@@ -1054,11 +1056,44 @@ class HifzTest {
     fun factsMatchTheText() {
         val catalog = catalog()
         val next = hifzFix(catalog, point(HifzKind.Similar, verse(2, 67), other = verse(2, 68)))!!
-        assertTrue(next.reasons.toString(), "متتاليتان في السورة نفسها" in next.reasons)
+        assertTrue(next.reasons.toString(), next.reasons.any { "متتاليتان" in it })
         val first = hifzFix(catalog, point(HifzKind.Skip, verse(2, 1)))!!
         assertEquals("أول السورة", first.wordingLabel)
         assertEquals("105\u00A0آيات", hifzVersesLabel(105))
         assertEquals("آيتين", hifzVersesAfterLabel(2))
+    }
+
+    @Test
+    fun lookAlikeFacts_compareWordsAsRecited() {
+        val catalog = catalog()
+        // 7:108 and 10:2 end «إن هذا» then «لساحر عليم» and «لسحر مبين»: the letters of «لساحر» and «لسحر» are the same, the
+        // words are not. The verses part there, after the two words they share, and the line names both.
+        val fix = hifzFix(catalog, point(HifzKind.Ending, verse(7, 108), other = verse(10, 2)))!!
+        val at = fix.words.size - 2
+        assertEquals(at, fix.partAt)
+        val line = fix.reasons.first()
+        assertTrue(line, "سورة يونس" in line && "«${fix.words.text(at - 2, at)}»" in line && "«${fix.words.text(at)}»" in line)
+        // The shadda a first letter takes from the word before it («ما» after a tanween) leaves the two verses the same.
+        val same = hifzFix(catalog, point(HifzKind.Similar, verse(15, 5), other = verse(23, 43)))!!
+        assertTrue(same.reasons.toString(), same.reasons.first().startsWith("تطابق"))
+    }
+
+    @Test
+    fun forgottenOpening_namesTheVersesThatOpenAlike() {
+        val catalog = catalog()
+        val index = HifzLookAlikes(catalog)
+        // 39:31 opens with the same three words as 7:35 and 10:17, then goes on its own way; eight verses open alike but
+        // with «و» for its «ف».
+        val p = point(HifzKind.Start, verse(39, 31))
+        val fix = hifzFix(catalog, p, p.mistakes.single(), index)!!
+        assertEquals(fix.reasons.toString(), 3, fix.reasons.size)
+        val (opening, parting, twins) = fix.reasons
+        assertTrue(opening, "«${fix.words.text(0, 3)}»" in opening && "سورة الأعراف" in opening && "سورة يونس" in opening)
+        assertTrue(parting, "«${fix.words.text(3, 6)}»" in parting)
+        assertTrue(twins, "8\u00A0آيات" in twins && "بالواو لا بالفاء" in twins)
+        // A forgotten opening told as a slip on the first word has the same facts.
+        val word = p.mistake { copy(kind = HifzKind.Word, slipWords = setOf(0)) }
+        assertEquals(fix.reasons, hifzFix(catalog, word, word.mistakes.single(), index)!!.reasons)
     }
 
     @Test
@@ -1092,6 +1127,31 @@ class HifzTest {
         assertNull(hifzCue(catalog, point(HifzKind.Skip, verse(2, 1))))
         assertEquals(HifzListenOneTitle, hifzListen(catalog, listOf(point(HifzKind.Word, verse(2, 18))))!!.title)
         assertEquals(HifzListenTitle, hifzListen(catalog, listOf(point(HifzKind.Word, verse(2, 18)), point(HifzKind.Word, verse(2, 19))))!!.title)
+    }
+
+    @Test
+    fun listeningToPoints_followsTheChosenTimesEndAndPause_inTheMushafsOrder() {
+        val catalog = catalog()
+        val points = listOf(point(HifzKind.Word, verse(2, 19)), point(HifzKind.Start, verse(2, 30)), point(HifzKind.Word, verse(2, 18)))
+        val list = hifzListen(catalog, points, HifzListenSettings(times = 3, endless = true, pause = true))!!
+        assertTrue(list.isValid)
+        assertEquals(listOf(verse(2, 18), verse(2, 19), verse(2, 29)), list.items.map { it.from })
+        assertEquals(3, list.itemTimes)
+        assertTrue(list.endless)
+        assertEquals(HifzDrillGap, list.gapFactor)
+        val once = hifzListen(catalog, points)!!
+        assertEquals(1, once.itemTimes)
+        assertEquals(1, once.rounds)
+        assertEquals(0f, once.gapFactor)
+    }
+
+    @Test
+    fun theHeldPointsAreHeardOnlyWhenChosen_unlessTheyAreAllThereIs() {
+        val learning = point(HifzKind.Word, verse(2, 18))
+        val held = point(HifzKind.Word, verse(2, 19), step = HifzMasteredStep)
+        assertEquals(listOf(learning), listOf(learning, held).toHear(HifzListenSettings()))
+        assertEquals(listOf(learning, held), listOf(learning, held).toHear(HifzListenSettings(mastered = true)))
+        assertEquals(listOf(held), listOf(held).toHear(HifzListenSettings()))
     }
 
     @Test

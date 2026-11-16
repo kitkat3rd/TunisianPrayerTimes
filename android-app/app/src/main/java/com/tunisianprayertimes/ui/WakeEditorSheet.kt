@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
@@ -99,6 +100,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -110,11 +112,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -577,42 +580,42 @@ fun WakeEditorSheet(
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(
+                BesideOrBelow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(
-                            if (isNewAlarm) R.string.wake_editor_new_title else R.string.wake_editor_title,
-                        ),
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PrayerNameColor,
-                        modifier = Modifier.weight(1f),
-                    )
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedButton(
-                            onClick = onDismissRequest,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.heightIn(min = 38.dp),
-                            border = BorderStroke(1.dp, GreenPrimary.copy(alpha = 0.34f)),
+                    gap = 8.dp,
+                    leading = {
+                        Text(
+                            text = stringResource(
+                                if (isNewAlarm) R.string.wake_editor_new_title else R.string.wake_editor_title,
+                            ),
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrayerNameColor,
+                        )
+                    },
+                    trailing = {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(text = stringResource(R.string.wake_editor_cancel))
+                            OutlinedButton(
+                                onClick = onDismissRequest,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.heightIn(min = 38.dp),
+                                border = BorderStroke(1.dp, GreenPrimary.copy(alpha = 0.34f)),
+                            ) {
+                                Text(text = stringResource(R.string.wake_editor_cancel))
+                            }
+                            Button(
+                                onClick = { saveDraftConfig() },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.heightIn(min = 38.dp),
+                            ) {
+                                Text(text = stringResource(R.string.wake_editor_save))
+                            }
                         }
-                        Button(
-                            onClick = { saveDraftConfig() },
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.heightIn(min = 38.dp),
-                        ) {
-                            Text(text = stringResource(R.string.wake_editor_save))
-                        }
-                    }
-                }
+                    },
+                )
 
                 Column(
                     modifier = Modifier
@@ -1260,7 +1263,6 @@ private fun WakeRepetitionChip(
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = if (selected) Color.White else TextDark,
-            maxLines = 1,
             textAlign = TextAlign.Center,
         )
     }
@@ -1290,7 +1292,6 @@ private fun WakeScheduleDayChip(
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = if (selected) Color.White else TextDark,
-            maxLines = 1,
             textAlign = TextAlign.Center,
         )
     }
@@ -1372,22 +1373,25 @@ private fun WakeFromNowModeControls(
             textAlign = TextAlign.Center,
         )
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            quickAdds.chunked(3).forEach { rowItems ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    rowItems.forEach { minutesToAdd ->
-                        WakeDurationAdjustChip(
-                            text = formatWakeDurationShort(minutesToAdd),
-                            canSubtract = totalMinutes > 1,
-                            onSubtract = {
-                                onDurationMinutesChange((totalMinutes - minutesToAdd).coerceAtLeast(1))
-                            },
-                            onAdd = { onDurationMinutesChange(totalMinutes + minutesToAdd) },
-                            modifier = Modifier.weight(1f),
-                        )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val columns = wakeChoiceColumns(quickAdds.map(::formatWakeDurationShort), maxWidth, 13.sp, 6.dp, 80.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                quickAdds.chunked(columns).forEach { rowItems ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        rowItems.forEach { minutesToAdd ->
+                            WakeDurationAdjustChip(
+                                text = formatWakeDurationShort(minutesToAdd),
+                                canSubtract = totalMinutes > 1,
+                                onSubtract = {
+                                    onDurationMinutesChange((totalMinutes - minutesToAdd).coerceAtLeast(1))
+                                },
+                                onAdd = { onDurationMinutesChange(totalMinutes + minutesToAdd) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
@@ -1464,7 +1468,7 @@ private fun WakeDurationAdjustZone(
     Box(
         modifier = Modifier
             .width(30.dp)
-            .height(32.dp)
+            .heightIn(min = 32.dp)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -1493,6 +1497,40 @@ private fun formatWakeDurationShort(totalMinutes: Int): String =
     }
 
 @Composable
+private fun wakeChoiceColumns(options: List<String>, width: Dp, fontSize: TextUnit, gap: Dp = 0.dp,
+    horizontalPadding: Dp = 18.dp): Int {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val style = LocalTextStyle.current.copy(fontSize = fontSize, fontWeight = FontWeight.Bold)
+    val widest = options.maxOf { measurer.measure(it, style, softWrap = false).size.width }
+    // Include the selected (bold) label and every fixed-width part of the control.
+    val minimumWidth = maxOf(48.dp, with(density) { widest.toDp() } + horizontalPadding)
+    val maximumColumns = ((width + gap) / (minimumWidth + gap)).toInt().coerceIn(1, options.size)
+    val rows = (options.size + maximumColumns - 1) / maximumColumns
+    return (options.size + rows - 1) / rows
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WakeChoiceButtons(
+    labels: List<String>,
+    selectedIndex: Int,
+    enabled: (Int) -> Boolean = { true },
+    onSelect: (Int) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val columns = wakeChoiceColumns(labels, maxWidth, 11.sp, 6.dp)
+        FlowRow(maxItemsInEachRow = columns, horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            labels.forEachIndexed { index, label ->
+                WakeChoiceButton(selected = selectedIndex == index, onClick = { onSelect(index) },
+                    text = label, modifier = Modifier.weight(1f), compact = true, enabled = enabled(index))
+            }
+        }
+    }
+}
+
+@Composable
 private fun WakeChoiceButton(
     selected: Boolean,
     onClick: () -> Unit,
@@ -1506,6 +1544,7 @@ private fun WakeChoiceButton(
         enabled = enabled,
         modifier = modifier.heightIn(min = if (compact) 34.dp else 38.dp),
         shape = RoundedCornerShape(10.dp),
+        contentPadding = if (compact) PaddingValues(horizontal = 8.dp, vertical = 8.dp) else ButtonDefaults.ContentPadding,
         border = BorderStroke(
             1.dp,
             when {
@@ -1526,7 +1565,6 @@ private fun WakeChoiceButton(
             fontSize = if (compact) 11.sp else 12.sp,
             fontWeight = if (selected && enabled) FontWeight.Bold else FontWeight.SemiBold,
             textAlign = TextAlign.Center,
-            maxLines = if (compact) 1 else Int.MAX_VALUE,
         )
     }
 }
@@ -1701,7 +1739,6 @@ private fun WakeEditorHeroCard(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = GreenPrimaryDark,
-                            maxLines = 2,
                         )
                         Icon(
                             painter = painterResource(R.drawable.ic_adhkar_clock),
@@ -2277,9 +2314,6 @@ private fun WakeExtraTimelineRow(
                     text = detail,
                     fontSize = 11.sp,
                     color = TextMuted,
-                    // Two lines, so a long ringtone name doesn't hide the challenge after it.
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -2301,43 +2335,36 @@ internal fun WakeSegmentedChoice(
     onSelect: (Int) -> Unit,
     enabled: Boolean = true,
 ) {
+    if (options.isEmpty()) return
     val shape = RoundedCornerShape(12.dp)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .height(IntrinsicSize.Min)
-            .clip(shape)
-            .alpha(if (enabled) 1f else 0.5f)
-            .border(BorderStroke(1.dp, GreenPrimary.copy(alpha = 0.35f)), shape)
-            .selectableGroup(),
-    ) {
-        options.forEachIndexed { index, label ->
-            val selected = index == selectedIndex
-            if (index > 0) {
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(GreenPrimary.copy(alpha = 0.25f)),
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .background(if (selected) GreenPrimary else Color.White)
-                    .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = { onSelect(index) })
-                    .padding(horizontal = 8.dp, vertical = 12.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label,
-                    fontSize = 13.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-                    color = if (selected) Color.White else TextDark,
-                    textAlign = TextAlign.Center,
-                )
+    BoxWithConstraints(Modifier.fillMaxWidth().selectableGroup().alpha(if (enabled) 1f else 0.5f)) {
+        val columns = wakeChoiceColumns(options, maxWidth, 13.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            options.indices.chunked(columns).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).height(IntrinsicSize.Min)
+                        .clip(shape).border(BorderStroke(1.dp, GreenPrimary.copy(alpha = 0.35f)), shape),
+                ) {
+                    row.forEachIndexed { position, index ->
+                        val selected = index == selectedIndex
+                        if (position > 0) Box(
+                            Modifier.width(1.dp).fillMaxHeight().background(GreenPrimary.copy(alpha = 0.25f)),
+                        )
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight()
+                                .background(if (selected) GreenPrimary else Color.White)
+                                .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = { onSelect(index) })
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = options[index], fontSize = 13.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (selected) Color.White else TextDark, textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -2596,16 +2623,21 @@ private fun WakeAfterRingStep(
 ) {
     val connectorColor = Gold.copy(alpha = 0.35f)
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    // Text rounds fractional line heights up to a pixel, so its circle must do the same.
+    val markerSize = with(LocalDensity.current) {
+        kotlin.math.ceil(WAKE_STEP_MARKER_SIZE.toPx() * maxOf(1f, fontScale)).toDp()
+    }
+    val markerColumn = maxOf(WAKE_STEP_MARKER_COLUMN, markerSize)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .drawBehind {
                 if (!isLast) {
-                    val markerCenter = (WAKE_STEP_MARKER_COLUMN / 2).toPx()
+                    val markerCenter = (markerColumn / 2).toPx()
                     val x = if (isRtl) size.width - markerCenter else markerCenter
                     drawLine(
                         color = connectorColor,
-                        start = Offset(x, WAKE_STEP_MARKER_SIZE.toPx() + 4.dp.toPx()),
+                        start = Offset(x, markerSize.toPx() + 4.dp.toPx()),
                         end = Offset(x, size.height),
                         strokeWidth = 2.dp.toPx(),
                     )
@@ -2614,12 +2646,12 @@ private fun WakeAfterRingStep(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(
-            modifier = Modifier.width(WAKE_STEP_MARKER_COLUMN),
+            modifier = Modifier.width(markerColumn),
             contentAlignment = Alignment.TopCenter,
         ) {
             Box(
                 modifier = Modifier
-                    .size(WAKE_STEP_MARKER_SIZE)
+                    .size(markerSize)
                     .clip(CircleShape)
                     .background(if (active) GreenPrimary else GoldLight)
                     .clearAndSetSemantics { },
@@ -2627,9 +2659,12 @@ private fun WakeAfterRingStep(
             ) {
                 Text(
                     text = number.toString(),
+                    modifier = Modifier.fillMaxSize(),
                     fontSize = 11.sp,
+                    lineHeight = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (active) Color.White else TextDark,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
@@ -2771,27 +2806,17 @@ internal fun WakeUpCheckStepsEditor(
                         fontWeight = FontWeight.Bold,
                         color = TextMuted,
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        WakeUpCheckType.entries.forEach { type ->
-                            val typeEnabled = type != WakeUpCheckType.GYROSCOPE_MAZE || gyroscopeMazeSupported
-                            WakeChoiceButton(
-                                selected = step.type == type,
-                                onClick = {
-                                    val updated = steps.toMutableList().apply {
-                                        set(index, step.copy(type = type))
-                                    }
-                                    onPlaybackChange(playback.copy(wakeUpCheckSteps = updated))
-                                },
-                                text = wakeCheckTypeShortLabel(type),
-                                modifier = Modifier.weight(1f),
-                                compact = true,
-                                enabled = typeEnabled,
-                            )
-                        }
-                    }
+                    WakeChoiceButtons(
+                        labels = WakeUpCheckType.entries.map { wakeCheckTypeShortLabel(it) },
+                        selectedIndex = WakeUpCheckType.entries.indexOf(step.type),
+                        enabled = { WakeUpCheckType.entries[it] != WakeUpCheckType.GYROSCOPE_MAZE || gyroscopeMazeSupported },
+                        onSelect = { choice ->
+                            val updated = steps.toMutableList().apply {
+                                set(index, step.copy(type = WakeUpCheckType.entries[choice]))
+                            }
+                            onPlaybackChange(playback.copy(wakeUpCheckSteps = updated))
+                        },
+                    )
                     if (!gyroscopeMazeSupported) {
                         Text(
                             text = stringResource(R.string.wake_editor_gyroscope_maze_not_supported),
@@ -2807,29 +2832,16 @@ internal fun WakeUpCheckStepsEditor(
                         fontWeight = FontWeight.Bold,
                         color = TextMuted,
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        MathDifficulty.entries.forEach { diff ->
-                            WakeChoiceButton(
-                                selected = step.difficulty == diff,
-                                onClick = {
-                                    val updated = steps.toMutableList().apply {
-                                        set(index, step.copy(difficulty = diff))
-                                    }
-                                    onPlaybackChange(playback.copy(wakeUpCheckSteps = updated))
-                                },
-                                text = when (diff) {
-                                    MathDifficulty.EASY -> stringResource(R.string.wake_editor_math_difficulty_easy)
-                                    MathDifficulty.INTERMEDIATE -> stringResource(R.string.wake_editor_math_difficulty_intermediate)
-                                    MathDifficulty.HARD -> stringResource(R.string.wake_editor_math_difficulty_hard)
-                                },
-                                modifier = Modifier.weight(1f),
-                                compact = true,
-                            )
-                        }
-                    }
+                    WakeChoiceButtons(
+                        labels = MathDifficulty.entries.map { wakeCheckDifficultyLabel(it) },
+                        selectedIndex = MathDifficulty.entries.indexOf(step.difficulty),
+                        onSelect = { choice ->
+                            val updated = steps.toMutableList().apply {
+                                set(index, step.copy(difficulty = MathDifficulty.entries[choice]))
+                            }
+                            onPlaybackChange(playback.copy(wakeUpCheckSteps = updated))
+                        },
+                    )
                     OutlinedButton(
                         onClick = { previewStepIndex = index },
                         modifier = Modifier.fillMaxWidth(),
@@ -3155,7 +3167,7 @@ private fun WakeRingtoneRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
+            if (!largeText()) Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
@@ -3179,15 +3191,11 @@ private fun WakeRingtoneRow(
                     fontWeight = FontWeight.SemiBold,
                     color = TextDark,
                     lineHeight = 20.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = summary,
                     fontSize = 12.sp,
                     color = TextMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Icon(
@@ -3404,16 +3412,12 @@ private fun WakeRingtoneOptionRow(
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                     color = if (selected) GreenPrimaryDark else TextDark,
                     lineHeight = 20.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 if (summary != null) {
                     Text(
                         text = summary,
                         fontSize = 12.sp,
                         color = TextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

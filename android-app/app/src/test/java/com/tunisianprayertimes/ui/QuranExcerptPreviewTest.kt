@@ -74,7 +74,10 @@ class QuranExcerptTestDecoder {
         canvas.scale(1f / sample, 1f / sample)
         canvas.translate(-region.left.toFloat(), -region.top.toFloat())
         val paint = Paint().apply { color = Color.BLACK }
-        previewBoxes.forEach { r -> canvas.drawRect(r.left * 500f, r.top * 800f, r.right * 500f, r.bottom * 800f, paint) }
+        previewBoxes.forEach { r ->
+            val inset = (r.bottom - r.top) * 800f / 4f
+            canvas.drawRect(r.left * 500f, r.top * 800f + inset, r.right * 500f, r.bottom * 800f - inset, paint)
+        }
         return bitmap
     }
 
@@ -152,12 +155,16 @@ class QuranExcerptPreviewTest {
         compose.waitForIdle()
     }
 
-    private fun inkAt(box: QuranHighlightRect, protected: Set<QuranVerseReference> = emptySet()): Int {
-        val band = quranExcerpts(highlights, catalog(assetPath), refs[1], showPrevious = true, protectedVerses = protected).single()
+    private fun inkAt(
+        box: QuranHighlightRect, protected: Set<QuranVerseReference> = emptySet(), verticalFraction: Float = 0.5f,
+    ): Int {
+        val band = quranExcerpts(
+            highlights, catalog(assetPath), refs[1], mark = QuranExcerptMark.None, showPrevious = true, protectedVerses = protected,
+        ).single()
         val bounds = compose.onNodeWithTag("quran_excerpt_band", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val bitmap = compose.runOnIdle { Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) } }
         val x = (bounds.left + (box.left + box.right) / 2f * bounds.width).roundToInt()
-        val y = (bounds.top + ((box.top + box.bottom) / 2f - band.top) / (band.bottom - band.top) * bounds.height).roundToInt()
+        val y = (bounds.top + (box.top + (box.bottom - box.top) * verticalFraction - band.top) / (band.bottom - band.top) * bounds.height).roundToInt()
         return bitmap.getPixel(x, y).also { bitmap.recycle() }
     }
 
@@ -165,6 +172,12 @@ class QuranExcerptPreviewTest {
         showCard()
         waitForBand()
         assertTrue("earlier verse is visible", Color.red(inkAt(boxes[0])) < 40)
+        for (box in boxes.take(2)) {
+            for (fraction in listOf(0.85f, 0.97f)) {
+                val paper = inkAt(box, verticalFraction = fraction)
+                assertTrue("previous verses have no tint or underline", Color.red(paper) > 245 && Color.green(paper) > 245 && Color.blue(paper) > 245)
+            }
+        }
         assertTrue("the answer stays covered", Color.red(inkAt(boxes[2])) > 100)
         assertTrue(exposed.containsAll(refs.take(2)))
         assertFalse(refs[2] in exposed)

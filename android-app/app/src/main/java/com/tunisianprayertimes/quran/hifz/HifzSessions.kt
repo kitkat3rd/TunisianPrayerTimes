@@ -33,6 +33,12 @@ internal object HifzSessions {
 internal enum class HifzSessionMode { None, Daily, Notebook }
 internal enum class HifzSessionPhase { Question, Assessment, Training, Finished }
 
+internal enum class HifzSessionProblemKind { AnswerSave, PositionSave, Restore, PointChanged, Audio }
+
+internal data class HifzSessionProblem(val kind: HifzSessionProblemKind, val message: String) {
+    val retrySave: Boolean get() = kind == HifzSessionProblemKind.AnswerSave || kind == HifzSessionProblemKind.PositionSave
+}
+
 internal interface HifzSessionAudio {
     fun play(list: QuranPlaylist)
     fun pause()
@@ -79,7 +85,10 @@ internal class HifzSessionCoordinator(
         private set
     var carActive by mutableStateOf(false)
         private set
-    var error by mutableStateOf<String?>(null)
+    var problem by mutableStateOf<HifzSessionProblem?>(null)
+        private set
+    val error: String? get() = problem?.message
+    var notice by mutableStateOf<String?>(null)
         private set
     var phoneAudio: HifzSessionAudio? = null
     var carAudio: HifzSessionAudio? = null
@@ -124,7 +133,7 @@ internal class HifzSessionCoordinator(
         if (saved != null) try { restore(JSONObject(saved)) } catch (_: Exception) {
             // Retain the recovery evidence; the notebook itself is never reset because a session cannot be read.
             withContext(Dispatchers.IO) { preferences.edit().putString("unreadable_session", saved).commit() }
-            error = "تعذّر استرجاع موضع المراجعة. احتفظنا بالدفتر ونتائجه المحفوظة."
+            problem = HifzSessionProblem(HifzSessionProblemKind.Restore, "تعذّر استرجاع موضع المراجعة. احتفظنا بالدفتر ونتائجه المحفوظة.")
         }
         initialized = true
         paused = true
@@ -177,7 +186,7 @@ internal class HifzSessionCoordinator(
         }
         keepDay()
         val chosen = eligible.reviewSitting(day(), now(), lead.mapNotNull { id -> eligible.firstOrNull { it.id == id } })
-        if (chosen.isEmpty()) { error = "لا توجد أسئلة مستحقة الآن. تبقى مواعيد المراجعة كما هي."; changed(); return false }
+        if (chosen.isEmpty()) { inform("لا توجد أسئلة مستحقة الآن. تبقى مواعيد المراجعة كما هي."); return false }
         captureListening()
         reviewState = HifzReviewState(elapsed, dayTally(), learning.exposed, learning.seen, now)
         reviewIds.value = chosen.map { it.id }
@@ -186,7 +195,8 @@ internal class HifzSessionCoordinator(
         mode = HifzSessionMode.Daily
         sessionId = UUID.randomUUID().toString()
         paused = false
-        error = null
+        problem = null
+        notice = null
         HifzReminder.clearReminder(context)
         refresh(); changed()
         return true
@@ -202,13 +212,18 @@ internal class HifzSessionCoordinator(
         val learning = HifzLearning.read(context, day())
         val due = points.askable(day(), now(), learning.seen, learning.exposed).map { it.id }.toSet()
         val plan = hifzPracticePlan(points, ids, due)
-        if (plan.points.isEmpty()) { error = "دفتر المراجعة فارغ. أضف مواضعك من الهاتف حين يكون ذلك آمنًا."; changed(); return false }
+        if (plan.points.isEmpty()) {
+            inform(if (carActive) "دفتر المراجعة فارغ. أضف مواضعك من الهاتف حين يكون ذلك آمنًا."
+                else "دفتر المراجعة فارغ. أضف إليه المواضع التي تريد مراجعتها.")
+            return false
+        }
         keepDay(); captureListening()
         practiceState = HifzPracticeState(plan.points.map { it.id }, elapsed)
         mode = HifzSessionMode.Notebook
         sessionId = UUID.randomUUID().toString()
         paused = false
-        error = null
+        problem = null
+        notice = null
         refresh(); changed()
         return true
     }
@@ -216,8 +231,17 @@ internal class HifzSessionCoordinator(
     fun usePhone() { carActive = false; paused = false; changed() }
     fun useCar() { carActive = true; paused = false; changed() }
     fun leaveCar() { carActive = false; changed() }
-    fun audioError(message: String) { error = message; changed() }
-    fun resume() { if (!savingAnswer) { captureListening(); paused = false; reviewState.resume(); takeInDue(); refresh(); changed() } else retry() }
+    fun inform(message: String) { notice = message; changed() }
+    fun dismissNotice() { notice = null; changed() }
+    fun audioError(message: String) {
+        // Playback must not replace a warning about an answer still waiting to be saved.
+        if (problem?.retrySave != true) problem = HifzSessionProblem(HifzSessionProblemKind.Audio, message)
+        changed()
+    }
+    fun resume() { if (!savingAnswer) {
+        if (hasSession) notice = null
+        captureListening(); paused = false; reviewState.resume(); takeInDue(); refresh(); changed()
+    } else retry() }
 
     /** The points a daily review may ask now. */
     private fun dueNow(): List<HifzPoint> {
@@ -227,6 +251,12 @@ internal class HifzSessionCoordinator(
 
     /** Something is due now, for a new daily review to ask. */
     fun anythingDue(): Boolean = dueNow().isNotEmpty()
+
+    /** The points «مواضعي صوتا» can recite now, as on the phone: all but those whose question waits now. */
+    fun listenableNow(): List<HifzPoint> {
+        val points = HifzRepository.points.value
+        return points.listenable(points, day(), now(), dueNow().mapTo(HashSet()) { it.id })
+    }
 
     /**
      * The daily review left unfinished can go on: today's, with a question left, and none of [eligibleIds], the points
@@ -284,14 +314,15 @@ internal class HifzSessionCoordinator(
     }
 
     fun refresh() {
-        if (!initialized || busy) return
+        if (!initialized || savingAnswer) return
         if (mode == HifzSessionMode.Daily && reviewStartedDay.longValue != day()) {
-            keepDay()
+            // A new date is not a failure. Answers are already in the notebook; unanswered points stay due.
+            // Do not carry yesterday's tally or audio into today's review.
+            reviewActions.leaveCard()
             reviewIds.value = emptyList()
             mode = HifzSessionMode.None
             paused = true
             reviewDayDraft.value = null
-            error = "بدأ يوم جديد، فجدّدنا أسئلة مراجعة اليوم."
             return
         }
         val learning = HifzLearning.read(context, day())
@@ -485,7 +516,7 @@ internal class HifzSessionCoordinator(
             }
             if (!saved) {
                 pending = null
-                error = "تغيّر هذا الموضع أو حُذف. لم نسجّل إجابة جديدة عليه."
+                problem = HifzSessionProblem(HifzSessionProblemKind.PointChanged, "تغيّر هذا الموضع أو حُذف. لم نسجّل إجابة جديدة عليه.")
             } else if (!receipt.applied) {
                 committing = true
                 reviewState.inputBlocked = false
@@ -502,11 +533,11 @@ internal class HifzSessionCoordinator(
             }
             pending = null
             persist()
-            if (saved) error = null
+            if (saved && problem?.retrySave == true) problem = null
             scope.launch(Dispatchers.IO) { runCatching { HifzReminder.refresh(context) } }
         } catch (_: IOException) {
             pending = receipt
-            error = "تعذّر حفظ الإجابة. أعد المحاولة؛ لن تُحسب الإجابة مرتين."
+            problem = HifzSessionProblem(HifzSessionProblemKind.AnswerSave, "تعذّر حفظ الإجابة. أعد المحاولة؛ لن تُحسب الإجابة مرتين.")
         } finally {
             committing = false
             busy = false
@@ -518,9 +549,12 @@ internal class HifzSessionCoordinator(
 
     fun retry() { if (!busy) scope.launch {
         if (pending != null) finishPending()
-        else try { persist(); error = null; changed() } catch (_: IOException) { error = "تعذّر حفظ موضع المراجعة. أعد المحاولة."; changed() }
+        else if (problem?.kind == HifzSessionProblemKind.PositionSave) persistSafely()
     } }
-    fun dismissError() { error = null; changed() }
+    fun dismissError() {
+        if (problem?.kind != HifzSessionProblemKind.AnswerSave) problem = null
+        changed()
+    }
 
     private fun changed() { Snapshot.sendApplyNotifications(); revision.update { it + 1 } }
 
@@ -582,10 +616,15 @@ internal class HifzSessionCoordinator(
     fun persistAsync() = scope.launch { persistSafely() }
 
     private suspend fun persistSafely() {
-        try { persist() }
+        try {
+            persist()
+            if (problem?.kind == HifzSessionProblemKind.PositionSave) { problem = null; changed() }
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
-            error = "تعذّر حفظ موضع المراجعة. أعد المحاولة."
+            if (problem?.kind != HifzSessionProblemKind.AnswerSave) {
+                problem = HifzSessionProblem(HifzSessionProblemKind.PositionSave, "تعذّر حفظ موضع توقّفك في المراجعة. إجاباتك المحفوظة باقية.")
+            }
             changed()
         }
     }

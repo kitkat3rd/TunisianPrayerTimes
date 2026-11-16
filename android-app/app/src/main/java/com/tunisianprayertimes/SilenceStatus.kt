@@ -10,6 +10,17 @@ import android.media.AudioManager
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 
 object SilenceStatus {
+    fun isDoNotDisturbActive(context: Context): Boolean {
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        return when (notificationManager.currentInterruptionFilter) {
+            NotificationManager.INTERRUPTION_FILTER_PRIORITY,
+            NotificationManager.INTERRUPTION_FILTER_ALARMS,
+            NotificationManager.INTERRUPTION_FILTER_NONE -> true
+            else -> false
+        }
+    }
+
     fun isPhoneSilenced(context: Context): Boolean {
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

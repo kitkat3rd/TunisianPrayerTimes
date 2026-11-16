@@ -47,6 +47,7 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.quran.QuranPlayAction
 import com.tunisianprayertimes.quran.QuranVerseReference
 import com.tunisianprayertimes.quran.audio.QuranListening
+import com.tunisianprayertimes.quran.audio.isPointListening
 import com.tunisianprayertimes.quran.audio.QuranPlaybackState
 import com.tunisianprayertimes.quran.audio.QuranSleep
 import com.tunisianprayertimes.quran.audio.QuranSpeeds
@@ -105,9 +106,6 @@ internal fun QuranExpandedPlayer(
     /** Chosen verses repeat: their part of the surah is drawn on the line. */
     showPassage: Boolean,
     modifier: Modifier = Modifier,
-    /** Says once that holding the line moves by seconds; [onFineSeekHintSeen] when it is closed or first used. */
-    fineSeekHint: Boolean = false,
-    onFineSeekHintSeen: () -> Unit = {},
 ) {
     val playback = rememberLiveClock(playback)
     var dragging by remember { mutableStateOf<Float?>(null) }
@@ -117,7 +115,6 @@ internal fun QuranExpandedPlayer(
     val currentPlayback by rememberUpdatedState(playback)
     val currentTrack by rememberUpdatedState(track)
     val currentActions by rememberUpdatedState(actions)
-    val currentHintSeen by rememberUpdatedState(onFineSeekHintSeen)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val haptics = LocalHapticFeedback.current
     fun ayahAt(position: Long): Int? = currentTrack?.let { t -> t.ayahAt(position) ?: t.timings.lastOrNull { it.startMs <= position }?.ayah }
@@ -311,7 +308,6 @@ internal fun QuranExpandedPlayer(
                                                     val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
                                                     if (!change.pressed) {
                                                         fine?.let { currentActions.seekTo(it.targetMs) }
-                                                        currentHintSeen()
                                                         break
                                                     }
                                                     fine = fine?.copy(targetMs = targetAt(change.position.x))
@@ -370,19 +366,13 @@ internal fun QuranExpandedPlayer(
                 },
                 end = { Text(ltr(quranClock(playback.durationMs)), fontSize = 12.sp, color = TextMuted) },
             )
-            // Said once: held, the line moves by seconds.
-            if (fineSeekHint) Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp).testTag("quran_player_fine_hint"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("اضغط مطوّلًا على شريط الآيات ثم اسحب لتتقدّم أو ترجع بالثواني.", Modifier.weight(1f), fontSize = 12.sp, color = GreenPrimary)
-                IconButton(onClick = onFineSeekHintSeen, modifier = Modifier.size(32.dp)) {
-                    Icon(painterResource(R.drawable.ic_adhkar_close), "إخفاء الإرشاد", Modifier.size(16.dp), tint = TextMuted)
-                }
-            }
             // Four labelled controls share what the play button leaves: with large text their labels wrap, between words.
             val drillNow = playback.playlist
-            val labels = listOf("إنهاء", "الآية السابقة", "الآية التالية", if (drillNow != null) quranPlaylistStopLabel(drillNow.title) else repeatLabel ?: "كرّر")
+            // Points heard in turn: the arrows go from point to point, as on the lock screen.
+            val pointsNow = drillNow?.isPointListening == true
+            val previousLabel = if (pointsNow) "الموضع السابق" else "الآية السابقة"
+            val nextLabel = if (pointsNow) "الموضع التالي" else "الآية التالية"
+            val labels = listOf("إنهاء", previousLabel, nextLabel, if (drillNow != null) quranPlaylistStopLabel(drillNow.title) else repeatLabel ?: "كرّر")
             val labelMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
             val labelStyle = androidx.compose.material3.LocalTextStyle.current.merge(androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
             val density = androidx.compose.ui.platform.LocalDensity.current
@@ -397,13 +387,13 @@ internal fun QuranExpandedPlayer(
                         Icon(painterResource(R.drawable.ic_stop), "إنهاء الاستماع", tint = GreenPrimaryDark)
                     }
                 }
-                LabeledControl("الآية السابقة", slot) {
-                    DockSkip(R.drawable.ic_quran_verse_prev, "الآية السابقة", playback.surah != null && !playback.loading,
+                LabeledControl(previousLabel, slot) {
+                    DockSkip(R.drawable.ic_quran_verse_prev, previousLabel, playback.surah != null && !playback.loading,
                         actions::previous, -5_000L, actions::skipBy, actions::hold, size = 52.dp)
                 }
                 DockPlay(playback, playAction, null, actions::play, Modifier.testTag("quran_player_play"), size = 60.dp)
-                LabeledControl("الآية التالية", slot) {
-                    DockSkip(R.drawable.ic_quran_verse_next, "الآية التالية", playback.surah != null && !playback.loading,
+                LabeledControl(nextLabel, slot) {
+                    DockSkip(R.drawable.ic_quran_verse_next, nextLabel, playback.surah != null && !playback.loading,
                         actions::next, 5_000L, actions::skipBy, actions::hold, size = 52.dp)
                 }
                 // The same control as the dock's: its word says what repeats, a tap opens the choices.

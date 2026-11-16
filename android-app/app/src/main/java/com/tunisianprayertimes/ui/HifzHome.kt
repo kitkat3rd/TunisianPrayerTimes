@@ -41,6 +41,7 @@ import com.tunisianprayertimes.quran.hifz.HifzReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminderControlState
 import com.tunisianprayertimes.quran.hifz.HifzReminder.NB
 import com.tunisianprayertimes.quran.hifz.HifzFreshGapMs
+import com.tunisianprayertimes.quran.hifz.HifzListenSettings
 import com.tunisianprayertimes.quran.hifz.HifzSettings
 import com.tunisianprayertimes.quran.hifz.dueToday
 import com.tunisianprayertimes.quran.hifz.answerVerses
@@ -54,7 +55,8 @@ internal interface HifzHomeActions {
     fun review()
     /** The day's review, starting with [point]: tapped in the notebook while its question waits. */
     fun reviewFrom(point: HifzPoint)
-    fun listen(points: List<HifzPoint>)
+    /** «الاستماع إلى المواضع»: [points] heard as [settings] say; see [HifzListenSheet]. */
+    fun listen(points: List<HifzPoint>, settings: HifzListenSettings)
     /**
      * Opens [point]'s correction, behind the question it would answer when another point's waits; [order], the notebook's
      * points as listed, goes on from it to the next.
@@ -96,9 +98,9 @@ internal data class HifzLaterTimes(
 )
 
 /**
- * «المراجعة»: the day's questions, which never give their answers before they are asked; the notebook of mistakes; and
- * recording a mistake made away from the mushaf. Nothing else: a mistake is recorded, then asked, verse covered, until
- * it holds.
+ * «المراجعة»: the day's questions, which never give their answers before they are asked; the notebook of mistakes;
+ * recording a mistake made away from the mushaf; and listening to the points, on the road or at the gym, all but those
+ * whose question waits. A mistake is recorded, then asked, verse covered, until it holds.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -127,6 +129,7 @@ internal fun HifzHomeSheet(
      */
     continueDailyReview: Boolean = false,
     continueNotebookReview: Boolean = false,
+    sessionFeedback: @Composable () -> Unit = {},
 ) {
     /** Every point due now, by the priority the review takes them in. */
     val eligible = remember(points, eligibleDueIds) { points.filter { eligibleDueIds == null || it.id in eligibleDueIds } }
@@ -140,6 +143,8 @@ internal fun HifzHomeSheet(
     var query by rememberSaveable { mutableStateOf("") }
     var surahFilter by rememberSaveable { mutableStateOf<Int?>(null) }
     var away by rememberSaveable { mutableStateOf(false) }
+    /** The points «الاستماع إلى المواضع» was opened for: the whole notebook, or the notebook's list as filtered. */
+    var listenIds by rememberSaveable { mutableStateOf<LongArray?>(null) }
     LaunchedEffect(startRecording) {
         if (startRecording) {
             away = true
@@ -220,6 +225,7 @@ internal fun HifzHomeSheet(
                 if (!notebook) TextButton(onClick = actions::settings, modifier = Modifier.testTag("hifz_settings")) { Text("الإعدادات") }
                 IconButton(onClick = actions::dismiss) { Icon(painterResource(R.drawable.ic_adhkar_close), "إغلاق") }
             }
+            Column(Modifier.padding(horizontal = 16.dp)) { sessionFeedback() }
             LazyColumn(
                 Modifier.weight(1f).nestedScroll(rememberSheetScrollGuard(listScroll)).testTag(if (notebook) "hifz_notebook" else "hifz_home_content"),
                 state = listScroll,
@@ -316,6 +322,21 @@ internal fun HifzHomeSheet(
                         }
                     }
                 }
+                // Listening, for the road or the gym: as easy to find as the notebook it plays.
+                if (!notebook && points.isNotEmpty()) item(key = "listen_entry") {
+                    Surface(
+                        onClick = { listenIds = points.map { it.id }.toLongArray() }, modifier = Modifier.fillMaxWidth().testTag("hifz_open_listen"),
+                        shape = RoundedCornerShape(12.dp), color = Color.White, border = BorderStroke(1.dp, CardBorder),
+                    ) {
+                        Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(painterResource(R.drawable.ic_quran_headphones), null, Modifier.size(20.dp), tint = GreenPrimary)
+                            Spacer(Modifier.width(12.dp))
+                            Text("استمع إلى مواضعك", Modifier.weight(1f), fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                            Icon(painterResource(R.drawable.ic_adhkar_next), null, Modifier.size(18.dp), tint = GreenPrimaryDark)
+                        }
+                    }
+                }
                 if (!notebook) item(key = "how_it_works") {
                     TextButton(onClick = { howItWorks = true }, modifier = Modifier.testTag("hifz_home_how_it_works")) { Text("كيف تعمل المراجعة؟", fontSize = 14.sp) }
                     HifzNotificationsWarning(listOfNotNull(HifzReminder.CHANNEL_ID.takeIf { settings.reminder && points.isNotEmpty() }))
@@ -383,12 +404,12 @@ internal fun HifzHomeSheet(
                         if (points.isNotEmpty()) TextButton(onClick = { query = ""; surahFilter = null; tab = 1 }) { Text("اعرض كل المواضع") }
                     }
                 }
-                // Only what is not waiting for its question: a new mistake, or a check of today, heard now would be no
-                // question at all.
-                // Nor one whose audio would answer another question still waiting: a look-alike, the verse before.
-                val audible = shown.filterNot { it.fresh > 0 || it.dueDay <= today || points.spoiledBy(it, today, now, eligibleDueIds) != null }
-                if (notebook && audible.isNotEmpty()) item(key = "notebook_listen") {
-                    TextButton(onClick = { actions.listen(audible) }) { Text("استمع إلى هذه المواضع", fontSize = 13.sp) }
+                // The list as filtered, when any of it can be heard: «الآن» holds only questions waiting. The sheet
+                // leaves out what waits for its question, and says so.
+                if (notebook && points.listenable(shown, today, now, eligibleDueIds).isNotEmpty()) item(key = "notebook_listen") {
+                    TextButton(onClick = { focus.clearFocus(); listenIds = shown.map { it.id }.toLongArray() }, modifier = Modifier.testTag("hifz_notebook_listen")) {
+                        Text("استمع إلى هذه المواضع", fontSize = 13.sp)
+                    }
                 }
                 if (allLinesInList) item(key = "practice_all_lines") {
                     Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -422,6 +443,16 @@ internal fun HifzHomeSheet(
             }
         }
     }
+    listenIds?.let { ids ->
+        val asked = ids.toSet().let { set -> points.filter { it.id in set } }
+        val candidates = points.listenable(asked, today, now, eligibleDueIds)
+        HifzListenSheet(
+            candidates = candidates, waiting = asked.size - candidates.size,
+            onReview = if (dueAll.isNotEmpty()) ({ listenIds = null; actions.review() }) else null,
+            onStart = { heard, settings -> listenIds = null; actions.listen(heard, settings) },
+            onDismiss = { listenIds = null },
+        )
+    }
     if (away) HifzAwayDialog(catalog, onChosen = { away = false; actions.record(it) }, onDismiss = { away = false })
     if (howItWorks) HifzHowItWorksDialog { howItWorks = false }
 }
@@ -435,7 +466,7 @@ internal fun List<HifzPoint>.spoiledBy(opened: HifzPoint, today: Long, now: Long
     fun waiting(point: HifzPoint) = point.isDue(today, now) && (eligibleDueIds == null || point.id in eligibleDueIds)
     if (waiting(opened)) return opened
     val shows = opened.answerVerses()
-    return firstOrNull { it.id != opened.id && it.verse in shows && waiting(it) }
+    return firstOrNull { point -> point.id != opened.id && point.span.any { it in shows } && waiting(point) }
 }
 
 /** Search the saved notebook without showing answer excerpts before a due check. */
@@ -445,7 +476,7 @@ internal fun hifzNotebookMatches(catalog: QuranCatalog, point: HifzPoint, query:
     val typed = quranGoTo(numeric, catalog.surahs, catalog.pages.size + 1).filterIsInstance<QuranGoTo.Verse>().firstOrNull()?.verse
         ?: hifzTypedVerse(query, catalog)
     // A point is found by its verse; a look-alike by the verse it was confused with too.
-    if (typed != null) return point.verse == typed || typed in point.lookAlikes
+    if (typed != null) return point.asks(typed) || typed in point.lookAlikes
     // Even an invalid explicit reference must not degrade into an unordered set of numbers.
     if (Regex("^\\d+\\s*[:：/.-]\\s*\\d+$|^\\d+\\s+\\d+$").matches(numeric)) return false
     fun searchable(value: String): String = normalizeQuranSearch(value.map { char -> char.digitToIntOrNull()?.digitToChar() ?: char }.joinToString(""))
@@ -455,8 +486,8 @@ internal fun hifzNotebookMatches(catalog: QuranCatalog, point: HifzPoint, query:
         append(hifzPointTitle(catalog, point))
         append(' ')
         append("${point.verse.surah}:${point.verse.ayah}")
-        append(' ')
-        append(catalog.verse(point.verse)?.text.orEmpty())
+        // A forgotten passage is found by any of its verses' words.
+        point.span.forEach { append(' '); append(catalog.verse(it)?.text.orEmpty()) }
         // Only these: a skip's other, told before 22 October, is not read.
         point.lookAlikes.forEach { other ->
             append(" ${other.surah}:${other.ayah} ")
@@ -590,7 +621,7 @@ internal fun hifzReadingGate(
 
 /** A delay is explained only for genuinely due spaced checks; future checks and fresh waiting use their own copy. */
 internal fun hifzExposureDeferred(points: List<HifzPoint>, today: Long, exposed: Set<QuranVerseReference>): List<HifzPoint> =
-    points.filter { it.fresh == 0 && it.dueDay <= today && it.verse in exposed }.sortedWith(compareBy<HifzPoint> { it.dueDay }.thenBy { it.verse })
+    points.filter { point -> point.fresh == 0 && point.dueDay <= today && point.span.any { it in exposed } }.sortedWith(compareBy<HifzPoint> { it.dueDay }.thenBy { it.verse })
 
 /** Persisted graded questions, including repeated attempts; merely revealing or practising an answer earns no credit. */
 internal fun hifzGradedToday(points: List<HifzPoint>, today: Long): Int = points.sumOf { point -> point.checks.count { it.day == today } }

@@ -65,7 +65,7 @@ class AdhkarReaderSwipeTest {
                 onDeleteCustom = {}, onAddToCollection = {}, onReorderCollection = {}, onTextSize = {},
                 onHaptics = {}, onVariant = {}, reminder = null, reminderActionLabel = "إنشاء تذكير لهذا الذكر",
                 onReminder = {}, onConfigureReminder = {}, onDeleteReminder = {}, skipReminderLabel = null,
-                onSkipReminder = {}, snackbar = remember { SnackbarHostState() })
+                onSkipReminder = {}, onRaiseGoal = { _, _ -> }, snackbar = remember { SnackbarHostState() })
         }
         compose.waitForIdle()
     }

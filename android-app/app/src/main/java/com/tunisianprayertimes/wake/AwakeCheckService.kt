@@ -39,6 +39,8 @@ class AwakeCheckService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val audioController by lazy { AlarmAudioController(this, serviceScope) }
     private var escalationJob: Job? = null
+    private var motivationJob: Job? = null
+    private var notificationPrompt = R.string.awake_check_prompt
     private var runningScheduledTriggerAtMillis: Long? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -111,10 +113,22 @@ class AwakeCheckService : Service() {
         runningScheduledTriggerAtMillis = scheduledTriggerAtMillis
         runningTriggerAtMillis = scheduledTriggerAtMillis ?: 0L
         runningStartedAtMillis = System.currentTimeMillis()
+        motivationJob?.cancel()
+        _motivation.value = null
+        notificationPrompt = R.string.awake_check_prompt
         _isRunning.value = true
 
         createChannel()
-        startForeground(NOTIFICATION_ID, buildQuietNotification(eventId))
+        startForeground(NOTIFICATION_ID, buildNotification(eventId))
+        val motivationTriggerAtMillis = scheduledTriggerAtMillis
+            ?: occurrenceAtMillis.takeIf { it > 0L } ?: runningStartedAtMillis
+        motivationJob = serviceScope.launch {
+            val message = resolveAwakeCheckMotivation(
+                applicationContext, eventId, motivationTriggerAtMillis, occurrenceAtMillis,
+            )
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(eventId, message))
+            _motivation.value = message
+        }
         startEscalation(
             eventId = eventId,
             occurrenceAtMillis = occurrenceAtMillis,
@@ -140,6 +154,7 @@ class AwakeCheckService : Service() {
         runningTriggerAtMillis = 0L
         runningStartedAtMillis = 0L
         _isRunning.value = false
+        _motivation.value = null
         // Clear the running state before the background cleanup reads it.
         finishedAlarmId?.let { alarmId ->
             WakeAlarmScheduler.removeExpiredOneOffAfterAwakeCheckAsync(applicationContext, alarmId)
@@ -175,7 +190,8 @@ class AwakeCheckService : Service() {
             ) return@launch
 
             val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.notify(NOTIFICATION_ID, buildVibrationNotification(eventId))
+            notificationPrompt = R.string.awake_check_no_response
+            notificationManager.notify(NOTIFICATION_ID, buildNotification(eventId))
             audioController.startVibrationOnly(strong = true)
 
             var remainingVibrationMillis = AlarmAudioController.STRONG_VIBRATION_MILLIS
@@ -194,7 +210,8 @@ class AwakeCheckService : Service() {
                 ) return@launch
             }
 
-            notificationManager.notify(NOTIFICATION_ID, buildRingingNotification(eventId))
+            notificationPrompt = R.string.awake_check_ringing
+            notificationManager.notify(NOTIFICATION_ID, buildNotification(eventId))
             if (!audioController.startRingtoneRamp(
                     ringtonePreset = ringtonePreset,
                     customRingtoneUri = customRingtoneUri,
@@ -220,50 +237,23 @@ class AwakeCheckService : Service() {
         }
     }
 
-    private fun buildQuietNotification(eventId: String): Notification =
+    private fun buildNotification(eventId: String, motivation: WakeMotivation? = _motivation.value): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(getString(R.string.awake_check_title))
-            .setContentText(getString(R.string.awake_check_prompt))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .setSilent(true)
-            .addAction(
-                android.R.drawable.ic_menu_send,
-                getString(R.string.awake_check_confirm),
-                dismissPendingIntent(eventId),
+            .setContentText(getString(notificationPrompt))
+            .apply {
+                motivation?.let { message ->
+                    setStyle(NotificationCompat.BigTextStyle().bigText(
+                        listOfNotNull(getString(notificationPrompt), message.text, message.note, message.source)
+                            .joinToString("\n\n"),
+                    ))
+                }
+            }
+            .setPriority(
+                if (notificationPrompt == R.string.awake_check_prompt) NotificationCompat.PRIORITY_HIGH
+                else NotificationCompat.PRIORITY_MAX,
             )
-            .setContentIntent(appPendingIntent())
-            .build()
-
-    private fun buildVibrationNotification(eventId: String): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle(getString(R.string.awake_check_title))
-            .setContentText(getString(R.string.awake_check_no_response))
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .setSilent(true)
-            .addAction(
-                android.R.drawable.ic_menu_send,
-                getString(R.string.awake_check_confirm),
-                dismissPendingIntent(eventId),
-            )
-            .setContentIntent(appPendingIntent())
-            .build()
-
-    private fun buildRingingNotification(eventId: String): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle(getString(R.string.awake_check_title))
-            .setContentText(getString(R.string.awake_check_ringing))
-            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
@@ -308,6 +298,7 @@ class AwakeCheckService : Service() {
         AwakeCheckScheduler.cancelIfMatching(
             this, eventId, occurrenceAtMillis, scheduledTriggerAtMillis,
         )
+        motivationJob?.cancel()
         stopPlayback()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -355,6 +346,8 @@ class AwakeCheckService : Service() {
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning
+        private val _motivation = MutableStateFlow<WakeMotivation?>(null)
+        internal val motivation: StateFlow<WakeMotivation?> = _motivation
         @Volatile private var runningEventId: String? = null
         @Volatile private var runningOccurrenceAtMillis: Long = 0L
         @Volatile private var runningTriggerAtMillis: Long = 0L

@@ -42,6 +42,7 @@ import com.tunisianprayertimes.quran.hifz.HifzLookAlikes
 import com.tunisianprayertimes.quran.hifz.HifzPoint
 import com.tunisianprayertimes.quran.hifz.HifzReminder
 import com.tunisianprayertimes.quran.hifz.answerSafeOrder
+import com.tunisianprayertimes.quran.hifz.showsAnswerOf
 import com.tunisianprayertimes.quran.hifz.answerVerses
 import com.tunisianprayertimes.quran.hifz.hifzFixes
 import com.tunisianprayertimes.quran.hifz.shows
@@ -94,7 +95,7 @@ internal fun hifzPracticePlan(points: List<HifzPoint>, order: List<Long>, dueIds
     val selectedCount = selected.size
     val due = points.filter { it.id in dueIds }
     while (true) {
-        val linked = due.filter { question -> selected.none { it.id == question.id } && selected.any { it.shows(question.verse) } }
+        val linked = due.filter { question -> selected.none { it.id == question.id } && selected.any { it.showsAnswerOf(question) } }
         if (linked.isEmpty()) break
         selected += linked
     }
@@ -294,6 +295,7 @@ internal fun HifzPracticeSheet(
     tomorrow: String,
     actions: HifzPracticeActions,
     protectedVerses: Set<QuranVerseReference> = emptySet(),
+    sessionFeedback: @Composable () -> Unit = {},
 ) {
     val cards = remember(state.ids, points) { state.cards(points) }
     val count = cards.size
@@ -312,6 +314,7 @@ internal fun HifzPracticeSheet(
                     Icon(painterResource(R.drawable.ic_adhkar_close), "إغلاق")
                 }
             }
+            Column(Modifier.padding(horizontal = 16.dp)) { sessionFeedback() }
             // Where the reader is, and the way on or back, as in the notebook's corrections.
             if (count > 0) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { step(-1) }, enabled = index > 0, modifier = Modifier.testTag("hifz_practice_previous")) {
@@ -358,7 +361,10 @@ internal fun HifzPracticeSheet(
     }
 }
 
-/** The notebook uses the same floating Mushaf surface as the daily review. */
+/**
+ * The notebook uses the same floating Mushaf surface as the daily review. A swipe on the open card goes to the next or
+ * the previous point, as in the sheet; one on the page around it still turns the page.
+ */
 @Composable
 internal fun HifzPracticeOnPage(
     state: HifzPracticeState,
@@ -377,13 +383,16 @@ internal fun HifzPracticeOnPage(
     pointInView: Boolean,
     pageNamesSurah: Boolean,
     protectedVerses: Set<QuranVerseReference> = emptySet(),
+    sessionFeedback: @Composable () -> Unit = {},
 ) {
     val cards = remember(state.ids, points) { state.cards(points) }
     val count = cards.size
     LaunchedEffect(count) { state.keepWithin(count) }
     val index = state.index.coerceAtMost(count)
     val point = cards.getOrNull(index)
-    QuranFloatingCard(Modifier.widthIn(max = 560.dp).testTag("hifz_practice_card"), scrolls = false) {
+    // Folded, the card is a strip at the page's foot: a page-turn swipe that starts on it turns nothing; its arrows step.
+    val swipe = Modifier.hifzStepSwipe(canBack = !folded && index > 0, canNext = !folded && index < count) { delta -> state.step(delta, count, actions) }
+    QuranFloatingCard(Modifier.widthIn(max = 560.dp).then(swipe).testTag("hifz_practice_card"), scrolls = false) {
         Column(Modifier.heightIn(max = maxHeight).padding(start = 8.dp, end = 4.dp, bottom = 8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -407,7 +416,8 @@ internal fun HifzPracticeOnPage(
                     Icon(painterResource(R.drawable.ic_adhkar_close), "إنهاء المراجعة", Modifier.size(18.dp), tint = GreenPrimaryDark)
                 }
             }
-            if (!folded) {
+            Column(Modifier.padding(end = 4.dp)) { sessionFeedback() }
+            HifzCardFold(folded) {
                 if (point == null) HifzPracticeEnd(state, count, actions, Modifier.weight(1f, fill = false), onPage = true)
                 else HifzPracticeCard(
                     state, catalog, lookAlikes, point, index, count, audio, audioControls, tomorrow, actions, leaving = false,
@@ -502,12 +512,12 @@ private fun HifzPracticeCard(
             } else if (onPage) {
                 if (beforeHidden && previous != null) QuranVerseExcerpt(
                     catalog, previous, "الآية السابقة، ${hifzVerseAbout(catalog, previous)}",
-                    showPrevious = true, protectedVerses = protectedVerses,
+                    mark = QuranExcerptMark.None, showPrevious = true, protectedVerses = protectedVerses,
                     fallback = { HifzReviewCueText(catalog, previous, fontSize = 18.sp) },
                 )
             } else {
                 if (!talkBack) QuranVerseExcerpt(
-                    catalog, point.verse, "${hifzVerseAbout(catalog, point.verse)} مغطاة في المصحف",
+                    catalog, point.verse, "${hifzPointAbout(catalog, point)} مغطاة في المصحف", last = point.last,
                     linesBefore = if (previous != null) 1 else 0, cover = true,
                     showPrevious = true, protectedVerses = protectedVerses, fallback = inText,
                 )
@@ -579,8 +589,8 @@ private fun HifzPracticeCard(
                 colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary), modifier = nextModifier,
             ) { Text(nextLabel) }
             else OutlinedButton(onClick = { if (state.settled()) state.step(1, count, actions) }, modifier = nextModifier) { Text(nextLabel) }
-            // The word it went wrong at this time, after «نسيت أو أخطأت».
-            if (answer == HifzGrade.Again) {
+            // The word it went wrong at this time, after «نسيت أو أخطأت»; a forgotten passage holds no word of one verse.
+            if (answer == HifzGrade.Again && !point.passage) {
                 var wordsOpen by rememberSaveable(point.id) { mutableStateOf(false) }
                 if (state.wordsAdded(point)) Text("أضفناها.", fontSize = 12.sp, color = QuranHifzViolet)
                 else if (!wordsOpen) TextButton(onClick = { wordsOpen = true }, contentPadding = PaddingValues(horizontal = 4.dp)) {
@@ -593,7 +603,7 @@ private fun HifzPracticeCard(
             Text("استمع للصواب", maxLines = 1)
         }
         if (!onPage && beforeProtected) QuranVerseExcerpt(
-            catalog, point.verse, "${hifzVerseAbout(catalog, point.verse)} في المصحف",
+            catalog, point.verse, "${hifzPointAbout(catalog, point)} في المصحف", last = point.last,
             fallback = { HifzReviewCueText(catalog, point.verse) },
         )
         HifzFixBody(catalog, fixes, lookAlikes, ownOnPage = !onPage && !beforeProtected, otherFolded = onPage,

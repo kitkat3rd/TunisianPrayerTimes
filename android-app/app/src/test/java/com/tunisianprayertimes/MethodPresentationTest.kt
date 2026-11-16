@@ -1,6 +1,7 @@
 package com.tunisianprayertimes
 
 import com.tunisianprayertimes.method.PrayerMethods
+import com.tunisianprayertimes.method.PrayerMethod
 import com.tunisianprayertimes.place.LatLngE5
 import com.tunisianprayertimes.place.MappedZone
 import com.tunisianprayertimes.place.OfficialZone
@@ -23,6 +24,36 @@ class MethodPresentationTest {
         val unnamed = PrayerMethods.ALL.map { it.id }.filterNot { it in MethodPresentation.namedIds }
         assertTrue("unnamed: $unnamed", unnamed.isEmpty())
         PrayerMethods.ALL.forEach { assertNotEquals(it.id, MethodPresentation.name(it.id)) }
+    }
+
+    @Test
+    fun everyMethodHasAnArabicSourceInsteadOfItsResearchNotes() {
+        PrayerMethods.ALL.forEach { method ->
+            val source = MethodPresentation.source(method)
+            assertNotEquals(method.id, method.evidence.source, source)
+            assertTrue("${method.id}: $source", source.any { it in '\u0621'..'\u064a' })
+            assertTrue("${method.id}: $source", !source.contains("fits/"))
+        }
+        assertEquals("إعدادات طريقة الحساب التي اخترتها.", MethodPresentation.source(PrayerMethods.MWL.copy(id = PrayerMethod.CUSTOM_ID)))
+    }
+
+    @Test
+    fun translatedSourcesKeepTheirUncertaintyAndOriginalEvidence() {
+        val ecfr = method("ecfr_90")
+        val source = MethodPresentation.source(ecfr)
+        assertTrue(source.contains("منقول عن مصدر ثانوي"))
+        assertTrue(source.contains("لم نتحقّق من نصّه الأصلي"))
+        assertEquals("An ECFR clause known only second-hand", ecfr.evidence.source)
+        assertTrue(MethodPresentation.source(method("mwl_angle")).contains("لا جدوله المنشور"))
+        assertTrue(MethodPresentation.source(method("uk_18_nearest_day")).contains("زاوية العشاء مفترضة"))
+        assertTrue(MethodPresentation.source(method("so_fitted")).contains("قد تعكس"))
+        assertTrue(MethodPresentation.source(method("dj_fitted")).contains("قد تعكس"))
+    }
+
+    @Test
+    fun anUnknownMethodKeepsItsOwnSourceInsteadOfAnotherMethodsAttribution() {
+        val unknown = PrayerMethods.MWL.copy(id = "unknown")
+        assertEquals(unknown.evidence.source, MethodPresentation.source(unknown))
     }
 
     @Test

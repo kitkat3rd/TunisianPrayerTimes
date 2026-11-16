@@ -45,7 +45,7 @@ internal fun rememberWakeMotivation(
     },
 ): WakeMotivation? {
     val context = LocalContext.current.applicationContext
-    val occurrenceKey = payload?.let { "${it.eventId}|${it.triggerAtMillis}|${it.occurrenceAtMillis}" }
+    val occurrenceKey = payload?.motivationOccurrenceKey()
     // rememberSaveable's inputs are not validated against the inputs of a restored instance.
     // Save the occurrence alongside the id so queue promotion while the window is gone cannot
     // restore a night/Fajr message into a different alarm.

@@ -1,19 +1,12 @@
 package com.tunisianprayertimes.adhan
 
-import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.adhan.AdhanDecision.AppSilence
 import com.tunisianprayertimes.adhan.AdhanDecision.Outcome
 import com.tunisianprayertimes.adhan.AdhanDecision.Situation
-import com.tunisianprayertimes.adhan.AdhanDecision.Window
-import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AdhanDecisionTest {
-    private val day = LocalDate.of(2026, 11, 9)
-    private val adhan = 1_800_000_000_000L
-    private val minute = 60_000L
-
     private fun situation(
         enabled: Boolean = true,
         lateMillis: Long = 2_000L,
@@ -21,7 +14,9 @@ class AdhanDecisionTest {
         userChoseAppSilence: Boolean = false,
         appSilence: AppSilence = AppSilence.NONE,
         phoneQuiet: Boolean = false,
-    ) = Situation(enabled, lateMillis, inCall, userChoseAppSilence, appSilence, phoneQuiet)
+        volumeZero: Boolean = false,
+        alarmRinging: Boolean = false,
+    ) = Situation(enabled, lateMillis, inCall, userChoseAppSilence, appSilence, phoneQuiet, volumeZero, alarmRinging)
 
     @Test
     fun anAdhanOnTimeOnARingingPhonePlays() {
@@ -40,6 +35,18 @@ class AdhanDecisionTest {
     }
 
     @Test
+    fun aZeroAdhanVolumeOnARingingPhoneSaysSoInsteadOfPlayingMuted() {
+        assertEquals(Outcome.QUIET_ZERO_VOLUME, AdhanDecision.decide(situation(volumeZero = true)))
+        // A silent phone reads zero too: it keeps its own reason.
+        assertEquals(Outcome.QUIET_SILENT_PHONE, AdhanDecision.decide(situation(phoneQuiet = true, volumeZero = true)))
+    }
+
+    @Test
+    fun aRingingAlarmKeepsTheAdhanQuiet() {
+        assertEquals(Outcome.QUIET_ALARM_RINGING, AdhanDecision.decide(situation(alarmRinging = true)))
+    }
+
+    @Test
     fun aCallKeepsTheAdhanQuiet() {
         assertEquals(Outcome.QUIET_IN_CALL, AdhanDecision.decide(situation(inCall = true)))
     }
@@ -52,50 +59,39 @@ class AdhanDecisionTest {
     }
 
     @Test
-    fun itsOwnPrayerSilenceBegunWithItIsLiftedEvenThoughThePhoneIsSilencedByIt() {
+    fun everyAutomaticSilenceKeepsTheAdhanQuiet() {
         assertEquals(
-            Outcome.LIFT_AND_PLAY,
-            AdhanDecision.decide(situation(appSilence = AppSilence.OWN_FROM_ADHAN, phoneQuiet = true)),
+            Outcome.QUIET_PRAYER_SILENCE,
+            AdhanDecision.decide(situation(appSilence = AppSilence.AUTOMATIC, phoneQuiet = true)),
         )
     }
 
     @Test
-    fun anotherSilenceOfTheAppKeepsTheAdhanQuiet() {
-        assertEquals(Outcome.QUIET_SILENT_PHONE, AdhanDecision.decide(situation(appSilence = AppSilence.OTHER, phoneQuiet = true)))
+    fun aDueSilenceWindowKeepsTheAdhanQuietBeforeTheSilenceAlarmArrives() {
+        val silence = AdhanDecision.appSilence(autoActive = false, combined = false, windowActive = true)
+        assertEquals(Outcome.QUIET_PRAYER_SILENCE, AdhanDecision.decide(situation(appSilence = silence, phoneQuiet = false)))
     }
 
     @Test
-    fun atTheMosqueNothingShows() {
-        assertEquals(Outcome.NOTHING, AdhanDecision.decide(situation(appSilence = AppSilence.AT_MOSQUE, phoneQuiet = true)))
+    fun mosqueSilenceKeepsTheAdhanQuietButStillShowsThePrayer() {
+        assertEquals(Outcome.QUIET_PRAYER_SILENCE, AdhanDecision.decide(situation(appSilence = AppSilence.AT_MOSQUE, phoneQuiet = true)))
     }
 
     @Test
-    fun aWindowOfThisPrayerStartingWithItsAdhanIsItsOwn() {
-        assertEquals(AppSilence.OWN_FROM_ADHAN, classify(listOf(Window(Prayer.MAGHRIB, day, adhan))))
-        // Within the tolerance: the silence alarm can come a little before the adhan's.
-        assertEquals(AppSilence.OWN_FROM_ADHAN, classify(listOf(Window(Prayer.MAGHRIB, day, adhan - 30_000L))))
+    fun automaticSilenceRemainsAuthoritativeBetweenWindows() {
+        val silence = AdhanDecision.appSilence(autoActive = true, combined = false, windowActive = false)
+        assertEquals(Outcome.QUIET_PRAYER_SILENCE, AdhanDecision.decide(situation(appSilence = silence)))
     }
 
     @Test
-    fun aWindowThatBeganBeforeTheAdhanOrBelongsElsewhereIsNotItsOwn() {
-        // The user silences ten minutes before Maghrib: they meant to be at the mosque by its adhan.
-        assertEquals(AppSilence.OTHER, classify(listOf(Window(Prayer.MAGHRIB, day, adhan - 10 * minute))))
-        assertEquals(AppSilence.OTHER, classify(listOf(Window(Prayer.ASR, day, adhan + minute))))
-        assertEquals(AppSilence.OTHER, classify(listOf(Window(Prayer.MAGHRIB, day.minusDays(1), adhan))))
-        assertEquals(
-            AppSilence.OTHER,
-            classify(listOf(Window(Prayer.MAGHRIB, day, adhan), Window(Prayer.ASR, day, adhan - 60 * minute))),
-        )
-        // On but in no window: kept on between windows.
-        assertEquals(AppSilence.OTHER, classify(emptyList()))
+    fun aCombinedObservationWindowAloneDoesNotSilenceTheAdhan() {
+        val silence = AdhanDecision.appSilence(autoActive = false, combined = true, windowActive = true)
+        assertEquals(Outcome.PLAY, AdhanDecision.decide(situation(appSilence = silence)))
     }
 
     @Test
     fun noSilenceOrPresenceSilence() {
-        assertEquals(AppSilence.NONE, classify(listOf(Window(Prayer.MAGHRIB, day, adhan)), autoActive = false))
-        assertEquals(AppSilence.AT_MOSQUE, classify(emptyList(), combined = true))
+        assertEquals(AppSilence.NONE, AdhanDecision.appSilence(autoActive = false, combined = false, windowActive = false))
+        assertEquals(AppSilence.AT_MOSQUE, AdhanDecision.appSilence(autoActive = true, combined = true, windowActive = true))
     }
-
-    private fun classify(windows: List<Window>, autoActive: Boolean = true, combined: Boolean = false) =
-        AdhanDecision.appSilence(autoActive, combined, windows, Prayer.MAGHRIB, day, adhan)
 }

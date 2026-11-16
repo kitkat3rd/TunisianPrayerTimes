@@ -45,4 +45,22 @@ class AdhanSchedulerTest {
         assertNull(AdhanScheduler.requestCode(Prayer.AID_FITR, 0))
         assertNull(AdhanScheduler.requestCode(Prayer.FAJR, 2))
     }
+
+    @Test
+    fun theWarningComesFifteenSecondsBeforeUnlessThatTimeHasPassed() {
+        val adhan = now.toEpochMilli() + 10 * 60_000L
+        assertEquals(15_000L, AdhanScheduler.WARNING_LEAD_MILLIS)
+        assertEquals(adhan - 15_000L, AdhanScheduler.warningAt(adhan, now.toEpochMilli()))
+        assertNull(AdhanScheduler.warningAt(adhan, adhan - 10_000L))
+        assertNull(AdhanScheduler.warningAt(adhan, adhan - 15_000L))
+    }
+
+    @Test
+    fun warningsHaveTheirOwnRequestCodes() {
+        val slots = AdhanSettings.prayers.flatMap { prayer -> (-1L..1L).map { prayer to it } }
+        val adhans = slots.mapNotNull { (prayer, day) -> AdhanScheduler.requestCode(prayer, day) }.toSet()
+        val warnings = slots.mapNotNull { (prayer, day) -> AdhanScheduler.warningCode(prayer, day) }.toSet()
+        assertEquals(slots.size, warnings.size)
+        assertEquals(emptySet<Int>(), adhans intersect warnings)
+    }
 }

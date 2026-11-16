@@ -21,20 +21,33 @@ import kotlinx.coroutines.launch
 /**
  * Arms the adhans of the enabled prayers: every occurrence after now over prayer days D − 1..D + 1 in the place's zone
  * (6.6), at the time the prayer tab shows, Jumu'a at its resolved time on a Friday (A18). Each occurrence has its own
- * alarm-clock alarm under its prayer and day slot, as exact as the silence's. Each adhan re-arms the next ones, and
+ * alarm-clock alarm under its prayer and day slot, as exact as the silence's, and, with [AdhanSettings.warnsBefore],
+ * a second one [WARNING_LEAD_MILLIS] earlier for its warning vibration. Each adhan re-arms the next ones, and
  * the screens, boot and time changes refresh them through [com.tunisianprayertimes.ScheduleRefreshCoordinator].
  */
 object AdhanScheduler {
     private const val TAG = "AdhanScheduler"
     internal const val ACTION_ADHAN = "com.tunisianprayertimes.adhan.ACTION_ADHAN"
-    internal const val ACTION_RESUME_SILENCE = "com.tunisianprayertimes.adhan.ACTION_RESUME_SILENCE"
+
+    /** Shortly before an adhan: the warning vibration ([AdhanSettings.warnsBefore]). */
+    internal const val ACTION_ADHAN_SOON = "com.tunisianprayertimes.adhan.ACTION_ADHAN_SOON"
+
+    /**
+     * How long before the adhan the warning comes: time to feel it and press a volume key, even with the phone in a
+     * pocket, and short enough to wait for. The owner found one minute too long (2026-11-15).
+     */
+    internal const val WARNING_LEAD_MILLIS = 15_000L
+    private const val LEGACY_ACTION_RESUME_SILENCE = "com.tunisianprayertimes.adhan.ACTION_RESUME_SILENCE"
     private const val EXTRA_PRAYER = "com.tunisianprayertimes.adhan.extra.PRAYER"
     private const val EXTRA_PRAYER_DAY = "com.tunisianprayertimes.adhan.extra.PRAYER_DAY"
     private const val EXTRA_AT = "com.tunisianprayertimes.adhan.extra.AT"
 
-    /** Request codes 760_000 + prayer × 3 + day slot; the silence-resume safety alarm has its own. */
+    /** Request codes 760_000 + prayer × 3 + day slot; retain the former resume code only for upgrade cleanup. */
     private const val CODE_BASE = 760_000
     private const val RESUME_CODE = 760_099
+
+    /** The warnings' request codes: the adhans' codes moved by this much. */
+    private const val WARNING_SHIFT = 1_000
     private val DAY_OFFSETS = -1L..1L
     private val SLOTS = DAY_OFFSETS.count()
 
@@ -58,7 +71,10 @@ object AdhanScheduler {
 
     private fun refreshLocked(app: Context, now: Instant) {
         val alarms = app.getSystemService(AlarmManager::class.java) ?: return
+        cancelLegacySilenceResume(app, alarms)
         val enabled = AdhanSettings.enabledPrayers(app).toSet()
+        // A warning that came late would be worse than none: only with exact alarms.
+        val warns = AdhanSettings.warnsBefore(app) && canScheduleExact(alarms)
         val armed = HashSet<Int>()
         if (enabled.isNotEmpty()) {
             val place = PrayerTimesRepository.place(app)
@@ -67,14 +83,31 @@ object AdhanScheduler {
             for (occurrence in upcoming(occurrences, enabled, now)) {
                 val code = requestCode(occurrence.prayer, occurrence.prayerDay.toEpochDay() - today.toEpochDay()) ?: continue
                 val adhan = Occurrence(occurrence.prayer, occurrence.prayerDay, occurrence.at.toEpochMilli())
-                runCatching { arm(app, alarms, code, adhan) }
+                runCatching { arm(app, alarms, adhanIntent(app, code), code, adhan.atMillis, adhan) }
                     .onSuccess { armed += code }
                     .onFailure { Log.w(TAG, "Could not arm ${adhan.prayer} of ${adhan.prayerDay}", it) }
+                val warningAt = if (warns) warningAt(adhan.atMillis, now.toEpochMilli()) else null
+                if (warningAt != null) {
+                    val warningCode = code + WARNING_SHIFT
+                    runCatching { arm(app, alarms, warningIntent(app, warningCode), warningCode, warningAt, adhan) }
+                        .onSuccess { armed += warningCode }
+                        .onFailure { Log.w(TAG, "Could not arm the warning of ${adhan.prayer} of ${adhan.prayerDay}", it) }
+                }
             }
         }
-        for (code in allCodes()) if (code !in armed) cancel(app, alarms, code)
-        Log.d(TAG, "Armed ${armed.size} adhans for $enabled")
+        for (code in allCodes()) {
+            if (code !in armed) cancel(app, alarms, code, adhanIntent(app, code))
+            val warningCode = code + WARNING_SHIFT
+            if (warningCode !in armed) cancel(app, alarms, warningCode, warningIntent(app, warningCode))
+        }
+        Log.d(TAG, "Armed ${armed.size} adhans and warnings for $enabled")
     }
+
+    /** When the warning of an adhan at [atMillis] comes; null when that moment has already passed. */
+    internal fun warningAt(atMillis: Long, nowMillis: Long): Long? =
+        (atMillis - WARNING_LEAD_MILLIS).takeIf { it > nowMillis }
+
+    internal fun warningCode(prayer: Prayer, dayOffset: Long): Int? = requestCode(prayer, dayOffset)?.plus(WARNING_SHIFT)
 
     /** The adhans to arm: the enabled prayers' occurrences after [now], one per prayer and prayer day, by time. */
     internal fun upcoming(occurrences: List<PrayerOccurrence>, enabled: Set<Prayer>, now: Instant): List<PrayerOccurrence> =
@@ -92,21 +125,21 @@ object AdhanScheduler {
         (0 until SLOTS).map { slot -> CODE_BASE + index * SLOTS + slot }
     }
 
-    private fun arm(app: Context, alarms: AlarmManager, code: Int, occurrence: Occurrence) {
+    private fun arm(app: Context, alarms: AlarmManager, intent: Intent, code: Int, triggerAtMillis: Long, occurrence: Occurrence) {
         val operation = PendingIntent.getBroadcast(
-            app, code, adhanIntent(app, code).putOccurrence(occurrence),
+            app, code, intent.putOccurrence(occurrence),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         if (canScheduleExact(alarms)) {
-            alarms.setAlarmClock(AlarmManager.AlarmClockInfo(occurrence.atMillis, MainActivityPendingIntents.adhan(app)), operation)
+            alarms.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAtMillis, MainActivityPendingIntents.adhan(app)), operation)
         } else {
             // Without the exact-alarm permission Android may hold the alarm back; an adhan that comes late stays quiet.
-            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, occurrence.atMillis, operation)
+            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, operation)
         }
     }
 
-    private fun cancel(app: Context, alarms: AlarmManager, code: Int) {
-        PendingIntent.getBroadcast(app, code, adhanIntent(app, code), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+    private fun cancel(app: Context, alarms: AlarmManager, code: Int, intent: Intent) {
+        PendingIntent.getBroadcast(app, code, intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
             ?.let { pending ->
                 alarms.cancel(pending)
                 pending.cancel()
@@ -116,34 +149,19 @@ object AdhanScheduler {
     private fun adhanIntent(app: Context, code: Int): Intent =
         Intent(app, AdhanReceiver::class.java).setAction(ACTION_ADHAN).setData(Uri.parse("tunisianprayertimes://adhan/$code"))
 
-    /**
-     * A safety alarm for the prayer silence an adhan holds back: should the player die before it ends, the silence
-     * still comes back by [atMillis].
-     */
-    internal fun armSilenceResume(context: Context, atMillis: Long) {
-        val app = context.applicationContext
-        val alarms = app.getSystemService(AlarmManager::class.java) ?: return
-        runCatching {
-            if (canScheduleExact(alarms)) {
-                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, resumeIntent(app, PendingIntent.FLAG_UPDATE_CURRENT)!!)
-            } else {
-                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, resumeIntent(app, PendingIntent.FLAG_UPDATE_CURRENT)!!)
-            }
-        }.onFailure { Log.w(TAG, "Could not arm the silence resume", it) }
-    }
+    private fun warningIntent(app: Context, code: Int): Intent =
+        Intent(app, AdhanReceiver::class.java).setAction(ACTION_ADHAN_SOON).setData(Uri.parse("tunisianprayertimes://adhan-soon/$code"))
 
-    internal fun cancelSilenceResume(context: Context) {
-        val app = context.applicationContext
-        val pending = resumeIntent(app, PendingIntent.FLAG_NO_CREATE) ?: return
-        app.getSystemService(AlarmManager::class.java)?.cancel(pending)
+    /** Cancel the old adhan hold's safety alarm when upgrading; adhan no longer owns any silence changes. */
+    private fun cancelLegacySilenceResume(app: Context, alarms: AlarmManager) {
+        val pending = PendingIntent.getBroadcast(
+            app, RESUME_CODE,
+            Intent(app, AdhanReceiver::class.java).setAction(LEGACY_ACTION_RESUME_SILENCE),
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE,
+        ) ?: return
+        alarms.cancel(pending)
         pending.cancel()
     }
-
-    private fun resumeIntent(app: Context, flag: Int): PendingIntent? = PendingIntent.getBroadcast(
-        app, RESUME_CODE,
-        Intent(app, AdhanReceiver::class.java).setAction(ACTION_RESUME_SILENCE),
-        flag or PendingIntent.FLAG_IMMUTABLE,
-    )
 
     private fun canScheduleExact(alarms: AlarmManager): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms()

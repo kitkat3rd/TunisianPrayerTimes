@@ -82,17 +82,10 @@ class WakePlaybackService : Service() {
         // Queue-aware: hand the payload to the process-global queue first.
         // Only refresh notification + playback + activity if it became the
         // active alarm. If queued, keep showing the existing alarm.
-        val previousPayload = WakeAlarmQueueHolder.queue.current
         val result = WakeAlarmQueueHolder.queue.handleIncoming(payload)
 
         when (result) {
             IncomingResult.BECAME_CURRENT -> {
-                if (previousPayload != null &&
-                    (previousPayload.eventId != payload.eventId ||
-                        previousPayload.resolvedOccurrenceAtMillis() != payload.resolvedOccurrenceAtMillis())
-                ) {
-                    WakeDismissalCoordinator.recordSuperseded(this, previousPayload)
-                }
                 presentCurrent()
                 launchActivityForCurrent()
             }
@@ -139,7 +132,7 @@ class WakePlaybackService : Service() {
     /**
      * Re-evaluate state after the activity advances or dismisses an alarm.
      * - If the queue still has a current alarm: refresh notif + playback for it
-     *   and re-launch the activity (so a queued challenge is immediately shown).
+     *   and re-launch the activity (so a queued alarm is immediately shown).
      * - If the queue is empty: stop the service entirely.
      */
     private fun refreshForCurrent() {

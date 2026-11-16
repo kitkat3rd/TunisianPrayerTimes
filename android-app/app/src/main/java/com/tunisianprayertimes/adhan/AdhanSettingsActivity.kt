@@ -2,14 +2,20 @@ package com.tunisianprayertimes.adhan
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.NotificationManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
+import android.database.ContentObserver
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,10 +26,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -78,6 +82,8 @@ import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 class AdhanSettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The side keys on this screen set the adhan's own volume, the one «استماع» plays at.
+        volumeControlStream = AdhanPlaybackService.ADHAN_STREAM
         setContent {
             TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -98,12 +104,38 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
     var choosingFor by remember { mutableStateOf<Prayer?>(null) }
     var exactAllowed by remember { mutableStateOf(canScheduleExact(context)) }
     var notificationsAllowed by remember { mutableStateOf(notificationsEnabled(context)) }
+    var volumeZero by remember { mutableStateOf(AdhanPlaybackService.volumeZero(context)) }
+    var warnsBefore by remember { mutableStateOf(AdhanSettings.warnsBefore(context)) }
+    var fullScreenAllowed by remember { mutableStateOf(canUseFullScreen(context)) }
     LifecycleResumeEffect(Unit) {
         // Back from the system's settings: the permissions may have changed, and so may the alarms they allow.
         exactAllowed = canScheduleExact(context)
         notificationsAllowed = notificationsEnabled(context)
+        fullScreenAllowed = canUseFullScreen(context)
+        volumeZero = AdhanPlaybackService.volumeZero(context)
         AdhanScheduler.refreshLater(context)
         onPauseOrDispose { }
+    }
+    // The ring volume moves with the side keys and the system's panel while this screen shows.
+    DisposableEffect(Unit) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                volumeZero = AdhanPlaybackService.volumeZero(context)
+            }
+        }
+        val ringerReceiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) {
+                volumeZero = AdhanPlaybackService.volumeZero(context)
+            }
+        }
+        context.contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, observer)
+        ContextCompat.registerReceiver(
+            context, ringerReceiver, IntentFilter(AudioManager.RINGER_MODE_CHANGED_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        onDispose {
+            context.contentResolver.unregisterContentObserver(observer)
+            runCatching { context.unregisterReceiver(ringerReceiver) }
+        }
     }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = notificationsEnabled(context)
@@ -142,6 +174,74 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
             )
         }
         Column(Modifier.padding(start = 12.dp)) {
+            val allEnabled = enabled.values.all { it }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .toggleable(value = allEnabled, role = Role.Switch) { on ->
+                        AdhanSettings.setAllEnabled(context, on)
+                        enabled = AdhanSettings.prayers.associateWith { on }
+                        if (on && !notificationsEnabled(context)) askForNotifications()
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.adhan_all_prayers),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextDark,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = allEnabled,
+                    onCheckedChange = null,
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = GreenPrimary),
+                )
+            }
+            if (anyEnabled) {
+                HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp)
+                        .toggleable(value = warnsBefore, role = Role.Switch) { on ->
+                            AdhanSettings.setWarnsBefore(context, on)
+                            warnsBefore = on
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.adhan_warn_before),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextDark,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = warnsBefore,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = GreenPrimary),
+                    )
+                }
+            }
+            HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+            if (anyEnabled && volumeZero) {
+                PermissionNotice(
+                    text = stringResource(R.string.adhan_volume_zero),
+                    action = stringResource(R.string.adhan_set_volume),
+                    onAction = { showVolumePanel(context) },
+                )
+            }
+            if (anyEnabled && !fullScreenAllowed) {
+                PermissionNotice(
+                    text = stringResource(R.string.adhan_full_screen_off),
+                    action = stringResource(R.string.adhan_allow),
+                    onAction = { openSettings(context, FULL_SCREEN_SETTINGS) },
+                )
+            }
             if (anyEnabled && !exactAllowed) {
                 PermissionNotice(
                     text = stringResource(R.string.adhan_exact_alarms_off),
@@ -170,16 +270,6 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
                     onChooseVoice = { choosingFor = prayer },
                 )
                 HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-            }
-            Spacer(Modifier.height(16.dp))
-            listOf(R.string.adhan_note_quiet_phone, R.string.adhan_note_silence, R.string.adhan_note_stop).forEach { note ->
-                Text(
-                    text = stringResource(note),
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                    color = PrayerSilencePalette.SecondaryText,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
             }
         }
     }
@@ -355,17 +445,17 @@ private fun AdhanVoiceDialog(
     )
 }
 
-/** A listen to one voice in the settings, at the media volume the user is adjusting right now. */
+/**
+ * A listen to one voice in the settings, at the adhan's own volume and through the same rules, so what is heard here
+ * is what the prayer time will sound like. It used to play at the media volume, which hid a ring or notification
+ * volume at zero: the voice sounded here and the real adhan was silent.
+ */
 private class AdhanPreview(private val context: Context) {
     private var player: MediaPlayer? = null
 
     fun play(voice: AdhanVoice, onEnd: () -> Unit): Boolean {
         stop()
-        val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-        val created = MediaPlayer.create(context, voice.rawResId, attributes, 0) ?: return false
+        val created = MediaPlayer.create(context, voice.rawResId, AdhanPlaybackService.audioAttributes(), 0) ?: return false
         created.setOnCompletionListener {
             stop()
             onEnd()
@@ -390,10 +480,27 @@ private fun canScheduleExact(context: Context): Boolean =
 
 private fun notificationsEnabled(context: Context): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled()
 
+/** The countdown and prayer-time page need it from Android 14; before, every app has it. */
+private fun canUseFullScreen(context: Context): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+        context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
+
+/** Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, which takes the package as its data. */
+private const val FULL_SCREEN_SETTINGS = "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT"
+
+/** The system's volume slider for the adhan's stream, changing nothing by itself; the sound settings if refused. */
+private fun showVolumePanel(context: Context) {
+    runCatching {
+        context.getSystemService(AudioManager::class.java)
+            .adjustStreamVolume(AdhanPlaybackService.ADHAN_STREAM, AudioManager.ADJUST_SAME, AudioManager.FLAG_SHOW_UI)
+    }.onFailure { openSettings(context, Settings.ACTION_SOUND_SETTINGS) }
+}
+
 private fun openSettings(context: Context, action: String) {
     val intent = Intent(action).apply {
         when (action) {
             Settings.ACTION_APP_NOTIFICATION_SETTINGS -> putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            Settings.ACTION_SOUND_SETTINGS -> Unit
             else -> data = Uri.parse("package:${context.packageName}")
         }
     }

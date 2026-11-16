@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerTimesRepository
+import com.tunisianprayertimes.PrayerWakeConfig
 import com.tunisianprayertimes.WakeMainAlarmMode
 import com.tunisianprayertimes.engine.PrayerDay
 import com.tunisianprayertimes.engine.TimeEvent
@@ -96,30 +97,50 @@ internal suspend fun resolveWakeMotivation(
     context: Context,
     payload: WakeTriggerPayload,
     now: Instant = Instant.now(),
+): WakeMotivation = resolveWakeMotivation(
+    context, payload.eventId, payload.motivationOccurrenceKey(),
+    payload.occurrenceAtMillis.takeIf { it > 0L } ?: payload.triggerAtMillis, now,
+) { payload.effectivePrayer.takeIf { payload.mainAlarmMode == WakeMainAlarmMode.PRAYER_RELATIVE } }
+
+internal suspend fun resolveAwakeCheckMotivation(
+    context: Context,
+    eventId: String,
+    triggerAtMillis: Long,
+    occurrenceAtMillis: Long,
+    now: Instant = Instant.now(),
+): WakeMotivation = resolveWakeMotivation(
+    context, eventId, "awake|$eventId|$triggerAtMillis|$occurrenceAtMillis",
+    occurrenceAtMillis.takeIf { it > 0L } ?: triggerAtMillis, now,
+) { alarm -> alarm?.takeIf { it.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE }?.prayer }
+
+private suspend fun resolveWakeMotivation(
+    context: Context,
+    eventId: String,
+    occurrenceKey: String,
+    occurrenceAtMillis: Long,
+    now: Instant,
+    linkedPrayer: (PrayerWakeConfig?) -> Prayer?,
 ): WakeMotivation = withContext(Dispatchers.IO) {
-    val alarmId = wakeAlarmIdFromEventId(payload.eventId).orEmpty().ifBlank { payload.eventId }
+    val alarmId = wakeAlarmIdFromEventId(eventId).orEmpty().ifBlank { eventId }
+    val occurrence = occurrenceAtMillis.takeIf { it > 0L }?.let(Instant::ofEpochMilli) ?: now
     try {
         val place = PrayerTimesRepository.place(context)
         val today = now.atZone(place.zone).toLocalDate()
         val days = (-1L..1L).mapNotNull { offset ->
             PrayerTimesRepository.prayerDay(context, today.plusDays(offset), place)
         }
-        val title = PrayerWakeRepository(context).getWakeAlarm(alarmId)?.title.orEmpty()
-        val linkedPrayer = payload.effectivePrayer.takeIf { payload.mainAlarmMode == WakeMainAlarmMode.PRAYER_RELATIVE }
-        val topics = wakeMotivationTopics(now, linkedPrayer, title, days)
-        val occurrence = payload.occurrenceAtMillis.takeIf { it > 0 }
-            ?: payload.triggerAtMillis.takeIf { it > 0 }
-        val rotationDay = (occurrence?.let(Instant::ofEpochMilli) ?: now)
-            .atZone(place.zone).toLocalDate().toEpochDay()
-        WakeMotivations.select(topics, alarmId, rotationDay)
+        val alarm = PrayerWakeRepository(context).getWakeAlarm(alarmId)
+        val topics = wakeMotivationTopics(now, linkedPrayer(alarm), alarm?.title.orEmpty(), days)
+        val rotationDay = occurrence.atZone(place.zone).toLocalDate().toEpochDay()
+        WakeMotivationHistory.select(context, occurrenceKey, topics, alarmId, rotationDay)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
         // An unavailable catalogue or a failed preferences read must never affect alarm controls.
         Log.w("WakeMotivation", "Using a general message because the alarm context is unavailable", error)
-        WakeMotivations.select(
-            setOf(WakeMotivationTopic.GENERAL), alarmId,
-            now.atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay(),
+        WakeMotivationHistory.select(
+            context, occurrenceKey, setOf(WakeMotivationTopic.GENERAL), alarmId,
+            occurrence.atZone(ZoneId.systemDefault()).toLocalDate().toEpochDay(),
         )
     }
 }

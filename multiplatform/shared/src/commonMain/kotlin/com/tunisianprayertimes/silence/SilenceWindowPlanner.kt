@@ -99,13 +99,30 @@ class SilenceWindowPlanner(
             val adhan = slots(day).firstOrNull { it.first == prayer }?.second ?: continue
             checked += date to check(prayer, date, adhan, resolved)
         }
-        val notFitting = checked.filter { (_, c) -> !c.fits }.map { it.first }
+        val failing = checked.filter { (_, c) -> !c.fits }
+        val notFitting = failing.map { it.first }
         return SilenceFit(
             checkedDays = checked.size,
             notFitting = notFitting,
             laterFixedEnd = if (notFitting.isEmpty()) null else laterFixedEnd(prayer, resolved, checked.map { it.second }),
             adhanRelativeEnd = if (notFitting.isEmpty()) null else adhanRelativeEnd(resolved, checked.map { it.second }),
+            misfit = if (notFitting.isEmpty()) null else misfit(resolved, failing.map { it.second }),
         )
+    }
+
+    /**
+     * Why the failing days fail, in the rule's own terms: one end follows the adhan and the other is a clock time.
+     * A day whose window left the endpoint domain, or any other shape, is [SilenceMisfit.Other].
+     */
+    private fun misfit(rule: SilenceRule, failing: List<Checked>): SilenceMisfit {
+        if (failing.any { it.window?.clamped == true }) return SilenceMisfit.Other
+        val start = rule.start
+        val end = rule.end
+        return when {
+            start is SilenceStart.FromAdhan && end is SilenceEnd.Clock -> SilenceMisfit.StartReachesFixedEnd(start.minutes, end.time, end.savedAdhanOffsetMinutes)
+            start is SilenceStart.Clock && end is SilenceEnd.FromAdhan -> SilenceMisfit.EndReachesFixedStart(start.time, end.minutes)
+            else -> SilenceMisfit.Other
+        }
     }
 
     private class Checked(val adhan: Instant, val start: Instant, val window: SilenceWindow?) {
@@ -199,6 +216,31 @@ data class SilenceFit(
     val laterFixedEnd: LocalTime?,
     /** An end at the saved offset from the adhan, when that fits every day. */
     val adhanRelativeEnd: Int?,
+    /** Why those days fail, for the editors' text; null when every day fits. */
+    val misfit: SilenceMisfit? = null,
 ) {
     val fitsAllYear: Boolean get() = notFitting.isEmpty()
+}
+
+/** Why a rule does not fit some days (6.9, D16), so the editors can name the user's own start and end. */
+sealed interface SilenceMisfit {
+    /**
+     * The start follows the adhan by [startMinutes] and the end is the fixed [end]: on a late adhan the start
+     * comes at the end or after it. On those days D16 moves the end to [cappedEnd], or else to the adhan +
+     * [savedAdhanOffsetMinutes].
+     */
+    data class StartReachesFixedEnd(val startMinutes: Int, val end: LocalTime, val savedAdhanOffsetMinutes: Int?) : SilenceMisfit {
+        /** The fixed end moved later by D16's cap, never past 23:59. */
+        val cappedEnd: LocalTime
+            get() = if (end.toSecondOfDay() / 60 + SilenceEndpoints.CAP_MINUTES > 23 * 60 + 59) LocalTime.of(23, 59) else end.plusMinutes(SilenceEndpoints.CAP_MINUTES)
+    }
+
+    /**
+     * The start is the fixed [start] and the end follows the adhan by [endMinutes]: on an early adhan the end
+     * comes at the start or before it, and those days have no window.
+     */
+    data class EndReachesFixedStart(val start: LocalTime, val endMinutes: Int) : SilenceMisfit
+
+    /** Another shape, or a day whose window left the endpoint domain. */
+    data object Other : SilenceMisfit
 }

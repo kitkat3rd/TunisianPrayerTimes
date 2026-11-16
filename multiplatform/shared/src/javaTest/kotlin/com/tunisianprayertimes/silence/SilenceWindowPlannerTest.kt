@@ -182,6 +182,8 @@ class SilenceWindowPlannerTest {
         val planner = SilenceWindowPlanner(tunis, true, emptyMap()) { SilenceDay(it, day(it, tunis, "05:00", "06:30", "12:30", "15:40", "18:10", "19:35")) }
         val fit = planner.fit(Prayer.DHUHR, SilenceRule(SilenceStart.Clock(LocalTime.of(0, 20)), SilenceEnd.Clock(LocalTime.of(23, 0))), date, 3)
         assertEquals(3, fit.notFitting.size)
+        // A clamped window has no plain cause for the popup.
+        assertEquals(SilenceMisfit.Other, fit.misfit)
     }
 
     @Test
@@ -340,6 +342,16 @@ class SilenceWindowPlannerTest {
         val later = assertNotNull(fit.laterFixedEnd)
         assertTrue(later in LocalTime.of(14, 0)..LocalTime.of(14, 15), "$later")
         assertEquals(35, fit.adhanRelativeEnd)
+        // The popup names the cause: the default start (adhan + 5) reaches the fixed 13:00, which D16 moves to 13:30.
+        val cause = assertNotNull(fit.misfit as? SilenceMisfit.StartReachesFixedEnd, "${fit.misfit}")
+        assertEquals(SilenceMisfit.StartReachesFixedEnd(5, LocalTime.of(13, 0), 35), cause)
+        assertEquals(LocalTime.of(13, 30), cause.cappedEnd)
+        assertEquals(LocalTime.of(23, 59), SilenceMisfit.StartReachesFixedEnd(0, LocalTime.of(23, 45), 40).cappedEnd)
+        // The reverse: a fixed 13:00 start with an end at adhan + 20 fails on the early-adhan days.
+        val fixedStart = planner.fit(Prayer.DHUHR, SilenceRule(SilenceStart.Clock(LocalTime.of(13, 0)), SilenceEnd.FromAdhan(20)), LocalDate.of(2026, 1, 1))
+        assertTrue(LocalDate.of(2026, 11, 3) in fixedStart.notFitting)
+        assertEquals(SilenceMisfit.EndReachesFixedStart(LocalTime.of(13, 0), 20), fixedStart.misfit)
+        assertTrue(planner.fit(Prayer.DHUHR, SilenceRule(SilenceStart.Unset, SilenceEnd.Clock(later)), LocalDate.of(2026, 1, 1)).misfit == null)
         assertTrue(planner.fit(Prayer.DHUHR, SilenceRule(SilenceStart.Unset, SilenceEnd.Clock(later)), LocalDate.of(2026, 1, 1)).fitsAllYear)
         assertTrue(planner.fit(Prayer.DHUHR, SilenceRule(SilenceStart.Unset, SilenceEnd.FromAdhan(35)), LocalDate.of(2026, 1, 1)).fitsAllYear)
         // A Friday-only prayer is checked on Fridays only.

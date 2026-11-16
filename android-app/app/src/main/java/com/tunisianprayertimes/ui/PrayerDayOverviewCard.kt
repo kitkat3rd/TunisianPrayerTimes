@@ -852,28 +852,13 @@ internal fun PrayerDayOverviewCard(
                             drawCircle(GreenPrimaryDark.copy(alpha = 0.94f), radius = 3.0f * scaleX, center = center)
                             drawCircle(GoldLight.copy(alpha = 0.72f), radius = 1.05f * scaleX, center = center)
                         }
-                        fun drawAlarmTimelineMarker(center: Offset, cluster: Boolean, sub: Boolean, nearNonAlarmMarker: Boolean) {
-                            val amber = Color(0xFFFFC247).copy(alpha = if (sub && !cluster) 0.9f else 1f)
-                            if (cluster) {
-                                drawCircle(amber.copy(alpha = 0.52f), radius = 6.9f * scaleX, center = center, style = Stroke(width = 1.15f * scaleX))
-                                drawCircle(Color.White.copy(alpha = 0.96f), radius = 5.4f * scaleX, center = center)
-                                drawCircle(amber, radius = 3.0f * scaleX, center = center)
-                                drawCircle(Color(0xFF061D32), radius = 1.1f * scaleX, center = center)
-                            } else {
-                                if (nearNonAlarmMarker) {
-                                    drawCircle(amber.copy(alpha = 0.68f), radius = 6.9f * scaleX, center = center, style = Stroke(width = 1.1f * scaleX))
-                                }
-                                drawCircle(Color.White.copy(alpha = 0.96f), radius = 5.2f * scaleX, center = center)
-                                drawCircle(amber, radius = 2.8f * scaleX, center = center)
-                            }
-                        }
-                        // Alarm dots are drawn BEFORE non-alarm markers so prayer/event dots stay on top (req 2).
+                        // Prayer/event markers stay visible even in a very narrow gap between events.
                         timelineAlarmPlacements.forEach { placement ->
-                            drawAlarmTimelineMarker(
+                            drawDayDialAlarm(
                                 center = Offset(placement.iconCenterX * scaleX, placement.iconCenterY * scaleY),
+                                scale = scaleX,
                                 cluster = placement.isCluster,
-                                sub = placement.hasSubAlarm,
-                                nearNonAlarmMarker = placement.nearNonAlarmMarker,
+                                extra = placement.hasSubAlarm,
                             )
                         }
                         val timelineEventPoints = listOf(sunrisePoint, sunsetPoint, secondThirdPoint, finalThirdPoint, fajrPoint)
@@ -914,7 +899,7 @@ internal fun PrayerDayOverviewCard(
                         key(placement.id) {
                             val accessibilityDescription = timelineAlarmAccessibilityDescription(placement.alarms)
                             val actionLabel = timelineAlarmActionLabel(placement.alarms)
-                            // Transparent hit target over the alarm dot (the dot itself is drawn in the
+                            // Transparent hit target over the alarm clock (the clock itself is drawn in the
                             // Canvas below the non-alarm markers). Single → edit directly; cluster → sheet.
                             // A dot whose time is written next to it is read once, with that time.
                             // Its target is as large as it can be without reaching a neighbouring alarm dot's, so a

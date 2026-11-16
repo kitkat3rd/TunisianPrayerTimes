@@ -2,6 +2,8 @@ package com.tunisianprayertimes.quran.hifz
 
 import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import android.os.Looper
 import com.tunisianprayertimes.quran.QuranVerseReference
 import com.tunisianprayertimes.quran.audio.*
@@ -51,8 +53,11 @@ class HifzSessionCoordinatorTest {
         HifzRepository.reload(context)
     }
 
-    private fun coordinator(scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)): HifzSessionCoordinator {
-        val coordinator = HifzSessionCoordinator(context, scope, now = { clock })
+    private fun coordinator(
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        sessionContext: Context = context,
+    ): HifzSessionCoordinator {
+        val coordinator = HifzSessionCoordinator(sessionContext, scope, now = { clock })
         sessions += coordinator
         runBlocking { coordinator.initialize() }
         coordinator.phoneAudio = object : HifzSessionAudio {
@@ -106,6 +111,95 @@ class HifzSessionCoordinatorTest {
 
     /** Mid-morning today: a review and the 45 minutes after it stay within the day. */
     private fun midMorning() = java.time.LocalDate.now().atTime(10, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    @Test fun anUnfinishedReviewRollsOverSilentlyWithoutLosingAnswers() = overnight(recreate = false)
+
+    @Test fun reopeningYesterdaysReviewKeepsAnswersAndAsksTheUnfinishedPointsWithoutAPopup() = overnight(recreate = true)
+
+    private fun overnight(recreate: Boolean) {
+        clock = midMorning()
+        val yesterday = epochDay(clock)
+        install(point(), point(2, 5), point(3, 9))
+        val original = coordinator()
+        assertTrue(original.startDaily())
+        reveal(original)
+        original.assess(HifzGrade.Held)
+        await { !original.savingAnswer && original.view().tally.held == 1 }
+        val savedPoints = HifzRepository.points.value
+        assertTrue(savedPoints.first().dueDay > yesterday + 1)
+        original.cue()
+        assertNotNull(original.resumableClip())
+        original.pause()
+        runBlocking { original.persist() }
+        if (recreate) original.dispose()
+        clock += 86_400_000L
+        val current = if (recreate) coordinator() else original.also { it.refresh() }
+        assertNull(current.error)
+        assertNull(current.notice)
+        assertFalse(current.hasSession)
+        assertTrue(current.reviewIds.value.isEmpty())
+        assertNull(current.resumableClip())
+        assertEquals(savedPoints, HifzRepository.points.value)
+        assertEquals(0, current.dayTally().graded)
+        assertTrue(current.startDaily())
+        assertEquals(setOf(2L, 3L), current.reviewIds.value.toSet())
+        assertEquals(0, current.view().tally.graded)
+        assertEquals(1, HifzRepository.points.value.first().checks.size)
+    }
+
+    @Test fun anEmptyNotebookAndNoDueQuestionsAreNotErrorsOnPhoneOrCar() {
+        val coordinator = coordinator()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            val adapter = adapter(coordinator, scope)
+            assertFalse(coordinator.startDaily())
+            assertNotNull(coordinator.notice)
+            assertNull(coordinator.error)
+            assertNotEquals(android.media.session.PlaybackState.STATE_ERROR, adapter.playbackState().state)
+            assertFalse(adapter.playbackState().customActions.any { it.action.endsWith("/retry") })
+            assertEquals(coordinator.notice, adapter.metadata().getString(android.media.MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE))
+            coordinator.dismissNotice()
+            assertNull(coordinator.notice)
+            assertFalse(coordinator.startNotebook())
+            assertNotNull(coordinator.notice)
+            assertNull(coordinator.error)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun noDueQuestionsLeavesFutureReviewDatesUnchanged() {
+        val future = point(due = epochDay(clock) + 5)
+        install(future)
+        val coordinator = coordinator()
+        assertFalse(coordinator.startDaily())
+        assertNull(coordinator.problem)
+        assertNotNull(coordinator.notice)
+        assertEquals(listOf(future), HifzRepository.points.value)
+        assertFalse(coordinator.hasSession)
+        assertTrue(coordinator.startNotebook())
+        assertNull(coordinator.notice)
+    }
+
+    @Test fun anUnreadableSessionPreservesTheNotebookAndDoesNotOfferAMeaninglessSaveRetry() {
+        val first = point()
+        install(first)
+        context.getSharedPreferences("hifz_shared_session", Context.MODE_PRIVATE).edit().putString("session", "{broken").commit()
+        val coordinator = coordinator()
+        assertEquals(HifzSessionProblemKind.Restore, coordinator.problem!!.kind)
+        assertFalse(coordinator.problem!!.retrySave)
+        assertEquals(listOf(first), HifzRepository.points.value)
+        coordinator.retry()
+        settle()
+        assertEquals(HifzSessionProblemKind.Restore, coordinator.problem!!.kind)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            val adapter = adapter(coordinator, scope)
+            adapter.onPlay()
+            assertFalse(adapter.playbackState().customActions.any { it.action.endsWith("/retry") })
+            assertTrue(adapter.customAction(adapter.playbackState().customActions.single { it.action.endsWith("/dismiss") }.action))
+            assertNull(coordinator.error)
+            assertTrue(coordinator.startDaily())
+        } finally { scope.cancel() }
+    }
 
     @Test fun aDailyReviewAsksEveryPointDueNow() {
         install(*(1..7).map { point(it.toLong(), ayah = it * 2) }.toTypedArray())
@@ -460,6 +554,8 @@ class HifzSessionCoordinatorTest {
         val recovered = coordinator()
         assertTrue(HifzRepository.points.value.isEmpty())
         assertEquals(0, recovered.view().tally.graded)
+        assertEquals(HifzSessionProblemKind.PointChanged, recovered.problem!!.kind)
+        assertFalse(recovered.problem!!.retrySave)
     }
 
     @Test fun aSessionSurvivesRecreationWithoutAutoplayAndKeepsTheOrdinaryListeningPlace() {
@@ -489,15 +585,89 @@ class HifzSessionCoordinatorTest {
         reveal(coordinator)
         val collision = File(notebook.parentFile, "hifz.json.new").apply { mkdirs() }
         File(collision, "occupied").writeText("blocked")
-        coordinator.assess(HifzGrade.Held)
-        await { !coordinator.busy && coordinator.error != null }
-        assertEquals(0, coordinator.view().tally.graded)
-        assertTrue(HifzRepository.points.value.single().checks.isEmpty())
-        assertTrue(coordinator.savingAnswer)
-        collision.deleteRecursively()
+        try {
+            coordinator.assess(HifzGrade.Held)
+            await { !coordinator.busy && coordinator.error != null }
+            assertEquals(HifzSessionProblemKind.AnswerSave, coordinator.problem!!.kind)
+            assertTrue(coordinator.problem!!.retrySave)
+            coordinator.audioError("تعذّر تشغيل التلاوة.")
+            assertEquals(HifzSessionProblemKind.AnswerSave, coordinator.problem!!.kind)
+            coordinator.dismissError()
+            assertNotNull("Closing the warning must not hide an answer still waiting to be saved", coordinator.problem)
+            assertEquals(0, coordinator.view().tally.graded)
+            assertTrue(HifzRepository.points.value.single().checks.isEmpty())
+            assertTrue(coordinator.savingAnswer)
+        } finally { collision.deleteRecursively() }
         coordinator.retry()
         await { !coordinator.savingAnswer && HifzRepository.points.value.single().checks.isNotEmpty() }
         assertEquals(1, coordinator.view().tally.held)
         assertEquals(1, HifzRepository.points.value.single().checks.size)
+    }
+
+    @Test fun midnightDoesNotReplaceAnUnsavedAnswerWarningAndRetryKeepsItsOriginalDay() {
+        clock = midMorning()
+        val yesterday = epochDay(clock)
+        install(point(), point(2, 5))
+        val coordinator = coordinator()
+        coordinator.startDaily()
+        reveal(coordinator)
+        val collision = File(notebook.parentFile, "hifz.json.new").apply { mkdirs() }
+        File(collision, "occupied").writeText("blocked")
+        try {
+            coordinator.assess(HifzGrade.Held)
+            await { !coordinator.busy && coordinator.error != null }
+            clock += 86_400_000L
+            coordinator.refresh()
+            assertEquals(HifzSessionProblemKind.AnswerSave, coordinator.problem!!.kind)
+            assertTrue(coordinator.hasSession)
+            assertTrue(coordinator.savingAnswer)
+        } finally { collision.deleteRecursively() }
+        coordinator.retry()
+        await { !coordinator.savingAnswer && !coordinator.hasSession }
+        assertNull(coordinator.error)
+        assertEquals(yesterday, HifzRepository.points.value.first().checks.single().day)
+        assertEquals(0, coordinator.dayTally().graded)
+        assertTrue(coordinator.startDaily())
+        assertEquals(listOf(2L), coordinator.reviewIds.value)
+    }
+
+    @Test fun aPositionSaveFailureCanBeRetriedWithoutChangingAnswers() {
+        install(point())
+        val stored = context.getSharedPreferences("hifz_shared_session", Context.MODE_PRIVATE)
+        var failWrites = false
+        val preferences = object : SharedPreferences by stored {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = stored.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun putString(key: String?, value: String?): SharedPreferences.Editor {
+                        editor.putString(key, value)
+                        return this
+                    }
+                    override fun commit(): Boolean = if (failWrites) false else editor.commit()
+                }
+            }
+        }
+        val sessionContext = object : ContextWrapper(context) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "hifz_shared_session") preferences else super.getSharedPreferences(name, mode)
+        }
+        val coordinator = coordinator(sessionContext = sessionContext)
+        coordinator.startDaily()
+        runBlocking { coordinator.persist() }
+        failWrites = true
+        coordinator.persistAsync()
+        await { coordinator.problem?.kind == HifzSessionProblemKind.PositionSave }
+        assertTrue(coordinator.problem!!.retrySave)
+        assertFalse(coordinator.savingAnswer)
+        assertTrue(HifzRepository.points.value.single().checks.isEmpty())
+        failWrites = false
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            val adapter = adapter(coordinator, scope)
+            assertTrue(adapter.customAction(adapter.playbackState().customActions.single { it.action.endsWith("/retry") }.action))
+            await { coordinator.problem == null }
+            assertEquals(HifzSessionMode.Daily.name, JSONObject(stored.getString("session", null)!!).getString("mode"))
+            assertTrue(HifzRepository.points.value.single().checks.isEmpty())
+        } finally { scope.cancel() }
     }
 }

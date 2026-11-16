@@ -28,7 +28,7 @@ FILES = {
     "ic_tab_alarms_filled": ("alarm", 1),
     "ic_tab_qibla": ("kaaba", 0),
     "ic_tab_qibla_filled": ("kaaba", 1),
-    "ic_tab_adhkar": ("misbaha", 1),
+    # ic_tab_adhkar: since 2026-11-12 written by beads.mjs (`node beads.mjs vd Ecw <file>`), not from misbaha()
     "ic_tab_quran_filled": ("quran", 1),
 }
 

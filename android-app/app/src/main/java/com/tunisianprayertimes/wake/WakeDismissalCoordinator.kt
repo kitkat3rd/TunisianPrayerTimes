@@ -27,10 +27,6 @@ internal object WakeDismissalCoordinator {
         scheduleAwakeCheckIfReady(context, payload)
     }
 
-    fun recordSuperseded(context: Context, payload: WakeTriggerPayload) {
-        if (payload.awakeCheckGroupSize > 1) scheduleAwakeCheckIfReady(context, payload)
-    }
-
     private fun scheduleAwakeCheckIfReady(context: Context, payload: WakeTriggerPayload) {
         if (payload.awakeCheckEnabled && !WakeOccurrenceSkipRegistry.contains(payload) &&
             AwakeCheckGroupTracker.isFinalDismissal(context, payload)

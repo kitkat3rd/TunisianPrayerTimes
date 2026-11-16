@@ -7,6 +7,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,6 +33,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -55,6 +58,7 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.adhkar.*
 import java.time.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -841,7 +845,7 @@ private fun cadenceLabel(cadence: String, interval: String, intervalCount: Int):
 }
 
 /** Accepts Arabic-Indic digits as well as Latin ones. */
-private fun parseDhikrInt(value: String): Int? =
+internal fun parseDhikrInt(value: String): Int? =
     value.trim().map { if (it.isDigit()) Character.digit(it, 10).digitToChar() else it }.joinToString("").toIntOrNull()
 
 /** Small collections name their adhkar; they follow the user's own additions and removals. */
@@ -934,7 +938,7 @@ private fun TemplateCard(title: String, subtitle: String, icon: Int?, selected: 
 
 /** A goal typed or stepped, never below [minimum] by the buttons; the field accepts what validation then judges. */
 @Composable
-private fun GoalStepper(value: String, onValue: (String) -> Unit, minimum: Int, increase: String, decrease: String,
+internal fun GoalStepper(value: String, onValue: (String) -> Unit, minimum: Int, increase: String, decrease: String,
     tag: String, colors: TextFieldColors) {
     val current = parseDhikrInt(value)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -961,7 +965,34 @@ private fun GoalStepper(value: String, onValue: (String) -> Unit, minimum: Int, 
 @Composable
 private fun StepButton(icon: Int, description: String, enabled: Boolean = true, onClick: () -> Unit) {
     val p = LocalAdhkarPalette.current
-    Surface(onClick = onClick, enabled = enabled, shape = CircleShape, color = AdhkarSoftGreen, modifier = Modifier.size(48.dp)) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val currentClick by rememberUpdatedState(onClick)
+    val longPress = LocalViewConfiguration.current.longPressTimeoutMillis
+    var repeated by remember { mutableStateOf(false) }
+    LaunchedEffect(interactionSource, enabled, longPress) {
+        repeated = false
+        if (enabled) interactionSource.interactions.collectLatest { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> {
+                    repeated = false
+                    delay(longPress)
+                    while (true) {
+                        repeated = true
+                        currentClick()
+                        delay(100L)
+                    }
+                }
+                is PressInteraction.Cancel -> repeated = false
+                // collectLatest stops repeating on release; the button handles a short tap below.
+                is PressInteraction.Release -> Unit
+            }
+        }
+    }
+    Surface(onClick = {
+        if (!repeated) currentClick()
+        repeated = false
+    }, enabled = enabled, interactionSource = interactionSource,
+        shape = CircleShape, color = AdhkarSoftGreen, modifier = Modifier.size(48.dp)) {
         Box(contentAlignment = Alignment.Center) {
             DhikrIcon(icon, description, tint = p.primary.copy(alpha = if (enabled) 1f else .38f), modifier = Modifier.size(22.dp))
         }

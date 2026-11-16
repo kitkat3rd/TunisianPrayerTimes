@@ -292,8 +292,9 @@ class PrayerDayDialLayoutTest {
             .forEach { (name, label) -> if (layout.onDaySky(label.rect.center)) problems += "$where: $name on the day sky" }
 
         val dots = (listOf(layout.sunriseAngle, layout.sunsetAngle, layout.secondThirdAngle, layout.finalThirdAngle, layout.fajrAngle) +
-            layout.prayerAngles).map { layout.point(it) } + layout.alarms.map { Offset(it.iconCenterX, it.iconCenterY) }
-        texts.forEach { (name, box) -> if (dots.any { circleOn(it, 5.2f, box) }) problems += "$where: $name on a dot" }
+            layout.prayerAngles).map { layout.point(it) to 5.2f } +
+            layout.alarms.map { Offset(it.iconCenterX, it.iconCenterY) to DIAL_ALARM_RADIUS }
+        texts.forEach { (name, box) -> if (dots.any { (center, radius) -> circleOn(center, radius, box) }) problems += "$where: $name on a marker" }
 
         val sunriseSun = Rect(layout.sunriseSun.x - DIAL_SUN_REACH, layout.sunriseSun.y - DIAL_SUN_REACH, layout.sunriseSun.x + DIAL_SUN_REACH, layout.sunriseSun.y)
         texts.forEach { (name, box) ->

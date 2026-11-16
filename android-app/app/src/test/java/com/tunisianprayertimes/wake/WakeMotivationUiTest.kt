@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -195,6 +196,37 @@ class WakeMotivationUiTest {
         fixture = fixture.copy(triggerAtMillis = 2_000L, occurrenceAtMillis = 2_000L)
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("H8").assertIsDisplayed()
+        assertEquals(2, resolutions)
+    }
+
+    @Test
+    fun promotingAnExtraAlarmWithTheSameParentOccurrenceRotatesItsMessage() {
+        val fixture = mutableStateOf(payload().copy(triggerAtMillis = 1_000L, occurrenceAtMillis = 1_000L))
+        val generic = setOf(WakeMotivationTopic.GENERAL)
+        val expected = WakeMotivations.select(generic, "motivation-fixture", 1L)
+        val context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("wake_motivation_history", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        var resolutions = 0
+        compose.setContent {
+            val message = rememberWakeMotivation(fixture.value) { appContext, alarm ->
+                resolutions++
+                WakeMotivationHistory.select(appContext, alarm.motivationOccurrenceKey(), generic, "motivation-fixture", 1L)
+            }
+            Text(message?.reviewId.orEmpty())
+        }
+        compose.onNodeWithText(expected.reviewId).assertIsDisplayed()
+        compose.runOnIdle {
+            fixture.value = fixture.value.copy(
+                eventId = wakeSubAlarmEventId("motivation-fixture", "extra"),
+                isSubAlarm = true,
+                // Even simultaneous rings belong to different message occurrences.
+            )
+        }
+        val next = WakeMotivations.select(generic, "motivation-fixture", 1L, listOf(expected.reviewId))
+        compose.onNodeWithText(next.reviewId).assertIsDisplayed()
+        assertEquals(2, resolutions)
+        compose.runOnIdle { fixture.value = fixture.value.copy(wakeUpCheckEnabled = true) }
+        compose.onNodeWithText(next.reviewId).assertIsDisplayed()
         assertEquals(2, resolutions)
     }
 }

@@ -70,6 +70,20 @@ val DhikrReminder.fridayGoal: Int? get() = fridayTargetCount?.takeIf { readsFrid
 fun DhikrReminder.targetOn(date: LocalDate): Int =
     fridayGoal?.takeIf { date.dayOfWeek == DayOfWeek.FRIDAY } ?: targetCount
 
+/** True when [date]'s goal is Friday's own one, so raising that day's goal for good raises Friday's alone. */
+fun DhikrReminder.raisesFridayGoalOn(date: LocalDate): Boolean = readsFridayGoal() && date.dayOfWeek == DayOfWeek.FRIDAY
+
+/**
+ * The rule whose goal on [date] is [goal], for a goal raised for good once the day's goal is reached:
+ * Friday's own goal on a Friday that reads one, else the daily goal. Friday's never drops below the
+ * daily goal: it rises with it, and follows it when it had none of its own.
+ */
+fun DhikrReminder.withGoalOn(date: LocalDate, goal: Int): DhikrReminder = when {
+    raisesFridayGoalOn(date) -> copy(fridayTargetCount = goal)
+    readsFridayGoal() -> copy(targetCount = goal, fridayTargetCount = fridayGoal?.let { maxOf(it, goal) })
+    else -> copy(targetCount = goal)
+}
+
 /** A prayer-relative time never reads its clock minute, so periods differing only by it are the same period. */
 internal fun DhikrInterval.scheduleIdentity(): DhikrInterval =
     copy(start = start.withoutUnusedMinute(), end = end.withoutUnusedMinute())

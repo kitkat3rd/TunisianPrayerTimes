@@ -245,10 +245,16 @@ internal object WakeMotivations {
         WakeMotivationTopic.GENERAL in message.topics || message.topics.any { it in topics }
     }
 
-    /** Daily rotation without a network request, mutable counters, or rerolls during a ringing occurrence. */
-    fun select(topics: Set<WakeMotivationTopic>, alarmId: String, epochDay: Long): WakeMotivation {
+    /** Daily starting point, preferring unseen messages and then the least recently shown eligible one. */
+    fun select(
+        topics: Set<WakeMotivationTopic>,
+        alarmId: String,
+        epochDay: Long,
+        recentMessageIds: List<String> = emptyList(),
+    ): WakeMotivation {
         val pool = eligible(topics)
         val index = Math.floorMod(epochDay + alarmId.hashCode().toLong(), pool.size.toLong()).toInt()
-        return pool[index]
+        return pool.indices.map { pool[(index + it) % pool.size] }
+            .minBy { recentMessageIds.lastIndexOf(it.reviewId) }
     }
 }

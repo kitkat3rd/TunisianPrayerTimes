@@ -22,6 +22,7 @@ internal data class PhoneSilenceReason(
     val source: PhoneSilenceReasonSource,
     val prayer: Prayer? = null,
     val endsAtMillis: Long = -1L,
+    val doNotDisturbActive: Boolean = false,
 )
 
 internal fun phoneStatusNoticeText(
@@ -57,7 +58,10 @@ internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason
             prayerName(context, requireNotNull(reason.prayer)),
         )
         PhoneSilenceReasonSource.WAKE_ALARM -> context.getString(R.string.phone_status_silent_wake_alarm)
-        PhoneSilenceReasonSource.EXTERNAL -> context.getString(R.string.phone_status_silent_external)
+        PhoneSilenceReasonSource.EXTERNAL -> context.getString(
+            if (reason.doNotDisturbActive) R.string.phone_status_dnd_active
+            else R.string.phone_status_silent_external,
+        )
     }
 }
 
@@ -72,6 +76,7 @@ internal fun resolvePhoneSilenceReason(
     wakeSilenceUntilAlarmActive: Boolean,
     currentTimeMillis: Long,
     combinedMode: Boolean = false,
+    doNotDisturbActive: Boolean = false,
 ): PhoneSilenceReason? {
     if (!isPhoneSilenced) return null
 
@@ -109,7 +114,10 @@ internal fun resolvePhoneSilenceReason(
         return PhoneSilenceReason(PhoneSilenceReasonSource.WAKE_ALARM)
     }
 
-    return PhoneSilenceReason(PhoneSilenceReasonSource.EXTERNAL)
+    return PhoneSilenceReason(
+        source = PhoneSilenceReasonSource.EXTERNAL,
+        doNotDisturbActive = doNotDisturbActive,
+    )
 }
 
 private fun prayerName(context: Context, prayer: Prayer): String = when (prayer) {

@@ -40,6 +40,7 @@
     <string name="quran_auto_review_listen">مواضعي صوتًا</string>
     <string name="quran_auto_review_listen_hint">استماع إلى الصواب دون تسجيل إجابات</string>
     <string name="quran_auto_review_empty">دفتر المراجعة فارغ. أضف مواضعك على الهاتف حين يكون ذلك آمنًا.</string>
+    <string name="quran_auto_review_listen_waiting">حان سؤالك عن مواضعك، فلن تسمعها قبل أن تجيب. اختر «مراجعة اليوم».</string>
     <string name="quran_auto_review_no_session">لا توجد مراجعة غير منتهية. اختر «مراجعة اليوم» أو «مراجعة الدفتر».</string>
     <string name="quran_auto_review_failed">تعذّر تجهيز المراجعة. بقي موضعك ونتائجك محفوظة. أعد المحاولة.</string>
     <string name="quran_auto_review_download">تحتاج هذه المراجعة تلاوات غير موجودة على الهاتف. نزّلها حين يكون ذلك آمنًا، ثم تابع من الموضع نفسه.</string>
@@ -52,6 +53,7 @@
     <string name="quran_auto_review_return">العودة إلى الاستماع</string>
     <string name="quran_auto_review_more">تابع مراجعة اليوم</string>
     <string name="quran_auto_review_retry">أعد المحاولة</string>
+    <string name="quran_auto_review_dismiss">إخفاء التنبيه</string>
     <string name="quran_auto_review_result">نتيجة المراجعة</string>
     <string name="quran_auto_review_question_hint">تذكّر من الذاكرة، ثم اضغط «اسمع الجواب»</string>
     <string name="quran_auto_review_assessment_hint">قبل سماع الجواب: ✓ دون مساعدة · ≈ بتردّد · × نسيت</string>

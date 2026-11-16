@@ -96,6 +96,14 @@
         </activity>
 
         <activity
+            android:name=".SilenceShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.TunisianPrayerTimes.Card" />
+
+        <activity
             android:name=".mosque.MosqueSettingsActivity"
             android:exported="true"
             android:label="@string/mosque_settings_title">
@@ -154,6 +162,17 @@
             android:name=".adhan.AdhanPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- The warning's countdown over the lock screen: its own task, out of recents. -->
+        <activity
+            android:name=".adhan.AdhanAlertActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.TunisianPrayerTimes"
+            android:turnScreenOn="true" />
 
         <activity
             android:name=".adhan.AdhanSettingsActivity"

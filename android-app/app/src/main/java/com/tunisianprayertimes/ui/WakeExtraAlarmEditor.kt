@@ -59,7 +59,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.OffsetDirection
@@ -323,8 +322,6 @@ internal fun WakeExtraAlarmEditor(
                                     else wakeExtraAlarmSoundText(context, draft.playback),
                                     color = TextMuted,
                                     fontSize = 12.sp,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                             Icon(

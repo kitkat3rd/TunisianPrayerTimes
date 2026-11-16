@@ -822,6 +822,79 @@ class AdhkarFlowTest {
         // Not read on a Friday-only reminder, so not judged either.
         assertNull(DhikrReminderScheduler.validate(context, preset.copy(daysOfWeek = setOf(5), fridayTargetCount = 4), friday))
     }
+    @Test fun reachedGoalRaisedForTheDayReopensThatDayOnly() {
+        val rule = rule(10).copy(daysOfWeek = (1..7).toSet()); repo.save(rule)
+        val occurrence = repo.ensureOccurrence(rule, window(rule))
+        val session = repo.openSession(listOf(rule.dhikrId), occurrenceId = occurrence.id)
+        val at = occurrence.startMillis + 1
+        repeat(10) { repo.count(session, 1, at) }
+        assertFalse(repo.raiseGoal(session, rule.id, 10, permanent = false, now = at))
+        assertFalse(repo.raiseGoal(session, rule.id, 100_001, permanent = false, now = at))
+        assertTrue(repo.raiseGoal(session, rule.id, 20, permanent = false, now = at))
+        val raised = repo.state.value.occurrences.getValue(occurrence.id)
+        assertEquals(20, raised.target)
+        assertEquals(10, raised.count)
+        assertEquals(DhikrOccurrenceStatus.OPEN, raised.status)
+        assertEquals(20, repo.state.value.target(repo.state.value.sessions.getValue(session)))
+        // The reminder keeps its goal and revision: the next day asks for 10 again.
+        assertEquals(10, repo.state.value.reminders.single().targetCount)
+        assertEquals(rule.revision, repo.state.value.reminders.single().revision)
+        assertEquals(10, repo.ensureOccurrence(rule, window(rule, friday.plusDays(1))).target)
+        repeat(10) { repo.count(session, 1, at + 1) }
+        assertEquals(DhikrOccurrenceStatus.COMPLETED, repo.state.value.occurrences.getValue(occurrence.id).status)
+        // Once the period is over there is no day left to raise.
+        assertFalse(repo.raiseGoal(session, rule.id, 40, permanent = false, now = occurrence.endMillis))
+    }
+    @Test fun goalRaisedForGoodOnFridayKeepsTheDayRunningAndTheDailyGoal() {
+        val rule = rule(5).copy(daysOfWeek = (1..7).toSet(), fridayTargetCount = 10); repo.save(rule)
+        val occurrence = repo.ensureOccurrence(rule, window(rule))
+        val saturday = repo.ensureOccurrence(rule, window(rule, friday.plusDays(1)))
+        val nextFriday = repo.ensureOccurrence(rule, window(rule, friday.plusWeeks(1)))
+        val session = repo.openSession(listOf(rule.dhikrId), occurrenceId = occurrence.id)
+        val at = occurrence.startMillis + 1
+        repeat(10) { repo.count(session, 1, at) }
+        assertTrue(repo.raiseGoal(session, rule.id, 20, permanent = true, now = at))
+        val stored = repo.state.value.reminders.single()
+        assertEquals(5, stored.targetCount)
+        assertEquals(20, stored.fridayGoal)
+        assertEquals(rule.revision, stored.revision)
+        val occurrences = repo.state.value.occurrences
+        assertEquals(20, occurrences.getValue(occurrence.id).target)
+        assertEquals(20, occurrences.getValue(nextFriday.id).target)
+        assertEquals(5, occurrences.getValue(saturday.id).target)
+        // The day goes on: the reading still counts towards it.
+        repo.count(session, 1, at + 1)
+        assertEquals(11, repo.state.value.occurrences.getValue(occurrence.id).count)
+    }
+    @Test fun goalRaisedForGoodIsFridaysOwnOnFridayAndTheDailyOneOtherwise() {
+        val preset = salawatDhikrPreset()
+        val thursday = friday.minusDays(1)
+        fun goals(rule: DhikrReminder) = rule.targetOn(thursday) to rule.targetOn(friday)
+        val raised = listOf(preset.withGoalOn(friday, 20), preset.withGoalOn(thursday, 20), preset.withGoalOn(thursday, 8),
+            preset.copy(fridayTargetCount = null).withGoalOn(thursday, 20), preset.copy(daysOfWeek = setOf(5)).withGoalOn(friday, 20))
+        assertEquals(5 to 20, goals(raised[0]))
+        // The daily goal lifts a Friday goal below it and leaves a higher one; a Friday without one follows it.
+        assertEquals(20 to 20, goals(raised[1]))
+        assertEquals(8 to 10, goals(raised[2]))
+        assertEquals(20 to 20, goals(raised[3]))
+        // A Friday-only reminder has one goal.
+        assertEquals(20, raised[4].targetCount)
+        raised.forEach { assertNull(DhikrReminderScheduler.structuralError(context, it)) }
+    }
+    @Test fun readingOutsideThePeriodRaisesItsOwnGoalForThatDay() {
+        val rule = rule(10).copy(daysOfWeek = (1..7).toSet()); repo.save(rule)
+        val early = window(rule).startMillis - 60 * 60_000L
+        val session = repo.openSession(listOf(rule.dhikrId), targetCountOverride = 10, now = early)
+        repeat(10) { repo.count(session, 1, early) }
+        assertTrue(repo.raiseGoal(session, rule.id, 20, permanent = false, now = early))
+        assertEquals(20, repo.state.value.sessions.getValue(session).targetCountOverride)
+        // Opening the reminder again that day resumes this reading; the next day starts afresh.
+        assertEquals(20, repo.state.value.raisedReadingGoal(rule, friday))
+        assertEquals(session, repo.openSession(listOf(rule.dhikrId), targetCountOverride = 20, now = early + 1))
+        assertNull(repo.state.value.raisedReadingGoal(rule, friday.plusDays(1)))
+        // The day's scheduled progress is not this reading: its goal stays.
+        assertEquals(10, repo.ensureOccurrence(rule, window(rule)).target)
+    }
     @Test fun overnightRequiresConsentAndUsesStartDayForOccurrence() {
         val invalid = rule().copy(start = DhikrTime(minuteOfDay = 22 * 60), end = DhikrTime(minuteOfDay = 120))
         assertNotNull(DhikrReminderScheduler.validate(context, invalid))

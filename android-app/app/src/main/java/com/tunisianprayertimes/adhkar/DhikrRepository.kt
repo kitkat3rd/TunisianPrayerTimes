@@ -367,6 +367,55 @@ class DhikrRepository(context: Context) {
         if (accepted) DhikrReminderScheduler.refresh(app, nowMillis = now)
         return accepted
     }
+    /**
+     * Raises the goal of a reading of the single-dhikr reminder [ruleId] to [goal], above the one it
+     * has: for the day only, or for good as well ([permanent]). Read within the reminder's period, the
+     * day's progress takes the new goal, so its notifications resume until it is reached; a reading
+     * opened outside the period keeps its own goal ([DhikrSession.targetCountOverride]), as before.
+     * For good, the reminder's goal changes in place ([withGoalOn]) and the days already counted ahead
+     * take it too. A new revision would close the day that is running, the reason the goal is raised.
+     * False when nothing changed.
+     */
+    fun raiseGoal(sessionId: String, ruleId: String, goal: Int, permanent: Boolean,
+                  now: Long = System.currentTimeMillis()): Boolean {
+        var accepted = false
+        update { old ->
+            val session = old.sessions[sessionId] ?: return@update old
+            val rule = old.reminders.firstOrNull { it.id == ruleId } ?: return@update old
+            if (rule.collection != null || session.category != null || session.itemIds != listOf(rule.dhikrId) ||
+                old.findDhikr(rule.dhikrId)?.steps?.isEmpty() != true || goal !in 1..100_000) return@update old
+            val occurrence = session.occurrenceId?.let { old.occurrences[it] }
+            var occurrences = old.occurrences
+            var sessions = old.sessions
+            val date = if (session.occurrenceId != null) {
+                if (occurrence == null || session.targetCountOverride != null || occurrence.ruleId != rule.id ||
+                    occurrence.revision != rule.revision || !rule.enabled || now !in occurrence.startMillis until occurrence.endMillis ||
+                    !occurrence.counting || goal <= occurrence.target) return@update old
+                occurrences = occurrences + (occurrence.id to occurrence.withTarget(goal))
+                runCatching { LocalDate.parse(occurrence.date) }.getOrNull() ?: return@update old
+            } else {
+                val current = session.targetCountOverride ?: return@update old
+                if (goal <= current) return@update old
+                sessions = sessions + (session.id to session.copy(targetCountOverride = goal, updatedAtMillis = now))
+                Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
+            }
+            val reminders = if (!permanent) old.reminders else {
+                val raised = rule.withGoalOn(date, goal)
+                if (DhikrReminderScheduler.structuralError(app, raised) != null) return@update old
+                occurrences = occurrences.mapValues { (_, other) ->
+                    val day = runCatching { LocalDate.parse(other.date) }.getOrNull()
+                    if (day == null || other.id == occurrence?.id || other.ruleId != rule.id || other.revision != rule.revision ||
+                        other.endMillis <= now || !other.counting) other
+                    else other.withTarget(maxOf(other.target, raised.targetOn(day)))
+                }
+                old.reminders.map { if (it.id == rule.id) raised else it }
+            }
+            accepted = true
+            old.copy(reminders = reminders, occurrences = occurrences, sessions = sessions)
+        }
+        if (accepted) DhikrReminderScheduler.refresh(app, nowMillis = now)
+        return accepted
+    }
     fun snooze(occurrenceId: String, now: Long = System.currentTimeMillis()): Boolean {
         var accepted = false
         update { old ->
@@ -618,6 +667,22 @@ class DhikrRepository(context: Context) {
     }
 }
 internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJSONObject(it) }
+/** Still counted towards its goal: open, or reached, which a higher goal opens again. */
+private val DhikrOccurrence.counting: Boolean
+    get() = status == DhikrOccurrenceStatus.OPEN || status == DhikrOccurrenceStatus.COMPLETED
+private fun DhikrOccurrence.withTarget(goal: Int): DhikrOccurrence = copy(target = goal,
+    status = if (count >= goal) DhikrOccurrenceStatus.COMPLETED else DhikrOccurrenceStatus.OPEN)
+/**
+ * The goal that a reading of [rule] opened outside its period was raised to on [date]
+ * ([DhikrRepository.raiseGoal]), when above [goal]: opening the reminder again that day resumes
+ * that reading instead of starting another one at [goal].
+ */
+internal fun DhikrState.raisedReadingGoal(rule: DhikrReminder, date: LocalDate, goal: Int = rule.targetOn(date)): Int? =
+    sessions.values.filter {
+        it.occurrenceId == null && it.category == null && it.collectionPeriodKey == null &&
+            it.itemIds == listOf(rule.dhikrId) && (it.targetCountOverride ?: 0) > goal &&
+            Instant.ofEpochMilli(it.updatedAtMillis).atZone(ZoneId.systemDefault()).toLocalDate() == date
+    }.maxByOrNull { it.updatedAtMillis }?.targetCountOverride
 private fun Map<DhikrCategory, Set<String>>.updatedWith(category: DhikrCategory, ids: Set<String>): Map<DhikrCategory, Set<String>> =
     if (ids.isEmpty()) this - category else this + (category to ids)
 private fun Map<DhikrCategory, Set<String>>.toJson(): JSONObject = JSONObject().apply {

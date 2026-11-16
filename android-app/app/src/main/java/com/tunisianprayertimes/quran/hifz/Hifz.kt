@@ -34,13 +34,21 @@ enum class HifzKind(val key: String, val label: String, val short: String) {
     /** Drifted into a similar verse, in the same chapter or another. */
     Similar("similar", "انتقلت إلى آية شبيهة بالخطأ", "شبيهة"),
     /** Closed the verse with another verse's ending. */
-    Ending("ending", "ختمتها بخاتمة أخرى", "خاتمة");
+    Ending("ending", "ختمتها بخاتمة أخرى", "خاتمة"),
+    /**
+     * The verse would not come, nor those after it: a passage forgotten, told of the passage's own point
+     * ([HifzPoint.passage]). Like a skip, it is linked to the verse before it.
+     */
+    Passage("passage", "نسيتها مع آيات بعدها", "آيات متتالية");
 
     /** The slip is told by the verse it was confused with: a different look-alike is a slip of its own. */
     val lookAlike: Boolean get() = this == Ending || this == Similar
 
     /** One choice on «أخطأت»: a look-alike, whether it parts from the verse in its course or at its ending. */
     fun sameChoice(other: HifzKind): Boolean = this == other || (lookAlike && other.lookAlike)
+
+    /** It may name the verse the recitation went into: not a skip nor a passage, where that does not matter. */
+    val namesOther: Boolean get() = this != Skip && this != Passage
 
     companion object {
         fun of(key: String): HifzKind? = entries.firstOrNull { it.key == key }
@@ -283,7 +291,20 @@ data class HifzPoint(
     val oncePerDay: Boolean? = null,
     /** Known recent slip times, for adapting the next phase without rewriting lifetime history or current progress. */
     val recentSlipTimes: List<Long> = emptyList(),
+    /**
+     * A forgotten passage's last verse, in [verse]'s surah; null for one verse. A passage is one point, like one long
+     * verse: one question, one answer, one plan (owner, 12 November). It may share verses with a verse's own point.
+     */
+    val last: Int? = null,
 ) {
+    /** A forgotten passage, from [verse] to [last]. */
+    val passage: Boolean get() = last != null
+    /** The verses it asks: [verse] alone, or the passage from [verse] to [last]. */
+    val span: List<QuranVerseReference> get() = (verse.ayah..(last ?: verse.ayah)).map { QuranVerseReference(verse.surah, it) }
+    /** Its last verse: [verse] itself, or the passage's last. */
+    val end: QuranVerseReference get() = QuranVerseReference(verse.surah, last ?: verse.ayah)
+    /** [other] is one of the verses it asks ([span]). */
+    fun asks(other: QuranVerseReference): Boolean = other.surah == verse.surah && other.ayah in verse.ayah..(last ?: verse.ayah)
     val mastered: Boolean get() = step >= HifzMasteredStep
     /** The fresh-phase frequency, independent of whether its schedule follows the global settings. */
     val daily: Boolean get() = oncePerDay ?: (times?.count == 1)
@@ -304,6 +325,13 @@ data class HifzPoint(
      * matter: the fix is always to link the verse to the one before it (owner, 22 October).
      */
     val skipped: Boolean get() = mistakes.any { it.kind == HifzKind.Skip }
+    /**
+     * Practised, heard and corrected with the end of the verse before it, which calls it up: a forgotten opening, a
+     * skipped verse, a forgotten passage.
+     */
+    val linked: Boolean get() = atStart || skipped || passage
+    /** When any of its verses was last [seen]: a passage's answer is all of them. */
+    fun seenAt(seen: Map<QuranVerseReference, Long>): Long? = span.mapNotNull { seen[it] }.maxOrNull()
     /** When a [fresh] point may be asked again: a while after its slip or its last answer, whichever came later. */
     val freshDueAt: Long get() = hifzWaitEnd(maxOf(lastSlipAt, checks.lastOrNull()?.at ?: 0L))
     /** Recent difficulty has priority until two unaided checks show recovery. */
@@ -363,7 +391,7 @@ data class HifzPoint(
     fun isDue(
         today: Long, now: Long, seen: Map<QuranVerseReference, Long> = emptyMap(),
         seenToday: Set<QuranVerseReference> = emptySet(),
-    ): Boolean = if (fresh > 0) now >= freshDueAt(seen[verse]) && dueDay <= today else dueDay <= today && verse !in seenToday
+    ): Boolean = if (fresh > 0) now >= freshDueAt(seenAt(seen)) && dueDay <= today else dueDay <= today && span.none { it in seenToday }
 }
 
 /**
@@ -382,13 +410,13 @@ fun HifzPoint.told(kind: HifzKind, other: QuranVerseReference?, slipWords: Set<I
     val told = same?.copy(
         // A look-alike said again: as it is told this time, in its course or at its ending.
         kind = kind,
-        // A skip names no other verse, where it went not mattering; a look-alike kept unless named again.
-        other = if (kind == HifzKind.Skip) null else other ?: same.other,
+        // A skip or a passage names no other verse, where it went not mattering; a look-alike kept unless named again.
+        other = if (!kind.namesOther) null else other ?: same.other,
         // The words chosen now, which the sheet starts from the earlier ones; none chosen keeps those.
         slipWords = slipWords.ifEmpty { same.slipWords },
         bothWays = bothWays || same.bothWays,
         at = at,
-    ) ?: HifzMistake(kind, other.takeIf { kind != HifzKind.Skip }, slipWords, bothWays, at)
+    ) ?: HifzMistake(kind, other.takeIf { kind.namesOther }, slipWords, bothWays, at)
     val index = mistakes.indexOf(same)
     return copy(mistakes = if (index < 0) mistakes + told else mistakes.toMutableList().apply { set(index, told) })
 }
@@ -581,7 +609,7 @@ fun List<HifzPoint>.dueToday(today: Long, now: Long, limit: Int = Int.MAX_VALUE)
 fun List<HifzPoint>.reviewBatch(today: Long, now: Long, limit: Int, first: HifzPoint? = null): List<HifzPoint> {
     if (limit <= 0) return emptyList()
     val answered = { point: HifzPoint -> maxOf(point.lastSlipAt, point.checks.lastOrNull()?.at ?: Long.MIN_VALUE) }
-    val sees = { a: HifzPoint, b: HifzPoint -> a.id != b.id && a.shows(b.verse) }
+    val sees = { a: HifzPoint, b: HifzPoint -> a.id != b.id && a.showsAnswerOf(b) }
     val chosen = mutableListOf<HifzPoint>().apply { first?.let(::add) }
     val ranked = dueToday(today, now).filterNot { it.id == first?.id || (first != null && sees(first, it)) }
     val candidates = (listOfNotNull(first) + ranked)
@@ -660,7 +688,7 @@ internal fun List<HifzPoint>.answerSafeOrder(): List<HifzPoint> {
     // Worked out once: a list may be the whole notebook.
     val shown = associate { point -> point.id to point.answerVerses() }
     fun sees(a: HifzPoint, b: HifzPoint) = a.id != b.id &&
-        (b.verse in shown.getValue(a.id) || (b.verse.surah == a.verse.surah && b.verse.ayah == a.verse.ayah - 1))
+        b.span.any { it in shown.getValue(a.id) || (it.surah == a.verse.surah && it.ayah == a.verse.ayah - 1) }
     /** The points [from] shows, and those they show in turn, among those left. */
     fun reach(from: HifzPoint): Set<Long> {
         val found = mutableSetOf<Long>()
@@ -694,7 +722,7 @@ internal fun List<HifzPoint>.answerSafeOrder(): List<HifzPoint> {
  */
 fun List<HifzPoint>.reviewSitting(today: Long, now: Long, lead: List<HifzPoint> = emptyList()): List<HifzPoint> {
     val leadIds = lead.mapTo(HashSet()) { it.id }
-    val rest = filter { point -> point.id !in leadIds && lead.none { it.shows(point.verse) } }
+    val rest = filter { point -> point.id !in leadIds && lead.none { it.showsAnswerOf(point) } }
     val asked = rest.reviewBatch(today, now, rest.size).mapTo(HashSet()) { it.id }
     return lead + rest.dueToday(today, now).filter { it.id in asked }.chunked(HifzBatchSize)
         .flatMap { group -> group.sortedWith(compareBy<HifzPoint>({ it.verse }, { it.id })) }
@@ -710,7 +738,7 @@ internal fun List<HifzPoint>.prerequisitesFirst(): List<HifzPoint> {
     // Worked out once: a review may hold every point of the notebook.
     val shown = associate { point -> point.id to point.answerVerses() }
     fun sees(a: HifzPoint, b: HifzPoint) = a.id != b.id &&
-        (b.verse in shown.getValue(a.id) || (b.verse.surah == a.verse.surah && b.verse.ayah == a.verse.ayah - 1))
+        b.span.any { it in shown.getValue(a.id) || (it.surah == a.verse.surah && it.ayah == a.verse.ayah - 1) }
     val placed = mutableSetOf<Long>()
     val reached = mutableSetOf<Long>()
     val order = mutableListOf<HifzPoint>()
@@ -729,17 +757,30 @@ internal fun List<HifzPoint>.prerequisitesFirst(): List<HifzPoint> {
  * or a skipped verse, the verse before it too, which it is linked to.
  */
 internal fun HifzPoint.answerVerses(): Set<QuranVerseReference> = buildSet {
-    add(verse)
+    addAll(span)
     addAll(lookAlikes)
-    if ((atStart || skipped) && verse.ayah > 1) add(QuranVerseReference(verse.surah, verse.ayah - 1))
+    if (linked && verse.ayah > 1) add(QuranVerseReference(verse.surah, verse.ayah - 1))
 }
 
 /** A verse a point's question shows, the end of the verse before it, or its answer ([answerVerses]). */
 internal fun HifzPoint.shows(other: QuranVerseReference): Boolean =
     other in answerVerses() || (other.surah == verse.surah && other.ayah == verse.ayah - 1)
 
-/** The point of [verse], whatever went wrong in it; null for a verse not in the notebook. */
-fun List<HifzPoint>.pointOf(verse: QuranVerseReference): HifzPoint? = firstOrNull { it.verse == verse }
+/** Its question or answer shows [other]'s answer: one of the verses [other] asks. */
+internal fun HifzPoint.showsAnswerOf(other: HifzPoint): Boolean = other.span.any { shows(it) }
+
+/**
+ * The point of [verse] alone, whatever went wrong in it; null for a verse not in the notebook. A forgotten passage
+ * starting there is a point of its own ([passageOf]).
+ */
+fun List<HifzPoint>.pointOf(verse: QuranVerseReference): HifzPoint? = firstOrNull { it.verse == verse && !it.passage }
+
+/** The forgotten passage from [start] to [last], told again when the same passage is forgotten again. */
+fun List<HifzPoint>.passageOf(start: QuranVerseReference, last: Int): HifzPoint? =
+    firstOrNull { it.passage && it.verse == start && it.last == last }
+
+/** Every point that asks [verse]: its own, and the passages it is in. */
+fun List<HifzPoint>.pointsAsking(verse: QuranVerseReference): List<HifzPoint> = filter { it.asks(verse) }
 
 /** A reminder: [time] of the prayer day [day], an epoch day, coming at [at] in wall-clock milliseconds. */
 data class HifzSlot(val day: Long, val time: HifzWhen, val at: Long)
@@ -789,11 +830,11 @@ fun List<HifzPoint>.nextReminder(
     val fresh = filter { it.fresh > 0 }.mapNotNull {
         // Once a day: not before its day, nor on a day a reminder already asked it.
         val from = if (it.daily) maxOf(it.dueDay, dailyAsked[it.id]?.plus(1) ?: Long.MIN_VALUE) else it.dueDay
-        (it.times ?: times).firstAfter(maxOf(after, it.freshDueAt(seen[it.verse]) - 1), from, zone, slotAt)
+        (it.times ?: times).firstAfter(maxOf(after, it.freshDueAt(it.seenAt(seen)) - 1), from, zone, slotAt)
     }
     val checksDay = filter { it.fresh == 0 }.minOfOrNull {
         maxOf(
-            if (it.verse in seenToday && it.dueDay <= today) today + 1 else it.dueDay,
+            if (it.span.any { v -> v in seenToday } && it.dueDay <= today) today + 1 else it.dueDay,
             checksAsked[it.id]?.plus(1) ?: Long.MIN_VALUE,
             remindedDay + 1,
         )
@@ -902,17 +943,36 @@ object HifzRepository {
 
     private fun recordedPoint(
         points: List<HifzPoint>, verse: QuranVerseReference, kind: HifzKind, other: QuranVerseReference?,
-        slipWords: Set<Int>, bothWays: Boolean, now: Long, plan: HifzPlan?,
+        slipWords: Set<Int>, bothWays: Boolean, now: Long, plan: HifzPlan?, last: Int? = null,
     ): HifzPoint {
         val today = epochDay(now)
-        val existing = points.pointOf(verse)
+        val existing = if (last != null) points.passageOf(verse, last) else points.pointOf(verse)
         return existing?.told(kind, other, slipWords, bothWays, now)
             ?.relapsed(today, now, askedToday = existing.checks.any { it.day == today }, plan = plan)
             ?: HifzPoint(
-                id = now, verse = verse, mistakes = listOf(HifzMistake(kind, other.takeIf { kind != HifzKind.Skip }, slipWords, bothWays, now)),
+                // Its own id, even beside a point recorded in the same millisecond.
+                id = generateSequence(now) { it + 1 }.first { id -> points.none { it.id == id } },
+                verse = verse, mistakes = listOf(HifzMistake(kind, other.takeIf { kind.namesOther }, slipWords, bothWays, now)),
                 dueDay = today, createdAt = now, pace = plan?.pace ?: HifzPace.Auto, times = plan?.times,
-                oncePerDay = plan?.oncePerDay ?: false, recentSlipTimes = listOf(now),
+                oncePerDay = plan?.oncePerDay ?: false, recentSlipTimes = listOf(now), last = last,
             ).let { it.copy(fresh = it.recalls) }
+    }
+
+    /**
+     * Records a forgotten passage, from [start] to [last] of its surah: one point, asked as one. The same passage
+     * forgotten again counts again; a verse's own point inside it stays as it is (owner, 12 November: never merged).
+     */
+    fun recordPassageWithUndo(
+        context: Context,
+        start: QuranVerseReference,
+        last: Int,
+        now: Long = System.currentTimeMillis(),
+        plan: HifzPlan? = null,
+    ): HifzRecordChange = change(context) { points ->
+        require(last > start.ayah) { "A passage is two verses or more" }
+        val original = points.passageOf(start, last)
+        val saved = recordedPoint(points, start, HifzKind.Passage, null, emptySet(), false, now, plan, last)
+        (points.filterNot { it.id == saved.id } + saved) to HifzRecordChange(listOf(original), listOf(saved))
     }
 
     fun update(context: Context, point: HifzPoint) {
@@ -1025,6 +1085,7 @@ internal fun encodeHifzPoints(points: List<HifzPoint>): String = JSONObject()
             .put("id", point.id)
             .put("surah", point.verse.surah)
             .put("ayah", point.verse.ayah)
+            .apply { point.last?.let { put("last", it) } }
             .put("mistakes", JSONArray(point.mistakes.map { mistake ->
                 JSONObject()
                     .put("kind", mistake.kind.key)
@@ -1096,6 +1157,7 @@ internal fun decodeHifzPoints(value: String): List<HifzPoint> {
             recentSlipTimes = row.optJSONArray("recentSlipTimes")?.let { list ->
                 List(list.length()) { list.getLong(it) }.distinct().sorted().takeLast(HifzRecentSlipLimit)
             }.orEmpty(),
+            last = row.optInt("last").takeIf { it > verse.ayah },
         ).let { if (oldPlan) it.withCurrentLearningPlan() else it }
     }
 }

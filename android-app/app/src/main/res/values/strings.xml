@@ -15,11 +15,12 @@
     <string name="phone_status_permission_short">إذن عدم الإزعاج مطلوب</string>
     <string name="phone_status_silent_auto_prayer">الإسكات مفعل لصلاة %1$s</string>
     <string name="phone_status_silent_auto">الإسكات مفعل لوقت الصلاة</string>
-    <string name="phone_status_silent_manual">الإسكات اليدوي مفعل</string>
+    <string name="phone_status_silent_manual">الإسكات اليدوي مفعّل</string>
     <string name="phone_status_silent_manual_until_time">الإسكات اليدوي حتى %1$s</string>
     <string name="phone_status_silent_manual_until_prayer">الإسكات اليدوي حتى صلاة %1$s</string>
     <string name="phone_status_silent_wake_alarm">الإسكات مفعل حتى منبه الاستيقاظ</string>
-    <string name="phone_status_silent_external">الهاتف صامت من إعدادات الهاتف</string>
+    <string name="phone_status_silent_external">الهاتف في الوضع الصامت</string>
+    <string name="phone_status_dnd_active">وضع عدم الإزعاج مفعّل</string>
     <string name="btn_silence">تفعيل الإسكات 🔇</string>
     <string name="btn_silence_for_duration">تفعيل الإسكات لمدة %1$s 🔇</string>
     <string name="btn_silence_until_prayer">تفعيل الإسكات حتى %1$s 🔇</string>
@@ -640,6 +641,57 @@
         <item quantity="other">⁦%d⁩ يوم</item>
     </plurals>
     <string name="silence_year_fit_keep_note">إن أبقيت هذا الإعداد، نؤخّر نهاية الإسكات في تلك الأيام بما لا يتجاوز 30 دقيقة. وإذا لم يكفِ ذلك، نعتمد الفاصل بين النهاية والأذان كما كان يوم حفظ الإعداد، إن كان محفوظًا.</string>
+    <!-- The common case, said in the user's own times: the start follows the adhan and the end is a clock time (%2$s), or the reverse. -->
+    <plurals name="silence_year_fit_in_days">
+        <item quantity="zero">في ⁦%d⁩ يوم</item>
+        <item quantity="one">في يوم واحد</item>
+        <item quantity="two">في يومين</item>
+        <item quantity="few">في ⁦%d⁩ أيام</item>
+        <item quantity="many">في ⁦%d⁩ يومًا</item>
+        <item quantity="other">في ⁦%d⁩ يوم</item>
+    </plurals>
+    <string name="silence_year_fit_start_at_adhan">يبدأ الإسكات مع الأذان، وينتهي دائمًا عند الساعة %1$s.</string>
+    <plurals name="silence_year_fit_start_after_adhan">
+        <item quantity="one">يبدأ الإسكات بعد الأذان بدقيقة واحدة، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="two">يبدأ الإسكات بعد الأذان بدقيقتين، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="few">يبدأ الإسكات بعد الأذان بـ⁦%1$d⁩ دقائق، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="many">يبدأ الإسكات بعد الأذان بـ⁦%1$d⁩ دقيقة، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="other">يبدأ الإسكات بعد الأذان بـ⁦%1$d⁩ دقيقة، وينتهي دائمًا عند الساعة %2$s.</item>
+    </plurals>
+    <plurals name="silence_year_fit_start_before_adhan">
+        <item quantity="one">يبدأ الإسكات قبل الأذان بدقيقة واحدة، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="two">يبدأ الإسكات قبل الأذان بدقيقتين، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="few">يبدأ الإسكات قبل الأذان بـ⁦%1$d⁩ دقائق، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="many">يبدأ الإسكات قبل الأذان بـ⁦%1$d⁩ دقيقة، وينتهي دائمًا عند الساعة %2$s.</item>
+        <item quantity="other">يبدأ الإسكات قبل الأذان بـ⁦%1$d⁩ دقيقة، وينتهي دائمًا عند الساعة %2$s.</item>
+    </plurals>
+    <!-- %2$s is silence_year_fit_in_days, %3$s the first of those days. -->
+    <string name="silence_year_fit_start_reaches_end">لكنّ وقت الأذان يتغيّر، فيبدأ الإسكات عند الساعة %1$s أو بعدها %2$s من السنة القادمة، أوّلها %3$s.</string>
+    <!-- The saved offset from the adhan (> 0) is the quantity; %2$s is the end moved 30 minutes later. -->
+    <plurals name="silence_year_fit_keep_capped">
+        <item quantity="one">إن أبقيت هذا التوقيت، نؤخّر نهاية الإسكات في تلك الأيام إلى الساعة %2$s، وإن لم يكفِ ذلك فينتهي بعد الأذان بدقيقة واحدة.</item>
+        <item quantity="two">إن أبقيت هذا التوقيت، نؤخّر نهاية الإسكات في تلك الأيام إلى الساعة %2$s، وإن لم يكفِ ذلك فينتهي بعد الأذان بدقيقتين.</item>
+        <item quantity="few">إن أبقيت هذا التوقيت، نؤخّر نهاية الإسكات في تلك الأيام إلى الساعة %2$s، وإن لم يكفِ ذلك فينتهي بعد الأذان بـ⁦%1$d⁩ دقائق.</item>
+        <item quantity="many">إن أبقيت هذا التوقيت، نؤخّر نهاية الإسكات في تلك الأيام إلى الساعة %2$s، وإن لم يكفِ ذلك فينتهي بعد الأذان بـ⁦%1$d⁩ دقيقة.</item>
+        <item quantity="other">إن أبقيت هذا التوقيت، نؤخّر نهاية الإسكات في تلك الأيام إلى الساعة %2$s، وإن لم يكفِ ذلك فينتهي بعد الأذان بـ⁦%1$d⁩ دقيقة.</item>
+    </plurals>
+    <string name="silence_year_fit_end_at_adhan">يبدأ الإسكات دائمًا عند الساعة %1$s، وينتهي مع الأذان.</string>
+    <plurals name="silence_year_fit_end_after_adhan">
+        <item quantity="one">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي بعد الأذان بدقيقة واحدة.</item>
+        <item quantity="two">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي بعد الأذان بدقيقتين.</item>
+        <item quantity="few">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي بعد الأذان بـ⁦%1$d⁩ دقائق.</item>
+        <item quantity="many">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي بعد الأذان بـ⁦%1$d⁩ دقيقة.</item>
+        <item quantity="other">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي بعد الأذان بـ⁦%1$d⁩ دقيقة.</item>
+    </plurals>
+    <plurals name="silence_year_fit_end_before_adhan">
+        <item quantity="one">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي قبل الأذان بدقيقة واحدة.</item>
+        <item quantity="two">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي قبل الأذان بدقيقتين.</item>
+        <item quantity="few">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي قبل الأذان بـ⁦%1$d⁩ دقائق.</item>
+        <item quantity="many">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي قبل الأذان بـ⁦%1$d⁩ دقيقة.</item>
+        <item quantity="other">يبدأ الإسكات دائمًا عند الساعة %2$s، وينتهي قبل الأذان بـ⁦%1$d⁩ دقيقة.</item>
+    </plurals>
+    <string name="silence_year_fit_end_reaches_start">لكنّ وقت الأذان يتغيّر، فينتهي الإسكات عند الساعة %1$s أو قبلها %2$s من السنة القادمة، أوّلها %3$s.</string>
+    <string name="silence_year_fit_keep_no_silence">إن أبقيت هذا التوقيت، لا نُسكت الهاتف في تلك الأيام.</string>
     <string name="silence_year_fit_use_adhan_end_at">نهاية مع الأذان</string>
     <plurals name="silence_year_fit_use_adhan_end_before">
         <item quantity="one">نهاية قبل الأذان بدقيقة واحدة</item>
@@ -655,7 +707,7 @@
         <item quantity="many">نهاية بعد الأذان بـ⁦%d⁩ دقيقة</item>
         <item quantity="other">نهاية بعد الأذان بـ⁦%d⁩ دقيقة</item>
     </plurals>
-    <string name="silence_year_fit_use_fixed_end">نهاية ثابتة على الساعة %1$s</string>
+    <string name="silence_year_fit_use_fixed_end">نهاية ثابتة عند الساعة %1$s</string>
     <string name="silence_year_fit_keep">الإبقاء على اختياري</string>
     <!-- The first run's location step and its provisional place (plan 6.8). -->
     <string name="onboarding_location_title">أين تصلّي؟</string>

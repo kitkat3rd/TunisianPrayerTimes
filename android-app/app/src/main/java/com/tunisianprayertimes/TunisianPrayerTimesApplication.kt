@@ -26,6 +26,7 @@ class TunisianPrayerTimesApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     // SharedPreferences keeps listeners weakly; retain the subscription for the process lifetime.
     private var dhikrLocationSubscription: (() -> Unit)? = null
+    private var launcherShortcutsSubscription: (() -> Unit)? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -34,6 +35,7 @@ class TunisianPrayerTimesApplication : Application() {
         SharedAndroid.init(this)
         // Cleanup only: a process start never acquires mosque location or revives stored presence.
         SilenceCoordinator.recover(this)
+        launcherShortcutsSubscription = LauncherShortcuts.observe(this)
         AnalyticsTracker.applyRegionalCollection(this)
         SilenceController.init(this)
         TimerScheduler.init(this)

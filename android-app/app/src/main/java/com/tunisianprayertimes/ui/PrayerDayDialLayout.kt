@@ -541,7 +541,7 @@ internal const val DIAL_FINAL_THIRD = "الثلث الأخير"
 internal const val DIAL_FAJR_TIME = "وقت الفجر"
 
 /** The drawn part of a leader line from [marker] to [box]: off the marker dot, ending at the box's edge. */
-internal fun leaderEnds(marker: Offset, box: Rect): Pair<Offset, Offset>? {
+internal fun leaderEnds(marker: Offset, box: Rect, markerRadius: Float = MARKER_RADIUS): Pair<Offset, Offset>? {
     val dx = box.center.x - marker.x
     val dy = box.center.y - marker.y
     val length = hypot(dx, dy)
@@ -552,7 +552,7 @@ internal fun leaderEnds(marker: Offset, box: Rect): Pair<Offset, Offset>? {
     val toEdgeX = if (abs(ux) > 1e-4f) (box.width / 2f) / abs(ux) else Float.POSITIVE_INFINITY
     val toEdgeY = if (abs(uy) > 1e-4f) (box.height / 2f) / abs(uy) else Float.POSITIVE_INFINITY
     val endDistance = length - minOf(toEdgeX, toEdgeY) - 2f
-    val startDistance = MARKER_RADIUS + 2f
+    val startDistance = markerRadius + 2f
     if (endDistance <= startDistance) return null
     return Offset(marker.x + ux * startDistance, marker.y + uy * startDistance) to
         Offset(marker.x + ux * endDistance, marker.y + uy * endDistance)
@@ -573,7 +573,7 @@ private fun fitAlarmDots(
     nonAlarmMarkerCenters: List<Offset>,
 ): List<AlarmDot> {
     if (data.timelineAlarms.isEmpty()) return emptyList()
-    val minMarkerSpacing = MARKER_RADIUS * 2f + 3.2f
+    val minMarkerSpacing = DIAL_ALARM_RADIUS * 2f + 2f
     // Non-alarm markers are ordering barriers: alarms on either side of a prayer or event stay on their side.
     fun gapIndex(angleDegrees: Float): Int = barrierAngles.count { barrier -> barrier < angleDegrees }
 
@@ -610,7 +610,7 @@ private fun fitAlarmDots(
         }
     }
 
-    val markerMinGap = MARKER_RADIUS + 5.2f + 2f
+    val markerMinGap = DIAL_ALARM_RADIUS + MARKER_RADIUS + 2f
     val markerMinAngleGap = markerMinGap / radius * (180f / PI.toFloat())
     val alarmMinAngleGap = minMarkerSpacing / radius * (180f / PI.toFloat())
     fun gapBounds(gapIndex: Int): Pair<Float, Float> {
@@ -697,8 +697,8 @@ private class AlarmDot(
     val nudged: Boolean,
 )
 
-/** An alarm dot with its halo (cluster or nudged dots get a ring of 6.9 dp), and some air. */
-private const val ALARM_DOT_REACH = 8.4f
+/** The full clock silhouette and some air, kept clear of text and neighbouring drawings. */
+private const val ALARM_DOT_REACH = DIAL_ALARM_RADIUS + 0.5f
 
 /** The alarms' times, once every other text is placed. */
 private fun placeAlarmLabels(
@@ -770,11 +770,11 @@ private fun placeAlarmLabels(
                 for (shift in LIST_SHIFTS) {
                     val items = ordered.mapIndexed { position, index ->
                         val alongCenter = packed[position] - drift + shift
-                        val acrossCenter = (if (besideEach) ringAcross(alongCenter) else edge) + sign * (MARKER_RADIUS + 4f + thickness / 2f + away)
+                        val acrossCenter = (if (besideEach) ringAcross(alongCenter) else edge) + sign * (DIAL_ALARM_RADIUS + 4f + thickness / 2f + away)
                         box(if (stacked) Offset(acrossCenter, alongCenter) else Offset(alongCenter, acrossCenter), dots[index].size)
                     }
                     if (items.any { !space.fits(it, side) || !space.clear(it) }) continue
-                    val lines = ordered.mapIndexed { position, index -> leaderEnds(dots[index].marker, items[position]) }
+                    val lines = ordered.mapIndexed { position, index -> leaderEnds(dots[index].marker, items[position], DIAL_ALARM_RADIUS) }
                     // A list is for times beside their dots: one that ends up far away gives way to a range.
                     if (lines.any { line -> line != null && hypot(line.second.x - line.first.x, line.second.y - line.first.y) > LIST_MAX_LINE }) continue
                     if (!linesClear(lines, items)) continue
@@ -814,7 +814,7 @@ private fun placeAlarmLabels(
                 val labelBox = box(labelCenter, size)
                 if (!space.fits(labelBox, RingSide.Either) || !space.clear(labelBox)) continue
                 // The line stops at the time's edge, never inside its digits.
-                val leader = leaderEnds(dot.marker, labelBox)
+                val leader = leaderEnds(dot.marker, labelBox, DIAL_ALARM_RADIUS)
                 if (leader != null && !space.segmentClear(leader.first, leader.second, ignoring = labelBox)) continue
                 return labelBox to leader
             }

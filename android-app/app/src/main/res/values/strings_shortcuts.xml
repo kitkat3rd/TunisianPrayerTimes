@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_silence">إسكات الهاتف</string>
+    <string name="shortcut_unsilence">إيقاف الإسكات</string>
+    <string name="shortcut_silence_30">إسكات لمدة 30 دقيقة</string>
+    <string name="shortcut_silence_reset_30">ضبط الإسكات على 30 دقيقة</string>
+    <string name="shortcut_review">مراجعة اليوم</string>
+    <string name="shortcut_review_long">ابدأ مراجعة اليوم</string>
+    <string name="shortcut_silence_30_confirmed">تم ضبط الإسكات لمدة 30 دقيقة من الآن 🔇</string>
+    <string name="shortcut_silence_already_off">الإسكات متوقف بالفعل</string>
+    <string name="shortcut_silence_failed">تعذّر تغيير وضع الإسكات. افتح التطبيق للتحقّق من الإعدادات.</string>
+</resources>

@@ -68,9 +68,9 @@ class WakeAlarmQueueTest {
     }
 
     @Test
-    fun `incoming replacing no-challenge current returns BECAME_CURRENT`() {
+    fun `incoming behind no-challenge current returns QUEUED`() {
         queue.handleIncoming(payload("old", wakeUpCheckEnabled = false))
-        assertEquals(IncomingResult.BECAME_CURRENT, queue.handleIncoming(payload("new")))
+        assertEquals(IncomingResult.QUEUED, queue.handleIncoming(payload("new")))
     }
 
     @Test
@@ -148,19 +148,32 @@ class WakeAlarmQueueTest {
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `incoming replaces current when current has no challenge`() {
+    fun `incoming waits for dismissal when current has no challenge`() {
         queue.handleIncoming(payload("old", wakeUpCheckEnabled = false))
         val newP = payload("new")
-        assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(newP))
-        assertEquals("new", queue.current?.eventId)
+        assertEquals(IncomingResult.QUEUED, queue.handleIncoming(newP))
+        assertEquals("old", queue.current?.eventId)
+        assertEquals(listOf("new"), queue.pendingEventIds())
+        assertTrue(queue.handleDismiss("old"))
+        assertEquals(newP, queue.current)
+    }
+
+    @Test
+    fun `duplicate current is rejected even without a challenge`() {
+        val original = payload("same", wakeUpCheckEnabled = false)
+        queue.handleIncoming(original)
+        assertEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("same")))
+        assertEquals(original, queue.current)
         assertEquals(0, queue.pendingCount)
     }
 
     @Test
-    fun `incoming replaces current even with same eventId when no challenge`() {
-        queue.handleIncoming(payload("same", wakeUpCheckEnabled = false))
-        assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("same")))
-        assertEquals("same", queue.current?.eventId)
+    fun `duplicate pending is rejected behind a no-challenge current`() {
+        queue.handleIncoming(payload("current", wakeUpCheckEnabled = false))
+        queue.handleIncoming(payload("pending", wakeUpCheckEnabled = false))
+        assertEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("pending")))
+        assertEquals("current", queue.current?.eventId)
+        assertEquals(listOf("pending"), queue.pendingEventIds())
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -377,24 +390,33 @@ class WakeAlarmQueueTest {
     // ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `no-challenge payload replaced by challenge payload`() {
+    fun `challenge payload waits behind no-challenge payload`() {
         queue.handleIncoming(payload("nocheck", wakeUpCheckEnabled = false))
-        assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("withcheck", wakeUpCheckEnabled = true)))
+        assertEquals(IncomingResult.QUEUED, queue.handleIncoming(payload("withcheck", wakeUpCheckEnabled = true)))
+        assertEquals("nocheck", queue.current?.eventId)
+        assertEquals(1, queue.pendingCount)
+        assertTrue(queue.handleDismiss("nocheck"))
         assertEquals("withcheck", queue.current?.eventId)
         assertEquals(0, queue.pendingCount)
     }
 
     @Test
-    fun `no-challenge current is always replaced regardless of eventId`() {
+    fun `mixed challenge settings preserve FIFO until each alarm is dismissed`() {
         queue.handleIncoming(payload("a", wakeUpCheckEnabled = false))
-        assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("b", wakeUpCheckEnabled = false)))
+        assertEquals(IncomingResult.QUEUED, queue.handleIncoming(payload("b", wakeUpCheckEnabled = false)))
+        assertEquals(IncomingResult.QUEUED, queue.handleIncoming(payload("c", wakeUpCheckEnabled = true)))
+        assertEquals("a", queue.current?.eventId)
+        assertEquals(listOf("b", "c"), queue.pendingEventIds())
+        assertTrue(queue.handleDismiss("a"))
         assertEquals("b", queue.current?.eventId)
-        assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("c")))
+        assertTrue(queue.handleDismiss("b"))
         assertEquals("c", queue.current?.eventId)
+        assertFalse(queue.handleDismiss("c"))
+        assertNull(queue.current)
     }
 
     @Test
-    fun `queued no-challenge alarm is replaced when it becomes current`() {
+    fun `promoted no-challenge alarm also keeps its place until dismissed`() {
         // Main has challenge, sub has no challenge
         val main = payload("main", wakeUpCheckEnabled = true)
         val sub = payload("sub", wakeUpCheckEnabled = false)
@@ -402,8 +424,10 @@ class WakeAlarmQueueTest {
         queue.handleIncoming(sub)
         queue.advance()
         assertEquals("sub", queue.current?.eventId)
-        // Since sub has no challenge, a new incoming should replace it
-        assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("new")))
+        assertEquals(IncomingResult.QUEUED, queue.handleIncoming(payload("new")))
+        assertEquals("sub", queue.current?.eventId)
+        assertEquals(listOf("new"), queue.pendingEventIds())
+        assertTrue(queue.handleDismiss("sub"))
         assertEquals("new", queue.current?.eventId)
     }
 
@@ -648,7 +672,7 @@ class WakeAlarmQueueTest {
         queue.advance()
         // sub1 is current with no challenge, queue empty
         queue.advance() // returns false, queue empty
-        // Now a completely new alarm arrives — sub1 has no challenge so it's replaced
+        // With the previous session fully dismissed, a new alarm can become current.
         assertNotEquals(IncomingResult.REJECTED_DUPLICATE, queue.handleIncoming(payload("new_main")))
         assertEquals("new_main", queue.current?.eventId)
         assertEquals(0, queue.pendingCount)

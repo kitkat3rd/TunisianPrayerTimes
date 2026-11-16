@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -92,8 +91,8 @@ internal fun MethodExplainerSheet(place: PrayerPlace.Coordinates, choice: Prayer
     }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
-            Modifier.fillMaxWidth().fillMaxHeight(0.92f).navigationBarsPadding().verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 8.dp).testTag("method_explainer"),
+            Modifier.fillMaxWidth().quranSheetHeight().navigationBarsPadding().testTag("method_explainer")
+                .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text("تفاصيل طريقة الحساب", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark)
@@ -141,7 +140,7 @@ internal fun MethodExplainerSheet(place: PrayerPlace.Coordinates, choice: Prayer
                 }
             }
             HorizontalDivider()
-            ParameterRow("المصدر", method.evidence.source)
+            ParameterRow("المصدر", MethodPresentation.source(method))
             // GeoNames' licence asks for credit where its data is shown: the place names and points abroad (CC BY 4.0).
             ParameterRow("أسماء الأماكن", "GeoNames (CC BY 4.0)، والأسماء العربية الناقصة من Wikidata (CC0)")
         }

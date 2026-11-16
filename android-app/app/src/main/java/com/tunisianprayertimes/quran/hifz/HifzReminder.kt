@@ -514,7 +514,7 @@ object HifzReminder {
         if (point.fresh > 0) {
             // Its answer is in view in its fix, as it is said: asked a while after; once a day, not before its day,
             // nor on a day a reminder already asked it.
-            val seen = if (answerShown) maxOf(now, learning.seen[point.verse] ?: now) else learning.seen[point.verse]
+            val seen = if (answerShown) maxOf(now, point.seenAt(learning.seen) ?: now) else point.seenAt(learning.seen)
             val until = untilPhrase(point.fresh)
             if (!settings.reminder) return "التذكير متوقّف: تجدها في «مراجعة اليوم» ${inReviewLabel(point.freshAskAt(seen), today)}، $until"
             val shared = point.times ?: settings.times
@@ -849,8 +849,9 @@ object HifzReminder {
         // The verses by surah, in order, as labels short enough to be read whole: «البقرة · الآيات 248، 250، 254؛ الملك ·
         // الآية 2 وموضعان آخران». What each asks is in the lines below, as the review asks it.
         val summary = due.groupBy { it.verse.surah }.entries.joinToString("؛ ") { (surah, points) ->
-            val ayahs = points.map { it.verse.ayah }.distinct().sorted()
-            name(surah) + (if (ayahs.size == 1) " · الآية " else " · الآيات ") + ayahs.joinToString("، ")
+            // A forgotten passage by its ends: «الملك · الآيات 2، 3 إلى 5».
+            val ayahs = points.sortedBy { it.verse }.map { if (it.passage) "${it.verse.ayah} إلى ${it.end.ayah}" else "${it.verse.ayah}" }.distinct()
+            name(surah) + (if (ayahs.size == 1 && points.none { it.passage }) " · الآية " else " · الآيات ") + ayahs.joinToString("، ")
         } + if (more > 0) " و" + otherPoints(more) else ""
         // Each line is the question the review asks, its surah named, one sentence: never the answer nor where the verse
         // slipped, which read here would be no check at all. Nor is there anything to listen to or to mark as known: the

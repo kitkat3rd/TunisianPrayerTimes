@@ -346,6 +346,17 @@ object QuranAudioController {
         send(context, QuranPlaybackService.ACTION_PREVIOUS)
     }
 
+    /** End only this drill pause, not the review question or a later repetition reached before the command arrives. */
+    fun skipDrillPause(context: Context) {
+        val current = state.value
+        if (current.drillPauseStep() == null) return
+        send(context, QuranPlaybackService.ACTION_SKIP_DRILL_PAUSE) {
+            putExtra(QuranPlaybackService.EXTRA_PLAYLIST, current.playlist?.encode())
+            putExtra(QuranPlaybackService.EXTRA_PLAYLIST_INDEX, current.playlistIndex)
+            putExtra(QuranPlaybackService.EXTRA_PLAYLIST_ROUND, current.playlistRound)
+        }
+    }
+
     /** Other reciters can be added with their own recordings and verified verse boundaries. */
     fun selectReciter(context: Context, reciterId: String) {
         if (reciters.none { it.id == reciterId }) return

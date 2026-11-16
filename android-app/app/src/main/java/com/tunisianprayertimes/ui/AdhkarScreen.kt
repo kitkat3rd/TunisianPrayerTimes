@@ -246,8 +246,10 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                     showEmptyReminderCollection()
                 } else {
                     showReminders = false
+                    val today = LocalDate.now()
                     openItems(items, collection,
-                        targetCountOverride = if (collection == null) rule.targetOn(LocalDate.now()) else null,
+                        targetCountOverride = if (collection != null) null
+                            else repo.state.value.raisedReadingGoal(rule, today) ?: rule.targetOn(today),
                         collectionReading = collection != null, sourceReminderId = rule.id)
                 }
             }
@@ -557,6 +559,23 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                                         scope.launch { snackbar.showSnackbar("تم تخطّي هذا التذكير. ستعود التذكيرات في موعدها القادم.") }
                                     }
                                 }
+                            }
+                        },
+                        onRaiseGoal = { goal, permanent ->
+                            val before = reminderId?.let { sourceId -> repo.state.value.reminders.firstOrNull { it.id == sourceId } }
+                            val day = session.occurrenceId?.let { repo.state.value.occurrences[it]?.date }
+                                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now()
+                            var raised = false
+                            mutate({ raised = before != null && repo.raiseGoal(id, before.id, goal, permanent) }) {
+                                // The counter shows a goal raised for the day; one set for good changed the reminder, so say so.
+                                val message = if (before == null || !raised) "تعذّر تغيير الهدف. حاول مرة أخرى." else when {
+                                    !permanent -> null
+                                    before.raisesFridayGoalOn(day) -> "أصبح هدف يوم الجمعة " + latinNumber(goal) + "."
+                                    (before.fridayGoal ?: Int.MAX_VALUE) < goal ->
+                                        "أصبح هدفك اليومي " + latinNumber(goal) + "، وهدف يوم الجمعة كذلك."
+                                    else -> "أصبح هدفك اليومي " + latinNumber(goal) + "."
+                                }
+                                message?.let { scope.launch { snackbar.showSnackbar(it) } }
                             }
                         }, snackbar = snackbar)
                 } }

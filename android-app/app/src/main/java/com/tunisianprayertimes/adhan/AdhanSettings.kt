@@ -1,8 +1,10 @@
 package com.tunisianprayertimes.adhan
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
+import java.time.LocalDate
 
 /**
  * Which prayers have their adhan played when their time comes, and in which voice. Each prayer is set on its own and
@@ -11,6 +13,8 @@ import com.tunisianprayertimes.R
  */
 object AdhanSettings {
     private const val PREFS = "adhan_settings"
+    private const val KEY_WARN_BEFORE = "warn_before"
+    private const val KEY_SKIPPED = "skipped_occurrences"
 
     /** The prayers of the settings, in the day's order. On a Friday Jumu'a stands in Dhuhr's place (A18). */
     val prayers: List<Prayer> = listOf(Prayer.FAJR, Prayer.DHUHR, Prayer.JOMOAA, Prayer.ASR, Prayer.MAGHRIB, Prayer.ISHA)
@@ -33,6 +37,14 @@ object AdhanSettings {
         AdhanScheduler.refreshLater(context)
     }
 
+    /** Updates every prayer together, including Jumu'a, without changing any saved voice. */
+    fun setAllEnabled(context: Context, enabled: Boolean) {
+        val editor = prefs(context).edit()
+        prayers.forEach { editor.putBoolean(enabledKey(it), enabled) }
+        editor.apply()
+        AdhanScheduler.refreshLater(context)
+    }
+
     /** The saved voice of [prayer], or its first one when none is saved or the saved one is not for it. */
     fun voice(context: Context, prayer: Prayer): AdhanVoice =
         prefs(context).getString(voiceKey(prayer), null)
@@ -46,6 +58,39 @@ object AdhanSettings {
     }
 
     fun voiceTitle(context: Context, voice: AdhanVoice): String = context.getString(voice.titleResId)
+
+    /**
+     * A countdown shortly before each enabled adhan, even when it will stay quiet. The warning vibrates only when
+     * the adhan will sound, so it can be cancelled first (owner's idea, 2026-11-15). On unless turned off.
+     */
+    fun warnsBefore(context: Context): Boolean = prefs(context).getBoolean(KEY_WARN_BEFORE, true)
+
+    fun setWarnsBefore(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_WARN_BEFORE, on).apply()
+        AdhanScheduler.refreshLater(context)
+    }
+
+    /** The user cancelled this one adhan from its warning; the prayer's switch stays on. */
+    fun skip(context: Context, prayer: Prayer, prayerDay: LocalDate) {
+        val kept = skipped(context).filter { key ->
+            // Older cancellations are of no use any more.
+            key.substringAfter('@').toLongOrNull()?.let { it >= prayerDay.toEpochDay() - 2 } == true
+        }
+        prefs(context).edit().putStringSet(KEY_SKIPPED, (kept + skipKey(prayer, prayerDay)).toSet()).apply()
+    }
+
+    fun isSkipped(context: Context, prayer: Prayer, prayerDay: LocalDate): Boolean = skipKey(prayer, prayerDay) in skipped(context)
+
+    private fun skipped(context: Context): Set<String> = prefs(context).getStringSet(KEY_SKIPPED, null).orEmpty()
+
+    /** The warning listens here, so «إلغاء هذا الأذان» in its notification ends it at once. */
+    fun registerListener(context: Context, listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        prefs(context).registerOnSharedPreferenceChangeListener(listener)
+
+    fun unregisterListener(context: Context, listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        prefs(context).unregisterOnSharedPreferenceChangeListener(listener)
+
+    private fun skipKey(prayer: Prayer, prayerDay: LocalDate) = "${prayer.name}@${prayerDay.toEpochDay()}"
 
     /** The line under «الأذان» in the prayer tab's settings: which prayers have it. */
     fun summary(context: Context): String {

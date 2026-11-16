@@ -172,6 +172,27 @@ class HifzReviewStateTest {
     }
 
     @Test
+    fun aPageSwipedToIsForetoldAsTheCardThenRestsOverIt() {
+        val queue = listOf(point(36), point(37))
+        // However the card is as a swipe starts, the page swiped to is laid out for the card as the turn then leaves it,
+        // so that the page never moves when the turn lands.
+        val setups: List<(HifzReviewState) -> Unit> = listOf(
+            {},
+            { it.toggleFold() },
+            { it.pageAway() },
+            { it.pageAway(); it.toggleFold() },
+            { answer(it, queue, HifzGrade.Held); shown(it, queue); it.requestEnd(queue, actions); assertTrue(it.stopping) },
+        )
+        for ((at, setup) in setups.withIndex()) for (versePage in listOf(true, false)) {
+            val state = opened(queue)
+            setup(state)
+            val foretold = state.foldedOn(versePage)
+            if (versePage) state.pageBack() else state.pageAway()
+            assertEquals("setup $at, verse page $versePage", foretold, state.folded)
+        }
+    }
+
+    @Test
     fun revealTwiceIsOnce() {
         val queue = listOf(point(36))
         val state = opened(queue)

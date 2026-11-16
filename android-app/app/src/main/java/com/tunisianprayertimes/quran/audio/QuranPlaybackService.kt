@@ -26,6 +26,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.widget.Toast
 import com.tunisianprayertimes.MainActivity
 import com.tunisianprayertimes.MainTabNavigation
 import com.tunisianprayertimes.R
@@ -70,6 +71,8 @@ class QuranPlaybackService : Service() {
     private var prepared = false
     private var seeking = false
     private var playWhenReady = false
+    /** Check once per listening session, not after every seek, repeated verse or chapter change. */
+    private var volumeReminderChecked = false
     private var resumeAfterFocusGain = false
     private var hasFocus = false
     private var focusRequested = false
@@ -197,8 +200,8 @@ class QuranPlaybackService : Service() {
                 override fun onPause() { if (reviewControls) autoReview.pauseAudio() else pausePlayback(userInitiated = true) }
                 override fun onStop() { if (reviewControls) autoReview.stop() else if (autoMode || carClients > 0) stopAuto() else stopPlayback() }
                 override fun onSeekTo(pos: Long) { cancelAutoSearch(); seek(pos) }
-                override fun onSkipToNext() { cancelAutoSearch(); if (reviewControls) autoReview.next() else if (autoReview.listeningOnly) adjacentVerse(true) else if (autoMode || carClients > 0) adjacentAuto(true) else adjacentVerse(true) }
-                override fun onSkipToPrevious() { cancelAutoSearch(); if (reviewControls) autoReview.previous() else if (autoReview.listeningOnly) adjacentVerse(false) else if (autoMode || carClients > 0) adjacentAuto(false) else adjacentVerse(false) }
+                override fun onSkipToNext() { cancelAutoSearch(); if (reviewControls) autoReview.next() else if (autoReview.listeningOnly || playlist != null) adjacentVerse(true) else if (autoMode || carClients > 0) adjacentAuto(true) else adjacentVerse(true) }
+                override fun onSkipToPrevious() { cancelAutoSearch(); if (reviewControls) autoReview.previous() else if (autoReview.listeningOnly || playlist != null) adjacentVerse(false) else if (autoMode || carClients > 0) adjacentAuto(false) else adjacentVerse(false) }
                 override fun onSkipToQueueItem(id: Long) {
                     if (reviewControls) return
                     autoQueue?.takeIf { id >= 0L && id < it.items.size.toLong() }?.let { playAutoQueue(it.copy(index = id.toInt())) }
@@ -636,7 +639,7 @@ class QuranPlaybackService : Service() {
                 finishedList = null
                 playlist = list
                 playlistIndex = intent.getIntExtra(EXTRA_PLAYLIST_INDEX, 0).coerceIn(0, list.items.lastIndex)
-                playlistRound = intent.getIntExtra(EXTRA_PLAYLIST_ROUND, 1).coerceIn(1, list.rounds)
+                playlistRound = list.roundWithin(intent.getIntExtra(EXTRA_PLAYLIST_ROUND, 1))
                 repeat = list.items[playlistIndex]
                 repeatRound = 1
                 val first = list.items[playlistIndex].from
@@ -658,8 +661,16 @@ class QuranPlaybackService : Service() {
             ACTION_STOP -> if (reviewControls) autoReview.stop() else if (autoMode) stopAuto() else stopPlayback()
             ACTION_SEEK -> seek(intent.getLongExtra(EXTRA_POSITION, 0L), quiet = intent.getBooleanExtra(EXTRA_QUIET, false) && playWhenReady)
             ACTION_SEEK_VERSE -> seekVerse(intent.getIntExtra(EXTRA_SURAH, 1), intent.getIntExtra(EXTRA_AYAH, 1))
-            ACTION_NEXT -> if (reviewControls) autoReview.next() else if (autoReview.listeningOnly) adjacentVerse(true) else if (autoMode) adjacentAuto(true) else adjacentVerse(true)
-            ACTION_PREVIOUS -> if (reviewControls) autoReview.previous() else if (autoReview.listeningOnly) adjacentVerse(false) else if (autoMode) adjacentAuto(false) else adjacentVerse(false)
+            ACTION_NEXT -> if (reviewControls) autoReview.next() else if (autoReview.listeningOnly || playlist != null) adjacentVerse(true) else if (autoMode) adjacentAuto(true) else adjacentVerse(true)
+            ACTION_PREVIOUS -> if (reviewControls) autoReview.previous() else if (autoReview.listeningOnly || playlist != null) adjacentVerse(false) else if (autoMode) adjacentAuto(false) else adjacentVerse(false)
+            ACTION_SKIP_DRILL_PAUSE -> {
+                val current = QuranAudioController.state.value
+                // A tap racing the timer, or delivered twice, must not skip the following passage or question.
+                if (gapUntil > 0L && current.drillPauseStep() != null &&
+                    playlist == QuranPlaylist.decode(intent.getStringExtra(EXTRA_PLAYLIST)) &&
+                    playlistIndex == intent.getIntExtra(EXTRA_PLAYLIST_INDEX, -1) &&
+                    playlistRound == intent.getIntExtra(EXTRA_PLAYLIST_ROUND, -1)) endGap()
+            }
             ACTION_RECITER -> intent.getStringExtra(EXTRA_RECITER)?.let { id ->
                 val current = QuranAudioController.state.value
                 current.surah?.let { surah -> load(id, surah, current.ayah, autoPlay = playWhenReady) }
@@ -701,6 +712,7 @@ class QuranPlaybackService : Service() {
         if (!autoPlay || !focusRequested) abandonFocus()
         recording = null
         pendingSeekMs = positionMs
+        if (!playWhenReady || !autoPlay) volumeReminderChecked = false
         playWhenReady = autoPlay
         if (!autoPlay) resumeAfterFocusGain = false
         publish(QuranPlaybackState(reciterId = reciterId, surah = surah, loading = true, positionMs = positionMs ?: 0L))
@@ -891,6 +903,7 @@ class QuranPlaybackService : Service() {
     }
 
     private fun resumePlayback() {
+        if (!playWhenReady) volumeReminderChecked = false
         if (player != null || loadJob?.isActive == true) {
             playWhenReady = true
             resumeAfterFocusGain = false
@@ -941,6 +954,14 @@ class QuranPlaybackService : Service() {
         }
         try {
             media.start()
+            // Silence and alarms were checked above: only the media volume needs the listener's attention now.
+            if (!volumeReminderChecked) {
+                volumeReminderChecked = true
+                if (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0 ||
+                    audioManager.isStreamMute(AudioManager.STREAM_MUSIC)) {
+                    Toast.makeText(this, R.string.quran_media_muted_reminder, Toast.LENGTH_LONG).show()
+                }
+            }
             finishedList = null
             finishedRange = null
             applySpeed(media)
@@ -1147,8 +1168,12 @@ class QuranPlaybackService : Service() {
     /** One pass over the repeated range ended, at its last verse's boundary or at the end of the file. */
     private fun finishRepeatPass() {
         playlist?.let { list ->
-            when (val step = list.after(playlistIndex, playlistRound)) {
-                is QuranPlaylistStep.Item -> playItem(step.index, step.round, quiet = playWhenReady)
+            when (val step = list.afterPass(playlistIndex, playlistRound, repeatRound)) {
+                // The same passage again, «اسمع كل موضع 3 مرات»: its recitations are counted as a repeat's passes.
+                is QuranPlaylistStep.Item -> if (step.pass > 1) repeat?.let { range ->
+                    repeatRound = step.pass
+                    seekRangeStart(range, quiet = playWhenReady)
+                } else playItem(step.index, step.round, quiet = playWhenReady)
                 QuranPlaylistStep.Finished -> {
                     // Over: back to the listener's own place, paused, «انتهى التدريب» said with it.
                     returnPlace?.let { back ->
@@ -1562,9 +1587,11 @@ class QuranPlaybackService : Service() {
             actions = actions or PlaybackState.ACTION_SEEK_TO
             if (car) {
                 actions = actions or PlaybackState.ACTION_REWIND
-                if (if (autoReview.listeningOnly) playlist?.let { playlistIndex < it.items.lastIndex } == true
+                // Points heard in turn, started in the car or on the phone, move from point to point there too.
+                val list = playlist
+                if (if (list != null) list.after(playlistIndex, playlistRound) is QuranPlaylistStep.Item
                     else autoQueue?.next() != null || autoQueue == null && current.surah < 114) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
-                if (if (autoReview.listeningOnly) playlistIndex > 0
+                if (if (list != null) playlistIndex > 0 || playlistRound > 1
                     else autoQueue?.previous() != null || autoQueue == null && current.surah > 1) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
                 if (autoQueue != null) actions = actions or PlaybackState.ACTION_SKIP_TO_QUEUE_ITEM
             } else actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
@@ -1618,7 +1645,7 @@ class QuranPlaybackService : Service() {
         val title = verse?.let { quranVerseLabel(surahNameOf(current.surah ?: 0), it) } ?: surahTitle(current.surah)
         val mediaId = current.surah?.let { QuranAutoBrowse.surahMediaId(current.reciterId, it) }
         val subtitle = current.error ?: if (autoQueueFinished) getString(R.string.quran_auto_queue_finished)
-            else quranStopReason(current) ?: repeatLine(current) ?: reciter?.name.orEmpty()
+            else quranStopReason(current) ?: repeatLine(current) ?: current.playlistProgress() ?: reciter?.name.orEmpty()
         session.setMetadata(MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, mediaId)
             // «الملك · الآية 8» and the repetition under the title, where the lock screen shows them.
@@ -1657,8 +1684,9 @@ class QuranPlaybackService : Service() {
         val current = QuranAudioController.state.value
         val reciter = QuranAudioController.reciters.firstOrNull { it.id == current.reciterId }
         val active = current.playing || (current.loading && playWhenReady)
-        val round = current.playlist?.let { list -> "${list.title} · ${current.playlistIndex + 1} من ${list.items.size}" }
-            ?: quranRepeatSentence(current, listening, ::surahNameOf, ::verseCountOf)
+        val round = current.playlistProgress() ?: quranRepeatSentence(current, listening, ::surahNameOf, ::verseCountOf)
+        // Points heard in turn move from point to point, from the earphones and the steering wheel too.
+        val points = current.playlist?.isPointListening == true
         val detail = listOfNotNull(reciter?.name, current.ayah?.let { "الآية $it" }, round).joinToString(" · ")
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tab_quran)
@@ -1683,13 +1711,15 @@ class QuranPlaybackService : Service() {
             .setShowWhen(false)
             .setOngoing(active)
             .setCategory(Notification.CATEGORY_TRANSPORT)
-            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous, if (autoMode) "السورة السابقة" else "الآية السابقة", actionIntent(ACTION_PREVIOUS)).build())
+            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous,
+                if (points) "الموضع السابق" else if (autoMode) "السورة السابقة" else "الآية السابقة", actionIntent(ACTION_PREVIOUS)).build())
             .addAction(Notification.Action.Builder(
                 if (active) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
                 if (active) "إيقاف مؤقّت" else "تشغيل",
                 actionIntent(if (active) ACTION_PAUSE else ACTION_RESUME),
             ).build())
-            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, if (autoMode) "السورة التالية" else "الآية التالية", actionIntent(ACTION_NEXT)).build())
+            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next,
+                if (points) "الموضع التالي" else if (autoMode) "السورة التالية" else "الآية التالية", actionIntent(ACTION_NEXT)).build())
             .addAction(Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "إيقاف الاستماع", actionIntent(ACTION_STOP)).build())
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
             .build()
@@ -1895,6 +1925,7 @@ class QuranPlaybackService : Service() {
         internal const val ACTION_SEEK_VERSE = "com.tunisianprayertimes.quran.SEEK_VERSE"
         internal const val ACTION_NEXT = "com.tunisianprayertimes.quran.NEXT"
         internal const val ACTION_PREVIOUS = "com.tunisianprayertimes.quran.PREVIOUS"
+        internal const val ACTION_SKIP_DRILL_PAUSE = "com.tunisianprayertimes.quran.SKIP_DRILL_PAUSE"
         internal const val ACTION_RECITER = "com.tunisianprayertimes.quran.RECITER"
         internal const val ACTION_REPEAT_OFF = "com.tunisianprayertimes.quran.REPEAT_OFF"
         internal const val ACTION_REPEAT_HERE = "com.tunisianprayertimes.quran.REPEAT_HERE"

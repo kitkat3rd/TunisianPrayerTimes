@@ -1,6 +1,13 @@
 package com.tunisianprayertimes.ui
 
 import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -47,6 +54,8 @@ import com.tunisianprayertimes.quran.quranAyah
 import com.tunisianprayertimes.quran.hifz.HifzFreshGapMs
 import com.tunisianprayertimes.quran.hifz.HifzGrade
 import com.tunisianprayertimes.quran.hifz.HifzKind
+import com.tunisianprayertimes.quran.hifz.hifzPassageLength
+import com.tunisianprayertimes.quran.hifz.showsAnswerOf
 import com.tunisianprayertimes.quran.hifz.HifzLookAlikes
 import com.tunisianprayertimes.quran.hifz.HifzMasteredStep
 import com.tunisianprayertimes.quran.hifz.HifzPoint
@@ -225,6 +234,8 @@ internal class HifzReviewState private constructor(
     private var exposedVerses by mutableStateOf(saved?.getOrNull(17)?.let { saved.versesAt(17) } ?: exposedVerses)
     private var attemptId by mutableStateOf(saved.longAt(18))
     private var attemptVerse by mutableStateOf(saved.versesAt(19).firstOrNull())
+    /** A passage's verses, any of which looked at helps the attempt; not saved: after a process death, [attemptVerse]. */
+    private var attemptSpan: Set<QuranVerseReference> = emptySet()
     /** When each verse's answer was last seen, shown or heard, by the wall clock. */
     private var seenAt by mutableStateOf(saved?.getOrNull(20)?.let { decodeSeenVerses(it) } ?: seenVerses)
     /** Points no longer asked in this review: their verse was looked at in it, so they wait for the next reminder. */
@@ -303,7 +314,7 @@ internal class HifzReviewState private constructor(
         // What the card in view and those kept after it show, as the review reaches each, revealed or not yet.
         val showing = listOfNotNull(queue.getOrNull(at)).toMutableList()
         return queue.filterIndexed { i, point ->
-            i <= at || (!spoiled(point) && showing.none { it.shows(point.verse) }).also { if (it) showing += point }
+            i <= at || (!spoiled(point) && showing.none { it.showsAnswerOf(point) }).also { if (it) showing += point }
         }
     }
 
@@ -327,6 +338,7 @@ internal class HifzReviewState private constructor(
         if (point == null || attemptId == point.id) return
         attemptId = point.id
         attemptVerse = point.verse
+        attemptSpan = point.span.toSet()
     }
 
     /**
@@ -334,7 +346,7 @@ internal class HifzReviewState private constructor(
      * seen is not over ([hifzWaitEnd]), a spaced check whose verse was seen today.
      */
     private fun spoiled(point: HifzPoint): Boolean =
-        if (point.fresh > 0) seenAt[point.verse]?.let { wallClock() < hifzWaitEnd(it) } == true else point.verse in exposedVerses
+        if (point.fresh > 0) point.seenAt(seenAt)?.let { wallClock() < hifzWaitEnd(it) } == true else point.span.any { it in exposedVerses }
 
     /** The card at [from] in [queue], or the first after it still to ask; those passed wait for the next reminder. */
     private fun moveTo(queue: List<HifzPoint>, from: Int) {
@@ -375,7 +387,9 @@ internal class HifzReviewState private constructor(
 
     fun noteExposed(verses: Set<QuranVerseReference>, actions: HifzReviewActions) {
         if (verses.isEmpty()) return
-        if (attemptVerse in verses && attemptId != null && revealedId != attemptId) assistedId = attemptId
+        // A passage's verses, any of them; restored after a process death, the verse it opens with.
+        val attempted = attemptSpan.ifEmpty { setOfNotNull(attemptVerse) }
+        if (attempted.any { it in verses } && attemptId != null && revealedId != attemptId) assistedId = attemptId
         val added = verses - exposedVerses
         exposedVerses = exposedVerses + verses
         // A time seen within a minute stays: the eraser's every move is no new write.
@@ -408,6 +422,12 @@ internal class HifzReviewState private constructor(
         if (foldedAway) unfold()
     }
 
+    /**
+     * Whether the card rests folded once the reader stands on a page: on the verse's page ([versePage]), as [pageBack]
+     * leaves it, or on another one, as [pageAway] leaves it. A page swiped to rests from the start where it will stay.
+     */
+    fun foldedOn(versePage: Boolean): Boolean = if (versePage) folded && !foldedAway else folded || !stopping
+
     private fun unfold() {
         folded = false
         foldedAway = false
@@ -433,14 +453,14 @@ internal class HifzReviewState private constructor(
         actions.leaveCard()
         revealedId = point.id
         unfold()
-        if (exposeAnswer) noteExposed(setOf(point.verse), actions)
+        if (exposeAnswer) noteExposed(point.span.toSet(), actions)
     }
 
     fun showHint(point: HifzPoint, actions: HifzReviewActions? = null) {
         if (inputBlocked) return
         hintId = point.id
         markAssisted(point)
-        if (actions != null) noteExposed(setOf(point.verse), actions)
+        if (actions != null) noteExposed(point.span.toSet(), actions)
     }
 
     /** Called only when help actually exposes an answer before «أظهر», never for ordinary reveal. */
@@ -558,6 +578,7 @@ internal fun HifzReviewSheet(
     nextFor: Map<Long, String> = emptyMap(),
     /** Other unanswered verses stay covered, even among the earlier context. */
     protectedVerses: Set<QuranVerseReference> = emptySet(),
+    sessionFeedback: @Composable () -> Unit = {},
 ) {
     val point = state.point(queue)
     state.shown(point, audio)
@@ -583,6 +604,7 @@ internal fun HifzReviewSheet(
         BoxWithConstraints(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp).testTag("hifz_review")) {
           Column(Modifier.fillMaxSize()) {
             HifzReviewTitle(state, queue, point, actions)
+            sessionFeedback()
             if (point == null || state.stopping) {
                 HifzReviewEnd(
                     // A short sheet (large text in landscape) keeps its room for the summary's buttons.
@@ -627,7 +649,11 @@ internal fun HifzReviewSheet(
                                 // The question above names the verse before: its text needs no label of its own.
                                 previous?.let { HifzReviewCueText(catalog, it) }
                                 Text(
-                                    if (previous == null) "أول آية في السورة مغطاة." else "الآية التي بعدها مغطاة.",
+                                    when {
+                                        point.passage -> "الآيات التي بعدها مغطاة."
+                                        previous == null -> "أول آية في السورة مغطاة."
+                                        else -> "الآية التي بعدها مغطاة."
+                                    },
                                     fontSize = 12.sp, color = QuranHifzViolet,
                                 )
                                 HifzAnswerSlot()
@@ -637,9 +663,9 @@ internal fun HifzReviewSheet(
                     // One representation of the question: the covered mushaf; text is solely the accessibility or
                     // missing-image fallback, never a duplicate below the image.
                     if (!talkBack) QuranVerseExcerpt(
-                        catalog, point.verse, "${hifzVerseAbout(catalog, point.verse)} مغطاة في المصحف",
+                        catalog, point.verse, "${hifzPointAbout(catalog, point)} مغطاة في المصحف",
                         linesBefore = if (previous != null) 1 else 0, cover = true,
-                        showPrevious = true, protectedVerses = protectedVerses, fallback = inText,
+                        showPrevious = true, protectedVerses = protectedVerses, last = point.last, fallback = inText,
                     )
                     if (talkBack) inText()
                     HifzReviewHint(state, point, actions)
@@ -707,6 +733,7 @@ internal fun HifzReviewCard(
     nextFor: Map<Long, String> = emptyMap(),
     /** Other unanswered verses stay covered, even among the earlier context. */
     protectedVerses: Set<QuranVerseReference> = emptySet(),
+    sessionFeedback: @Composable () -> Unit = {},
 ) {
     val point = state.point(queue)
     state.shown(point, audio)
@@ -735,13 +762,14 @@ internal fun HifzReviewCard(
                     )
                 }
             }
-            if (state.folded) return@Column
+            Column(Modifier.padding(end = 10.dp)) { sessionFeedback() }
+            HifzCardFold(state.folded) {
             if (point == null || state.stopping) {
                 HifzReviewEnd(
                     state, catalog, queue, due, nextCheckIn, actions, Modifier.padding(end = 10.dp, top = 4.dp, bottom = 6.dp), day, nextFresh,
                     freshAgain, tomorrow, nextCheckLabel, nextFor,
                 )
-                return@Column
+                return@HifzCardFold
             }
             val fixes = remember(point, lookAlikes) { hifzFixes(catalog, point, lookAlikes) }
             val revealed = fixes.isNotEmpty() && state.revealed(point)
@@ -762,7 +790,7 @@ internal fun HifzReviewCard(
                         val previous = QuranVerseReference(point.verse.surah, point.verse.ayah - 1)
                         QuranVerseExcerpt(
                             catalog, previous, "الآية السابقة، ${hifzVerseAbout(catalog, previous)}",
-                            showPrevious = true, protectedVerses = protectedVerses,
+                            mark = QuranExcerptMark.None, showPrevious = true, protectedVerses = protectedVerses,
                             fallback = { HifzReviewCueText(catalog, previous, fontSize = 18.sp) },
                         )
                     }
@@ -794,13 +822,14 @@ internal fun HifzReviewCard(
             if (fixes.isNotEmpty() && !revealed) Column(Modifier.padding(end = 10.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 HifzReviewControls(state, catalog, queue, point, audio, audioControls, actions, compact = true, freshAgain = freshAgain, tomorrow = tomorrow, fixes = emptyList())
             }
+            }
         }
     }
     deleting?.let { shown ->
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("حذف هذا الموضع؟") },
-            text = { Text("تُحذف ${hifzVerseAbout(catalog, shown.verse)} من دفتر المراجعة، فلا نسألك عنها بعد الآن.") },
+            text = { Text("تُحذف ${hifzPointAbout(catalog, shown)} من دفتر المراجعة، فلا نسألك عنها بعد الآن.") },
             confirmButton = {
                 TextButton(onClick = { deleting = null; actions.delete(shown) }, modifier = Modifier.testTag("hifz_review_delete_confirm")) {
                     Text("احذف", color = MaterialTheme.colorScheme.error)
@@ -810,6 +839,23 @@ internal fun HifzReviewCard(
         )
     }
     if (state.howItWorks) HifzHowItWorksDialog { state.howItWorks = false }
+}
+
+/**
+ * A card on the page under its title: [folded], it slides down into its title, and opens again sliding up, at the pace
+ * the page moves for it (QuranCardMillis), never at once. What it shows takes the height left under the title.
+ */
+@Composable
+internal fun ColumnScope.HifzCardFold(folded: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    AnimatedVisibility(
+        visible = !folded,
+        modifier = Modifier.weight(1f, fill = false),
+        enter = expandVertically(tween(QuranCardMillis, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+            fadeIn(tween(QuranCardMillis)),
+        exit = shrinkVertically(tween(QuranCardMillis, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) +
+            fadeOut(tween(QuranCardMillis)),
+        label = "hifzCardFold",
+    ) { Column(content = content) }
 }
 
 /** A full preceding verse anchors recall even when a scan is missing or TalkBack uses text. */
@@ -878,9 +924,10 @@ internal fun HifzReviewHeading(
     catalog: QuranCatalog, point: HifzPoint, onPage: Boolean = false, surahShown: Boolean = onPage, revealed: Boolean,
     training: Boolean = false,
 ) {
+    Column {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (revealed) Text(
-            if (training) hifzVerseName(catalog, point.verse) else hifzPointTitle(catalog, point), Modifier.weight(1f, fill = false),
+            if (training) hifzPointName(catalog, point) else hifzPointTitle(catalog, point), Modifier.weight(1f, fill = false),
             fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark,
         ) else Text(
             if (surahShown) hifzQuestion(catalog, point) else hifzQuestionAbout(catalog, point),
@@ -890,6 +937,11 @@ internal fun HifzReviewHeading(
             Spacer(Modifier.width(8.dp))
             QuranHifzSquare(12.dp)
         }
+    }
+    // A forgotten passage: how much to recite, never its words (owner, 12 November).
+    if (!revealed) hifzPassageLength(point)?.let {
+        Text(it, fontSize = 13.sp, color = TextMuted, modifier = Modifier.testTag("hifz_review_passage_length"))
+    }
     }
 }
 
@@ -967,7 +1019,7 @@ internal fun HifzAnswerLine(fix: HifzFix) {
         HifzKind.Word -> "الصواب"
         HifzKind.Ending -> "خاتمتها"
         HifzKind.Similar -> fix.wordingLabel
-        HifzKind.Skip, HifzKind.Start -> "أولها"
+        HifzKind.Skip, HifzKind.Start, HifzKind.Passage -> "أولها"
     }
     val text = remember(fix) {
         buildAnnotatedString {
@@ -1065,7 +1117,7 @@ private fun ColumnScope.HifzReviewControls(
                 if (missed && wordsAdded) Text(
                     "أضفناها.", Modifier.align(Alignment.CenterVertically).testTag("hifz_review_words_added"),
                     fontSize = 12.sp, color = QuranHifzViolet,
-                ) else if (missed && !wordsOpen) TextButton(
+                ) else if (missed && !wordsOpen && !point.passage) TextButton(
                     onClick = { state.openWords(point) }, contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.testTag("hifz_review_new_words"),
                 ) { Text("أخطأت في كلمة أخرى؟", fontSize = 13.sp) }
                 HifzReviewNote(state, point, actions, editable = true)
@@ -1144,7 +1196,7 @@ internal fun hifzRoundLine(
     /** When the reminders ask this point next, from its own answer and its verse last seen; see [HifzReminder.nextAsk]. */
     own: String? = null,
 ): HifzRoundLine {
-    val name = hifzVerseName(catalog, point.verse)
+    val name = hifzPointName(catalog, point)
     // The answer the line is about: the last one, given today.
     val last = point.checks.lastOrNull()?.takeIf { it.day == today }
     val back = hifzWhen(point.dueDay - today)

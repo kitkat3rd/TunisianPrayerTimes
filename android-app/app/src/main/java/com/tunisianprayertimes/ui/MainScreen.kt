@@ -218,6 +218,7 @@ import com.tunisianprayertimes.formatArabicMinutes
 import com.tunisianprayertimes.wake.PrayerWakeRepository
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import com.tunisianprayertimes.wake.AwakeCheckService
+import com.tunisianprayertimes.wake.WakeMotivationCard
 import java.time.LocalDate
 import java.time.LocalTime
 import java.util.Date
@@ -510,6 +511,7 @@ fun MainScreen(
     // The hero and manual card share a pending action, so their writes cannot overlap.
     var silenceActionPending by remember { mutableStateOf(false) }
     var phoneSilenced by remember { mutableStateOf(SilenceStatus.isPhoneSilenced(context)) }
+    var phoneDndActive by remember { mutableStateOf(SilenceStatus.isDoNotDisturbActive(context)) }
     var appControlledSilenceActive by remember { mutableStateOf(SilenceStatus.isAppControlledSilenceActive(context)) }
     var wakeSilenceUntilAlarmActive by remember { mutableStateOf(WakeAlarmScheduler.isSilenceUntilAlarmActive(context)) }
     var manualSilenceEndsAtMillis by remember {
@@ -521,6 +523,7 @@ fun MainScreen(
         autoSilenceActive = PrefsManager.isAutoSilenceActive(context)
         manualSilenceActive = PrefsManager.isManualSilenceActive(context)
         phoneSilenced = SilenceStatus.isPhoneSilenced(context)
+        phoneDndActive = SilenceStatus.isDoNotDisturbActive(context)
         appControlledSilenceActive = SilenceStatus.isAppControlledSilenceActive(context)
         wakeSilenceUntilAlarmActive = WakeAlarmScheduler.isSilenceUntilAlarmActive(context)
         manualSilenceEndsAtMillis = PrefsManager.getManualSilenceEndsAtMillis(context)
@@ -1110,7 +1113,8 @@ fun MainScreen(
                         TodayNextPrayerCard(
                             delegationId = delegationId,
                             selectedDate = prayerTableSelectedDate,
-                            isPhoneSilenced = phoneSilenced,
+                            isPhoneSilenced = phoneSilenced || phoneDndActive,
+                            doNotDisturbActive = phoneDndActive,
                             hasDnd = hasDnd,
                             autoSilenceActive = autoSilenceActive,
                             manualSilenceActive = manualSilenceActive,
@@ -1622,6 +1626,7 @@ private fun PhoneStatusNotice(
 
 @Composable
 private fun AwakeCheckBanner(onConfirm: () -> Unit) {
+    val motivation by AwakeCheckService.motivation.collectAsState()
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1661,6 +1666,12 @@ private fun AwakeCheckBanner(onConfirm: () -> Unit) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
+            }
+            motivation?.let { message ->
+                Spacer(Modifier.height(12.dp))
+                key(message.reviewId) {
+                    WakeMotivationCard(message, Modifier.fillMaxWidth().heightIn(max = 240.dp), compact = true)
+                }
             }
         }
     }
@@ -2254,6 +2265,7 @@ private fun TodayNextPrayerCard(
     delegationId: Int,
     selectedDate: Long,
     isPhoneSilenced: Boolean,
+    doNotDisturbActive: Boolean,
     hasDnd: Boolean,
     autoSilenceActive: Boolean,
     manualSilenceActive: Boolean,
@@ -2292,6 +2304,7 @@ private fun TodayNextPrayerCard(
     }
     val silenceReason = remember(
         isPhoneSilenced,
+        doNotDisturbActive,
         autoSilenceActive,
         activeAutoSilencePrayer,
         manualSilenceActive,
@@ -2312,6 +2325,7 @@ private fun TodayNextPrayerCard(
             wakeSilenceUntilAlarmActive = wakeSilenceUntilAlarmActive,
             currentTimeMillis = currentTimeMillis,
             combinedMode = com.tunisianprayertimes.mosque.MosqueSilenceSettings.combined(context),
+            doNotDisturbActive = doNotDisturbActive,
         )
     }
 
@@ -3682,7 +3696,7 @@ private fun WakeNextAlarmCountdown(text: String, color: Color, modifier: Modifie
 }
 
 @Composable
-private fun WakeNextAlarmDetails(
+internal fun WakeNextAlarmDetails(
     titleRes: Int,
     iconRes: Int,
     timeText: String,
@@ -3725,7 +3739,6 @@ private fun WakeNextAlarmDetails(
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = Color.White.copy(alpha = 0.9f),
-            maxLines = 2,
             modifier = Modifier.padding(start = alarmTextInset),
         )
         if (summaryText != null) {
@@ -3744,8 +3757,6 @@ private fun WakeNextAlarmDetails(
                     lineHeight = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = GreenPrimaryDark,
-                    maxLines = if (largeText) Int.MAX_VALUE else 3,
-                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 Icon(
@@ -4623,7 +4634,7 @@ private fun WakeSilenceConflictPrayerEditor(
 }
 
 @Composable
-private fun WakeAlarmRow(
+internal fun WakeAlarmRow(
     alarmName: String,
     wakeConfig: PrayerWakeConfig,
     // The occurrence on show, the same as the hero's: the one in progress, else the next one.

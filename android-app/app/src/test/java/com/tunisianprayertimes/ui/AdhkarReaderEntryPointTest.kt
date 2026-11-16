@@ -78,7 +78,7 @@ class AdhkarReaderEntryPointTest {
                         onHaptics = {}, onVariant = {}, reminder = reminder, reminderActionLabel = "إنشاء تذكير لهذا الذكر",
                         onReminder = {}, onConfigureReminder = { configuredReminders++ }, onDeleteReminder = {},
                         skipReminderLabel = if (reminder != null) "تخطّي تذكير اليوم" else null,
-                        onSkipReminder = {}, snackbar = remember { SnackbarHostState() })
+                        onSkipReminder = {}, onRaiseGoal = { _, _ -> }, snackbar = remember { SnackbarHostState() })
                 }
             }
         }

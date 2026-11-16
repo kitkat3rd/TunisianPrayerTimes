@@ -2,6 +2,7 @@
 <!-- The adhan at prayer times (adhan/). -->
 <resources>
     <string name="adhan_settings_title">الأذان</string>
+    <string name="adhan_all_prayers">كل الصلوات</string>
     <string name="adhan_summary_off">متوقف</string>
     <string name="adhan_summary_all">لكل الصلوات</string>
     <string name="adhan_jumua_hint">يُشغَّل يوم الجمعة في وقت الجمعة، بدل أذان الظهر.</string>
@@ -10,18 +11,20 @@
     <string name="adhan_voice_listen">استماع</string>
     <string name="adhan_voice_stop_listening">إيقاف الاستماع</string>
     <string name="adhan_close">إغلاق</string>
-    <!-- The Fajr recordings (AdhanVoice), offered for Fajr only. -->
-    <string name="adhan_voice_fajr_ali_mulla">أذان المسجد الحرام بصوت علي أحمد ملا</string>
-    <string name="adhan_voice_fajr_marwan_qassas">أذان المسجد النبوي بصوت محمد مروان قصاص</string>
-    <string name="adhan_voice_fajr_abdulmajeed_surayhi">أذان المسجد النبوي بصوت عبد المجيد السريحي</string>
+    <!-- Muezzin names for both groups of recordings (AdhanVoice). -->
+    <string name="adhan_voice_islam_sobhi">إسلام صبحي</string>
+    <string name="adhan_voice_omar_hisham_al_arabi">عمر هشام العربي</string>
+    <string name="adhan_voice_abdullah_al_zaili">عبد الله الزائلي</string>
+    <string name="adhan_voice_marwan_qassas">محمد مروان قصاص</string>
+    <string name="adhan_voice_nasser_al_qatami">ناصر القطامي</string>
+    <string name="adhan_voice_ali_mulla">علي أحمد ملا</string>
+    <string name="adhan_voice_abdulmajeed_surayhi">عبد المجيد السريحي</string>
 
     <string name="adhan_allow">السماح</string>
     <string name="adhan_exact_alarms_off">يحتاج الأذان إلى إذن التنبيهات الدقيقة ليُشغَّل في وقته.</string>
     <string name="adhan_notifications_off">الإشعارات متوقفة، فلن ترى زرّ إيقاف الأذان ولا إشعار دخول الوقت.</string>
-
-    <string name="adhan_note_quiet_phone">يُشغَّل الأذان بمستوى صوت الإشعارات. وإذا كان الهاتف صامتًا أو في وضع الاهتزاز أو «عدم الإزعاج»، أو كنت في مكالمة، فلا يُشغَّل، ويصلك إشعار صامت بدخول الوقت.</string>
-    <string name="adhan_note_silence">إذا كان الإسكات التلقائي يبدأ مع الأذان، فإنه يبدأ بعد انتهائه. وإذا بدأ قبله، أو كان الهاتف صامتًا لأنك في المسجد، فلا يُشغَّل الأذان.</string>
-    <string name="adhan_note_stop">لإيقاف الأذان، اضغط «إيقاف» في الإشعار أو أحد زرَّي الصوت.</string>
+    <string name="adhan_volume_zero">صوت الرنين الآن على الصفر، فلن يُسمع الأذان.</string>
+    <string name="adhan_set_volume">ضبط الصوت</string>
 
     <string name="adhan_notification_title">أذان %1$s</string>
     <string name="adhan_notification_text">حان وقت صلاة %1$s</string>
@@ -29,12 +32,24 @@
 
     <string name="adhan_quiet_title">حان وقت صلاة %1$s</string>
     <string name="adhan_quiet_silent_phone">لم يُشغَّل الأذان لأن الهاتف كان صامتًا.</string>
+    <string name="adhan_quiet_prayer_silence">لم يُشغَّل الأذان لأن إسكات الصلاة بدأ.</string>
+    <string name="adhan_quiet_zero_volume">لم يُشغَّل الأذان لأن صوت الرنين في هاتفك على الصفر.</string>
     <string name="adhan_quiet_in_call">لم يُشغَّل الأذان لأنك كنت في مكالمة.</string>
+    <string name="adhan_quiet_alarm_ringing">لم يُشغَّل الأذان لأن منبّهًا كان يرنّ.</string>
     <string name="adhan_quiet_late">لم يُشغَّل الأذان لأنه تأخّر عن وقته.</string>
     <string name="adhan_quiet_failed">تعذّر تشغيل الأذان.</string>
 
     <string name="adhan_channel_playing">الأذان</string>
-    <string name="adhan_channel_playing_description">يظهر أثناء الأذان، وفيه زرّ إيقافه.</string>
+    <string name="adhan_channel_playing_description">تنبيه الأذان بملء الشاشة، حتى حين يكون صامتًا.</string>
+    <string name="adhan_warn_before">تنبيه قبل الأذان</string>
+    <string name="adhan_full_screen_off">يحتاج تنبيه الأذان إلى إذن العرض بملء الشاشة.</string>
+    <string name="adhan_soon_title">أذان %1$s بعد لحظات</string>
+    <string name="adhan_soon_text">لإلغائه، اضغط أحد زرَّي الصوت أو «إلغاء هذا الأذان».</string>
+    <string name="adhan_soon_cancel">إلغاء هذا الأذان</string>
+    <string name="adhan_channel_soon">قبل الأذان</string>
+    <string name="adhan_channel_soon_description">اهتزاز وإشعار قبل الأذان بلحظات، فيه زرّ إلغائه.</string>
+    <string name="adhan_quiet_cancelled">ألغيتَ هذا الأذان.</string>
+
     <string name="adhan_channel_quiet">دخول الوقت دون أذان</string>
     <string name="adhan_channel_quiet_description">إشعار صامت بدخول وقت الصلاة حين لا يُشغَّل الأذان.</string>
 </resources>

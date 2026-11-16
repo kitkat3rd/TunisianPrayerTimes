@@ -6,10 +6,10 @@ import android.util.Log
 private const val TAG = "WakeFlow"
 
 enum class IncomingResult {
-    /** Payload became the new current (queue was empty / current had no challenge). */
+    /** Payload became the new current because the queue was empty. */
     BECAME_CURRENT,
 
-    /** Payload was added to the pending queue behind an active challenge. */
+    /** Payload was added to the pending queue behind an active alarm. */
     QUEUED,
 
     /** Payload was rejected because its eventId duplicates current or a queued payload. */
@@ -122,14 +122,13 @@ class WakeAlarmQueue {
     /**
      * Handle an incoming payload.
      *
-     * - If there is no current payload or the current has no active challenge,
-     *   the incoming payload replaces the current one immediately.
-     * - If a challenge IS active, the incoming payload is queued — unless its
-     *   eventId already matches the current or any queued payload (dedup).
+     * - If there is no current payload, the incoming payload starts immediately.
+     * - Otherwise it waits until the current alarm is dismissed, with or without a challenge.
+     * - An eventId matching the current or any queued payload is rejected (dedup).
      */
     fun handleIncoming(payload: WakeTriggerPayload): IncomingResult {
         val cur = current
-        val result = if (cur == null || !cur.wakeUpCheckEnabled) {
+        val result = if (cur == null) {
             current = payload
             IncomingResult.BECAME_CURRENT
         } else if (cur.eventId == payload.eventId) {

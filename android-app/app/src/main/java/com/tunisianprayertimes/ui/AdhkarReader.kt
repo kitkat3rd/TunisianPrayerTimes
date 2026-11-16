@@ -87,6 +87,7 @@ import kotlin.math.sign
     reminder: DhikrReminder?, reminderActionLabel: String, onReminder: () -> Unit,
     onConfigureReminder: () -> Unit, onDeleteReminder: () -> Unit,
     skipReminderLabel: String?, onSkipReminder: () -> Unit,
+    onRaiseGoal: (goal: Int, permanent: Boolean) -> Unit,
     snackbar: SnackbarHostState,
 ) {
     val p = LocalAdhkarPalette.current
@@ -110,6 +111,17 @@ import kotlin.math.sign
     var showExplanation by remember(session.itemId) { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
+    var raisingGoal by rememberSaveable(session.id) { mutableStateOf(false) }
+    // A single dhikr's reminder goal reached while its day still counts can be raised, for the day or
+    // for good: within the reminder's period, or in a reading of it opened outside (its own goal).
+    val canRaiseGoal = reminder != null && reminder.collection == null && reminder.dhikrId == entry.id &&
+        session.category == null && session.itemIds.size == 1 && entry.steps.isEmpty() && open && complete &&
+        target < 100_000 && (if (session.occurrenceId != null) session.targetCountOverride == null
+            else session.targetCountOverride != null)
+    val goalDate = occurrence?.date?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+        ?: java.time.LocalDate.now()
+    // Not left pending: a goal that becomes raisable again later must not reopen the sheet by itself.
+    LaunchedEffect(canRaiseGoal) { if (!canRaiseGoal) raisingGoal = false }
     val lifecycle = LocalLifecycleOwner.current
     val view = LocalView.current
     val swipeDragPx = with(LocalDensity.current) { 72.dp.toPx() }
@@ -154,11 +166,12 @@ import kotlin.math.sign
     val sessionDone = session.itemIds.count { it in session.skippedIds || (session.counts[it] ?: 0) >= state.target(session, it) }
     // The closing card thanks the reader once, when their own count or skip completes the reading with
     // at least one dhikr read: a list only skipped through earns nothing yet, a reading already earned
-    // when it opens says nothing, nor does one undone and completed again.
+    // when it opens says nothing, nor does one undone and completed again. A raised goal is a new one:
+    // reaching it earns the card again.
     val closing = closingKind(session, fromReminder = reminder != null)
     val closingEarned = state.isComplete(session) &&
         session.itemIds.any { (session.counts[it] ?: 0) >= state.target(session, it) }
-    var closingDue by rememberSaveable(session.id) { mutableStateOf(!closingEarned) }
+    var closingDue by rememberSaveable(session.id, target) { mutableStateOf(!closingEarned) }
     var closingCard by rememberSaveable(session.id) { mutableStateOf(false) }
     LaunchedEffect(session.id, closingEarned) {
         if (!closingEarned || !closingDue) return@LaunchedEffect
@@ -394,8 +407,18 @@ import kotlin.math.sign
                             size = 52, onClick = { if (!swipe.moving) onCount(-1) }, tag = "adhkar_undo")
                     }
 
-                    // Navigation is free and circular; the thin bar tracks session completion.
-                    Row(Modifier.fillMaxWidth().padding(top = 14.dp, start = 12.dp, end = 12.dp),
+                    // Navigation is free and circular; the thin bar tracks session completion. A single dhikr has
+                    // nowhere to go: once its reminder's goal is reached, the same row quietly offers to raise it,
+                    // so the counter above never moves under a counting finger.
+                    if (canRaiseGoal) Row(Modifier.fillMaxWidth().padding(top = 14.dp, start = 12.dp, end = 12.dp),
+                        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { raisingGoal = true },
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("adhkar_raise_goal")) {
+                            DhikrIcon(R.drawable.ic_adhkar_plus, tint = p.primary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("زيادة الهدف", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    } else Row(Modifier.fillMaxWidth().padding(top = 14.dp, start = 12.dp, end = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { if (!swipe.moving) onMove(-1) }, enabled = canNavigate,
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
@@ -473,6 +496,10 @@ import kotlin.math.sign
                 Text("إزالة", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
             } },
             dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("إلغاء") } })
+        // Closes by itself when the goal can no longer be raised: the period ended, or the reading changed.
+        if (raisingGoal && canRaiseGoal) DhikrGoalRaiseSheet(target, fridayGoal = reminder?.raisesFridayGoalOn(goalDate) == true,
+            onRaise = { goal, permanent -> raisingGoal = false; onRaiseGoal(goal, permanent) },
+            onDismiss = { raisingGoal = false })
         if (closingCard && closing != null) DhikrClosingCard(closing,
             readingTitle = reminder?.let { reminderTitle(it, state) }?.ifBlank { null } ?: entry.title,
             onDone = { closingCard = false; onDismiss() }, onStay = { closingCard = false })
