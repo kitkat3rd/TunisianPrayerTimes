@@ -42,11 +42,11 @@ class HifzStrategyTest {
             lastSlipAt = now - 31 * dayMs,
         )
 
-        assertEquals(5, longAgo.autoRecallsAfterSlip(now))
+        assertEquals(HifzFreshRecalls, longAgo.autoRecallsAfterSlip(now))
         val relapsed = longAgo.relapsed(today, now, askedToday = false)
         assertEquals(21, relapsed.slips)
-        assertEquals(5, relapsed.autoRecalls)
-        assertEquals(5, relapsed.fresh)
+        assertEquals(HifzFreshRecalls, relapsed.autoRecalls)
+        assertEquals(HifzFreshRecalls, relapsed.fresh)
         assertEquals(now, relapsed.lastSlipAt)
         assertTrue(now in relapsed.recentSlipTimes)
     }
@@ -56,9 +56,11 @@ class HifzStrategyTest {
         val firstRecent = point().copy(recentSlipTimes = listOf(now - 2 * dayMs))
         val repeatedRecently = firstRecent.copy(recentSlipTimes = listOf(now - 2 * dayMs, now - dayMs))
 
-        assertEquals(7, firstRecent.autoRecallsAfterSlip(now))
-        assertEquals(9, repeatedRecently.autoRecallsAfterSlip(now))
-        assertEquals(5, repeatedRecently.autoRecallsAfterSlip(now + 31 * dayMs))
+        assertEquals(4, firstRecent.autoRecallsAfterSlip(now))
+        assertEquals(HifzMaxRecalls, repeatedRecently.autoRecallsAfterSlip(now))
+        assertEquals(HifzFreshRecalls, repeatedRecently.autoRecallsAfterSlip(now + 31 * dayMs))
+        // Slips on one calendar day count once (D3).
+        assertEquals(4, firstRecent.copy(recentSlipTimes = listOf(now - 2 * dayMs, now - 2 * dayMs + 60_000L)).autoRecallsAfterSlip(now))
     }
 
     @Test
@@ -71,7 +73,7 @@ class HifzStrategyTest {
             checks = listOf(HifzCheck(today - 30, HifzGrade.Held, now - 30 * dayMs)),
         )
 
-        assertEquals(5, active.autoRecallsAfterSlip(now))
+        assertEquals(HifzFreshRecalls, active.autoRecallsAfterSlip(now))
         assertEquals(5, active.autoRecalls)
         assertEquals(4, active.fresh)
         assertEquals(active, active.withPlan(HifzPlan(HifzPace.Auto, null, oncePerDay = false), today))
@@ -87,17 +89,17 @@ class HifzStrategyTest {
             lastSlipAt = now - 2 * dayMs,
         )
 
-        assertEquals(9, recovered.autoRecallsAfterSlip(now))
+        assertEquals(HifzMaxRecalls, recovered.autoRecallsAfterSlip(now))
         val relapsed = recovered.relapsed(today, now, askedToday = false)
-        assertEquals(9, relapsed.fresh)
-        assertEquals(9, relapsed.autoRecalls)
+        assertEquals(HifzMaxRecalls, relapsed.fresh)
+        assertEquals(HifzMaxRecalls, relapsed.autoRecalls)
         assertFalse(relapsed.mastered)
         assertNull(relapsed.masteredAt)
     }
 
     @Test
     fun explicitRecallPace_survivesARecordedSlipAndAFailedReview() {
-        listOf(HifzPace.Light to 1, HifzPace.Intense to 9).forEach { (pace, expected) ->
+        listOf(HifzPace.Light to 1, HifzPace.Intense to HifzMaxRecalls).forEach { (pace, expected) ->
             val original = point().copy(pace = pace, recentSlipTimes = listOf(now - dayMs))
             val recorded = original.relapsed(today, now, askedToday = false)
             val failedReview = original.graded(HifzGrade.Again, today, now)
@@ -111,35 +113,7 @@ class HifzStrategyTest {
     }
 
     @Test
-    fun dailyLimit_isIndependentOfWhetherTheVerseOwnsItsReminderTimes() {
-        val answered = point().copy(checks = listOf(HifzCheck(today, HifzGrade.Held, now - 60_000L)))
-        val sharedDaily = answered.withPlan(HifzPlan(HifzPace.Auto, null, oncePerDay = true), today)
-        val privateRepeatable = answered.copy(id = 2_028L, verse = QuranVerseReference(2, 28)).withPlan(
-            HifzPlan(HifzPace.Auto, HifzTimes(minutes = setOf(600)), oncePerDay = false), today,
-        )
-
-        assertNull(sharedDaily.times)
-        assertTrue(sharedDaily.daily)
-        assertEquals(today + 1, sharedDaily.dueDay)
-        assertFalse(privateRepeatable.daily)
-        assertEquals(today, privateRepeatable.dueDay)
-        assertEquals(HifzTimes(minutes = setOf(600)), privateRepeatable.times)
-        assertEquals(listOf(sharedDaily, privateRepeatable), decodeHifzPoints(encodeHifzPoints(listOf(sharedDaily, privateRepeatable))))
-    }
-
-    @Test
-    fun aNewSlip_keepsTheExplicitDailyLimitAndSharedSchedule() {
-        val sharedDaily = point().copy(times = null, oncePerDay = true, pace = HifzPace.Light)
-        val changed = sharedDaily.relapsed(today, now, askedToday = true)
-
-        assertTrue(changed.daily)
-        assertNull(changed.times)
-        assertEquals(today + 1, changed.dueDay)
-        assertEquals(HifzPace.Light, changed.pace)
-    }
-
-    @Test
-    fun notebookRoundTrip_preservesRecentFailuresAndAnExplicitFalseDailyLimit() {
+    fun notebookRoundTrip_preservesRecentFailures() {
         val original = point().copy(
             times = HifzTimes(setOf(Prayer.FAJR)),
             oncePerDay = false,
@@ -148,11 +122,10 @@ class HifzStrategyTest {
         val restored = decodeHifzPoints(encodeHifzPoints(listOf(original))).single()
 
         assertEquals(original, restored)
-        assertFalse(restored.daily)
     }
 
     @Test
-    fun legacyNotebook_derivesDailyLimitFromItsPrivateTimesWithoutInventingHistory() {
+    fun legacyNotebook_readsWithoutInventingHistory() {
         val oldPoints = listOf(
             point(18).copy(times = HifzTimes(setOf(Prayer.FAJR))),
             point(28).copy(times = HifzTimes(setOf(Prayer.FAJR, Prayer.ISHA))),
@@ -166,9 +139,6 @@ class HifzStrategyTest {
         }
         val restored = decodeHifzPoints(old.toString())
 
-        assertTrue(restored[0].daily)
-        assertFalse(restored[1].daily)
-        assertFalse(restored[2].daily)
         restored.forEach {
             assertNull(it.oncePerDay)
             assertTrue(it.recentSlipTimes.isEmpty())

@@ -53,17 +53,27 @@ import kotlinx.coroutines.flow.asStateFlow
  * the adhan sounds ([AdhanDecision]); if not, a quiet notice says the time has come and why there was no sound.
  *
  * The adhan sounds at the ring volume: the level the side keys set when nothing plays, whose zero is the phone's silent
- * or vibrate mode. At zero it does not start, and the quiet notice says so. It stops at its end, at «إيقاف» or a swipe
- * of its notification, at a volume key (screen on or off, through its media session), at a headset's button, when the
- * phone turns silent, vibrate or Do Not Disturb, when an alarm starts ringing, or when a call or another app takes
- * the audio. App silence always takes priority; playback never changes or postpones the silencer.
+ * or vibrate mode. At zero it does not start, and the quiet notice says so. While it sounds (owner, 2026-11-16), one
+ * press of volume down mutes it and it plays on unheard; volume up brings it back at the level it had, and then
+ * raises it as usual (screen on or off, through its media session). It stops at its end, at «إيقاف» or a swipe of its
+ * notification, at a headset's button, when the phone turns silent, vibrate or Do Not Disturb, when an alarm starts
+ * ringing, or when a call or another app takes the audio. App silence always takes priority; playback never changes
+ * or postpones the silencer.
  */
 class AdhanPlaybackService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
     private var current: AdhanScheduler.Occurrence? = null
     private var focusRequest: AudioFocusRequest? = null
+
+    /** The volumes while the adhan sounds: a key's step is measured against them. */
     private var volumes: List<Int>? = null
+
+    /** Volume down muted the adhan: it plays on, unheard, until volume up. */
+    private var muted = false
+
+    /** The volumes before and just after the key that muted it, so that key's step can be put back. */
+    private var muteStep: Pair<List<Int>, List<Int>>? = null
     private var stateReceiverRegistered = false
     private var volumeObserver: ContentObserver? = null
     private var playbackCallback: AudioManager.AudioPlaybackCallback? = null
@@ -100,6 +110,16 @@ class AdhanPlaybackService : Service() {
                 // The full-screen page's button or a volume key there: cancel during the warning, stop during the adhan.
                 val warned = warning
                 if (warned != null) cancelFromWarning(warned, confirm = false) else finish()
+            }
+            ACTION_MUTE -> {
+                // The page's volume keys while the adhan sounds; they move no volume themselves.
+                if (player == null) {
+                    if (current == null && warning == null) stopSelf(startId)
+                } else if (intent.getBooleanExtra(EXTRA_MUTED, true)) {
+                    setMuted(true)
+                } else {
+                    unmuteAtFormerLevel()
+                }
             }
             ACTION_PLAY -> {
                 val occurrence = intent.occurrence()
@@ -142,8 +162,8 @@ class AdhanPlaybackService : Service() {
     // ---- The warning ----
 
     /**
-     * The seconds before the adhan. An audible adhan's notification vibrates; then any volume key, screen on or off (through the
-     * media session), a headset's button or «إلغاء هذا الأذان» cancels this one adhan. A short double buzz confirms a
+     * The seconds before the adhan. Its notification vibrates, for a quiet adhan too; then any volume key, screen on or
+     * off (through the media session), a headset's button or «إلغاء هذا الأذان» cancels this one adhan. A short double buzz confirms a
      * key's cancellation, since the phone may still be in a pocket. The adhan's alarm ends the warning at its time.
      */
     private fun beginWarning(occurrence: AdhanScheduler.Occurrence, quietReasonResId: Int?) {
@@ -157,7 +177,7 @@ class AdhanPlaybackService : Service() {
             override fun onChange(selfChange: Boolean) {
                 if (warning == occurrence && currentVolumes() != before) {
                     Log.d(TAG, "Volume key during the warning: cancelling the adhan of $occurrence")
-                    restoreAdhanVolume(before)
+                    restoreVolumes(before)
                     cancelFromWarning(occurrence, confirm = true)
                 }
             }
@@ -203,33 +223,19 @@ class AdhanPlaybackService : Service() {
         if (warned != null) cancelFromWarning(warned, confirm = true) else finish()
     }
 
-    private fun confirmCancelled() {
-        runCatching {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                getSystemService(VibratorManager::class.java).defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Vibrator::class.java)
-            }
-            val effect = VibrationEffect.createWaveform(CANCELLED_VIBRATION, -1)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_NOTIFICATION))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build())
-            }
-        }.onFailure { Log.w(TAG, "Could not confirm the cancellation", it) }
-    }
+    private fun confirmCancelled() = vibrate(this, CANCELLED_VIBRATION)
 
     /**
-     * A key pressed to cancel or stop the adhan also moved the ring a step: put it back. A phone the key turned to
-     * vibrate or silent stays so, since that may be what the user wanted.
+     * A key pressed to cancel or mute the adhan also moved a volume a step (most often the ring): put each one back.
+     * A phone the key turned to vibrate or silent stays so, since that may be what the user wanted.
      */
-    private fun restoreAdhanVolume(before: List<Int>) {
-        val was = before.getOrNull(VOLUME_STREAMS.indexOf(ADHAN_STREAM)) ?: return
+    private fun restoreVolumes(before: List<Int>) {
         val audio = getSystemService(AudioManager::class.java)
-        val now = audio.getStreamVolume(ADHAN_STREAM)
-        if (was > 0 && now > 0 && now != was) runCatching { audio.setStreamVolume(ADHAN_STREAM, was, 0) }
+        VOLUME_STREAMS.forEachIndexed { index, stream ->
+            val was = before.getOrNull(index) ?: return@forEachIndexed
+            val now = audio.getStreamVolume(stream)
+            if (was > 0 && now > 0 && now != was) runCatching { audio.setStreamVolume(stream, was, 0) }
+        }
     }
 
     private fun begin(occurrence: AdhanScheduler.Occurrence) {
@@ -323,7 +329,11 @@ class AdhanPlaybackService : Service() {
         }
     }
 
-    /** A volume key, silent, vibrate or Do Not Disturb stops the adhan, as most adhan apps do. */
+    /**
+     * Silent, vibrate or Do Not Disturb stops the adhan. Volume down mutes it and volume up brings it back. Until
+     * 2026-11-16 any volume key stopped it. The owner: "can a single sound decrease just mute the sound without
+     * stopping the adhan such as increasing it again we have the sound again?"
+     */
     private fun watchForStop() {
         volumes = currentVolumes()
         ContextCompat.registerReceiver(
@@ -337,12 +347,21 @@ class AdhanPlaybackService : Service() {
         stateReceiverRegistered = true
         val observer = object : ContentObserver(main) {
             override fun onChange(selfChange: Boolean) {
-                // Every system setting reports here; only a changed volume counts.
+                // Every system setting reports here; only a changed volume counts. The four streams are watched
+                // because a phone may send the key to another one than the ring.
                 val before = volumes ?: return
-                if (currentVolumes() != before) {
-                    Log.d(TAG, "Volume changed: stopping the adhan")
-                    restoreAdhanVolume(before)
-                    finish()
+                val now = currentVolumes()
+                if (now == before) return
+                volumes = now
+                if (now.indices.any { now[it] < before[it] }) {
+                    // The key's step stays while muted, so the step up that brings the sound back works even at
+                    // full volume and returns to the same level.
+                    if (!muted) {
+                        setMuted(true)
+                        muteStep = before to now
+                    }
+                } else if (muted) {
+                    setMuted(false)
                 }
             }
         }
@@ -366,8 +385,8 @@ class AdhanPlaybackService : Service() {
     /**
      * With the screen off, Android sends the volume keys only to a playing media session (or to playing music), so
      * without one the keys did nothing to the adhan (OnePlus, 15 Nov 2026). This session plays at the adhan's own
-     * attributes: a key moves the ring volume, which [watchForStop] sees, and a headset's button stops it too. It
-     * posts no media notification, so no media controls show.
+     * attributes: a key moves the ring volume, which the warning and [watchForStop] see, and a headset's button stops
+     * it too. It posts no media notification, so no media controls show.
      */
     private fun openSession(): MediaSession? = runCatching {
         MediaSession(this, TAG).apply {
@@ -388,6 +407,26 @@ class AdhanPlaybackService : Service() {
             isActive = true
         }
     }.onFailure { Log.w(TAG, "Could not open the adhan's media session", it) }.getOrNull()
+
+    /** The player goes silent or loud again; it keeps its place, its audio focus and its page. */
+    private fun setMuted(on: Boolean) {
+        val playing = player ?: return
+        if (muted == on) return
+        val level = if (on) 0f else 1f
+        runCatching { playing.setVolume(level, level) }.onFailure { Log.w(TAG, "Could not change the adhan's mute", it) }
+        muted = on
+        if (!on) muteStep = null
+        Log.d(TAG, if (on) "Volume down: adhan muted" else "Volume up: adhan heard again")
+        val shown = alertState.value
+        if (shown != null && shown.occurrence == current) alertState.value = shown.copy(muted = on)
+    }
+
+    /** From the page, whose up key moves no volume: if a key outside the page muted it, its step is put back. */
+    private fun unmuteAtFormerLevel() {
+        val step = muteStep
+        setMuted(false)
+        if (step != null && currentVolumes() == step.second) restoreVolumes(step.first)
+    }
 
     private fun currentVolumes(): List<Int> {
         val audio = getSystemService(AudioManager::class.java)
@@ -434,6 +473,11 @@ class AdhanPlaybackService : Service() {
         }
         volumeObserver?.let { runCatching { contentResolver.unregisterContentObserver(it) } }
         volumeObserver = null
+        volumes = null
+        // An adhan that ends muted puts back the step of the key that muted it, unless the volume moved since.
+        muteStep?.let { (before, after) -> if (currentVolumes() == after) restoreVolumes(before) }
+        muteStep = null
+        muted = false
         playbackCallback?.let { callback ->
             runCatching { getSystemService(AudioManager::class.java).unregisterAudioPlaybackCallback(callback) }
         }
@@ -546,11 +590,25 @@ class AdhanPlaybackService : Service() {
         /** Null once the warning and its adhan are over: the page then closes. */
         internal val alert: StateFlow<AdhanAlert?> = alertState.asStateFlow()
 
-        /** The page's button or volume key: this adhan is cancelled before it sounds, or stopped while it sounds. */
+        /**
+         * The page's button, or a volume key there before the adhan: this adhan is cancelled before it sounds, or
+         * stopped while it sounds.
+         */
         internal fun cancelFromPage(context: Context) {
             runCatching { context.startService(Intent(context, AdhanPlaybackService::class.java).setAction(ACTION_CANCEL)) }
                 .onFailure { Log.w(TAG, "Could not cancel from the page", it) }
         }
+
+        /** The page's volume keys while the adhan sounds: down mutes it, up brings it back. */
+        internal fun muteFromPage(context: Context, muted: Boolean) {
+            runCatching {
+                context.startService(
+                    Intent(context, AdhanPlaybackService::class.java).setAction(ACTION_MUTE).putExtra(EXTRA_MUTED, muted),
+                )
+            }.onFailure { Log.w(TAG, "Could not change the mute from the page", it) }
+        }
+        private const val ACTION_MUTE = "com.tunisianprayertimes.adhan.ACTION_MUTE"
+        private const val EXTRA_MUTED = "muted"
         private const val ACTION_STOP = "com.tunisianprayertimes.adhan.ACTION_STOP"
         private const val CHANNEL_PLAYING = "adhan_playing"
         private const val CHANNEL_QUIET = "adhan_quiet"
@@ -567,6 +625,12 @@ class AdhanPlaybackService : Service() {
 
         /** Two short taps: the cancellation took. */
         private val CANCELLED_VIBRATION = longArrayOf(0L, 60L, 120L, 60L)
+
+        /** A small buzz before the app silences the phone (owner, 2026-11-16): two short pulses, under a second. */
+        private val BEFORE_SILENCE_VIBRATION = longArrayOf(0L, 300L, 200L, 300L)
+
+        /** The buzz's alarm may come this much early or the window may have moved by this much, and still buzz. */
+        private const val BEFORE_SILENCE_SLACK_MILLIS = 60_000L
         private const val QUIET_NOTIFICATION_ID_BASE = 740410
 
         private const val WAKE_LOCK_TIMEOUT_MILLIS = 10 * 60_000L
@@ -629,8 +693,11 @@ class AdhanPlaybackService : Service() {
         }
 
         /**
-         * Shortly before each enabled adhan, including one that will stay quiet. Only an audible adhan's warning
-         * vibrates; silence never hides the countdown. Off the main thread: the forecast reads the silence windows.
+         * Shortly before each enabled adhan, including one that will stay quiet. Every warning vibrates and opens the
+         * countdown: a quiet adhan is still the prayer's time, and the owner expected to feel it (2026-11-16, an Asr
+         * kept quiet by a silence starting with its adhan). Android keeps the warning still on a phone that is already
+         * silent or in Do Not Disturb, so a silence that has begun stays undisturbed. Off the main thread: the
+         * forecast reads the silence windows.
          */
         internal fun warnBeforeAdhan(context: Context, occurrence: AdhanScheduler.Occurrence) {
             val outcome = decide(context, occurrence, forecast = true)
@@ -660,7 +727,8 @@ class AdhanPlaybackService : Service() {
         }
 
         /**
-         * The warning's notification: it vibrates (its channel's pattern) and offers «إلغاء هذا الأذان». With [fullScreen]
+         * The warning's notification, audible adhan or quiet: it vibrates (its channel's pattern) and offers
+         * «إلغاء هذا الأذان»; a quiet one gives its reason. With [fullScreen]
          * (the service's own, which holds the page's state), a locked or dark phone shows the countdown page instead;
          * a phone in use shows the banner, as Android decides.
          */
@@ -673,7 +741,7 @@ class AdhanPlaybackService : Service() {
             createChannels(context)
             val prayerName = AdhanSettings.prayerName(context, occurrence.prayer)
             val text = context.getString(quietReasonResId ?: R.string.adhan_soon_text)
-            return NotificationCompat.Builder(context, if (quietReasonResId == null) CHANNEL_SOON else CHANNEL_PLAYING)
+            return NotificationCompat.Builder(context, CHANNEL_SOON)
                 .setSmallIcon(R.drawable.ic_adhkar_mosque)
                 .setContentTitle(context.getString(R.string.adhan_soon_title, prayerName))
                 .setContentText(text)
@@ -685,6 +753,45 @@ class AdhanPlaybackService : Service() {
                 .setContentIntent(if (fullScreen) AdhanAlertActivity.pendingIntent(context) else MainActivityPendingIntents.adhan(context))
                 .apply { if (fullScreen) setFullScreenIntent(AdhanAlertActivity.pendingIntent(context), true) }
                 .addAction(R.drawable.ic_stop, context.getString(R.string.adhan_soon_cancel), AdhanReceiver.skipIntent(context, occurrence))
+        }
+
+        /**
+         * A few seconds before the app's time silence begins, when that silence will keep this adhan's warning still:
+         * a short buzz first (owner, 2026-11-16: "vibrate before the app silences"). The windows are read again, so a
+         * silence dismissed, moved or begun since the alarm was armed gives no buzz. It vibrates as a notification
+         * does, so the phone's own silent mode, Do Not Disturb or notification-vibration setting still keeps it still.
+         */
+        internal fun buzzBeforeSilence(context: Context, occurrence: AdhanScheduler.Occurrence) {
+            if (!timeWindowsSilence(context)) return
+            val now = System.currentTimeMillis()
+            val start = AdhanScheduler.silenceStartBeforeWarning(
+                context, SilenceScheduler.planner(context), occurrence.atMillis - AdhanScheduler.WARNING_LEAD_MILLIS,
+            )
+            if (start == null || start <= now || start - now > AdhanScheduler.BEFORE_SILENCE_LEAD_MILLIS + BEFORE_SILENCE_SLACK_MILLIS) {
+                Log.d(TAG, "No silence about to begin before the warning of $occurrence: no buzz")
+                return
+            }
+            Log.d(TAG, "The silence begins before the warning of $occurrence: buzzing first")
+            vibrate(context, BEFORE_SILENCE_VIBRATION)
+        }
+
+        /** With the usage of a notification: Android applies the phone's silent mode, Do Not Disturb and settings. */
+        private fun vibrate(context: Context, pattern: LongArray) {
+            runCatching {
+                val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    context.getSystemService(VibratorManager::class.java).defaultVibrator
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.getSystemService(Vibrator::class.java)
+                }
+                val effect = VibrationEffect.createWaveform(pattern, -1)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_NOTIFICATION))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build())
+                }
+            }.onFailure { Log.w(TAG, "Could not vibrate", it) }
         }
 
         /** The fallback warning, if one was posted outside the service. */
@@ -823,4 +930,6 @@ internal data class AdhanAlert(
     val startedAtMillis: Long = 0L,
     val countingDown: Boolean = !sounding,
     val quietReasonResId: Int? = null,
+    /** Sounding but muted by volume down: the recording runs on, unheard. */
+    val muted: Boolean = false,
 )

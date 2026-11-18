@@ -23,11 +23,11 @@ for page in data['pages']:
    assert l<r and t<b,(identity,rect)
    assert t>=last_top,(identity,rect)
    last_top=t;rectangles+=1
-assert len(actual)==len(set(actual))==6215
+assert len(actual)==len(set(actual))==6217
 assert set(actual)==expected,{'missing':sorted(expected-set(actual)),'unexpected':sorted(set(actual)-expected)}
 verse_counts=Counter((s,a) for _,s,a in actual)
 assert len(verse_counts)==6214
-assert [(ref,count) for ref,count in verse_counts.items() if count>1]==[((20,86),2)]
+assert [(ref,count) for ref,count in verse_counts.items() if count>1]==[((20,86),2),((24,36),2),((24,42),2)]
 for page in data['pages']:
  assert 0 not in [v['ayah'] for v in page['verses']]
-print(json.dumps({'pages':603,'verses':6214,'fragments':6215,'rectangles':rectangles,'complete':True}))
+print(json.dumps({'pages':603,'verses':6214,'fragments':6217,'rectangles':rectangles,'complete':True}))

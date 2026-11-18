@@ -30,8 +30,51 @@ internal object HifzSessions {
         ?: HifzSessionCoordinator(context.applicationContext).also { instance = it }
 }
 
-internal enum class HifzSessionMode { None, Daily, Notebook }
-internal enum class HifzSessionPhase { Question, Assessment, Training, Finished }
+/** One review at a time, of one kind ([Review]), whatever its [HifzReviewOrigin]. */
+internal enum class HifzSessionMode { None, Review }
+/** Where the review's cards came from: the points due now («مراجعة اليوم»), or a list the reader chose in the notebook. */
+internal enum class HifzReviewOrigin { Daily, List }
+/** [Answered]: a card answered earlier in this review, come back to: shown read-only, nothing to grade again. */
+internal enum class HifzSessionPhase { Question, Assessment, Training, Answered, Finished }
+
+/** The same selection and linked questions are used for the notebook's preview and the list review it opens. */
+internal data class HifzListPlan(
+    val points: List<HifzPoint>,
+    val selectedCount: Int,
+) {
+    val addedDueCount: Int get() = points.size - selectedCount
+}
+
+/**
+ * A list review of [order]: a due point a card would show, left out of the list, comes in before that card, as a
+ * correction opened from the notebook would ask it first. [lead]: the first of [order] is the row the reader tapped,
+ * asked first whatever it shows (owner, 16 November: a tap gives that point's test); a due point only it would give
+ * away is not pulled in before it, except the tapped card: it is asked after it, as helped, its answer saved and not
+ * counted.
+ */
+internal fun hifzListPlan(points: List<HifzPoint>, order: List<Long>, dueIds: Set<Long>, lead: Boolean = false): HifzListPlan {
+    val byId = points.associateBy { it.id }
+    val listed = order.distinct().mapNotNull { byId[it] }
+    val first = listed.firstOrNull()?.takeIf { lead }
+    val selected = listed.filter { it.id != first?.id }.toMutableList()
+    val selectedCount = listed.size
+    val due = points.filter { it.id in dueIds && it.id != first?.id }
+    while (true) {
+        val linked = due.filter { question -> selected.none { it.id == question.id } && selected.any { it.showsAnswerOf(question) } }
+        if (linked.isEmpty()) break
+        selected += linked
+    }
+    return HifzListPlan(listOfNotNull(first) + selected.answerSafeOrder(), selectedCount)
+}
+
+/**
+ * The notebook's order, as its list shows it: what needs care first, then by surah. The car's «مراجعة الدفتر» asks in
+ * the same order as the phone.
+ */
+internal fun List<HifzPoint>.notebookOrder(): List<Long> {
+    val care = filter { it.needsCare }
+    return care.map { it.id } + filterNot { it.needsCare }.groupBy { it.verse.surah }.toSortedMap().values.flatten().map { it.id }
+}
 
 internal enum class HifzSessionProblemKind { AnswerSave, PositionSave, Restore, PointChanged, Audio }
 
@@ -56,6 +99,12 @@ internal data class HifzSessionView(
     val assisted: Boolean,
     val deferred: Int,
     val token: String,
+    val origin: HifzReviewOrigin = HifzReviewOrigin.Daily,
+    /** Back to the card before, or on past this one: never after «أظهر» before an answer. */
+    val canBack: Boolean = false,
+    val canForward: Boolean = false,
+    /** The verse before the question may be played: it is no other question waiting. */
+    val cue: Boolean = false,
 )
 
 internal class HifzSessionCoordinator(
@@ -73,9 +122,10 @@ internal class HifzSessionCoordinator(
     val reviewReturn = mutableStateOf<String?>(null)
     var reviewState by mutableStateOf(HifzReviewState(clock = elapsed, wallClock = now))
         private set
-    var practiceState by mutableStateOf(HifzPracticeState(emptyList(), elapsed))
-        private set
     var mode by mutableStateOf(HifzSessionMode.None)
+        private set
+    /** The review's cards: the points due («مراجعة اليوم»), or a list chosen in the notebook. Saved with the session. */
+    var origin by mutableStateOf(HifzReviewOrigin.Daily)
         private set
     var initialized by mutableStateOf(false)
         private set
@@ -170,7 +220,10 @@ internal class HifzSessionCoordinator(
                 checks.count { it.grade == HifzGrade.Again }, points.count { it.mastered && it.masteredAt?.let(::epochDay) == day() })
         }
 
-    fun keepDay() { if (mode == HifzSessionMode.Daily) reviewDayDraft.value = "${day()}:${reviewState.day.encode()}" }
+    /** The day's answers so far, kept for the next review: every answer is saved, whichever review gave it. */
+    fun keepDay() { if (mode != HifzSessionMode.None) reviewDayDraft.value = "${day()}:${reviewState.day.encode()}" }
+    private val daily: Boolean get() = mode == HifzSessionMode.Review && origin == HifzReviewOrigin.Daily
+    private val listing: Boolean get() = mode == HifzSessionMode.Review && origin == HifzReviewOrigin.List
 
     /**
      * The day's review: everything due now ([reviewSitting]), [lead] first, as a reminder listed them or the reader chose
@@ -188,44 +241,48 @@ internal class HifzSessionCoordinator(
         val chosen = eligible.reviewSitting(day(), now(), lead.mapNotNull { id -> eligible.firstOrNull { it.id == id } })
         if (chosen.isEmpty()) { inform("لا توجد أسئلة مستحقة الآن. تبقى مواعيد المراجعة كما هي."); return false }
         captureListening()
-        reviewState = HifzReviewState(elapsed, dayTally(), learning.exposed, learning.seen, now)
-        reviewIds.value = chosen.map { it.id }
-        reviewStartedDay.longValue = day()
-        reviewSession.intValue++
-        mode = HifzSessionMode.Daily
-        sessionId = UUID.randomUUID().toString()
-        paused = false
-        problem = null
-        notice = null
+        begin(chosen.map { it.id }, HifzReviewOrigin.Daily, learning)
         HifzReminder.clearReminder(context)
         refresh(); changed()
         return true
     }
 
-    fun startNotebook(order: List<Long>? = null): Boolean {
+    /**
+     * A list review: [order], the notebook's points as listed, or with none all of them in the phone's order
+     * ([notebookOrder]), whose unfinished review then goes on. [lead]: the first of [order] is a row the reader tapped,
+     * asked first; see [hifzListPlan]. Its cards count by R0, decided at each one's first look.
+     */
+    fun startList(order: List<Long>? = null, lead: Boolean = false): Boolean {
         if (!initialized || savingAnswer) return false
         val points = HifzRepository.points.value
-        val ids = order ?: points.sortedBy { it.verse }.map { it.id }
-        if (mode == HifzSessionMode.Notebook && order == null && practiceState.index < practiceState.cards(points).size) {
-            resume(); return true
-        }
+        if (order == null && listCanContinue()) { resume(); return true }
+        val ids = order ?: points.notebookOrder()
         val learning = HifzLearning.read(context, day())
         val due = points.askable(day(), now(), learning.seen, learning.exposed).map { it.id }.toSet()
-        val plan = hifzPracticePlan(points, ids, due)
+        val plan = hifzListPlan(points, ids, due, lead = lead && order != null)
         if (plan.points.isEmpty()) {
             inform(if (carActive) "دفتر المراجعة فارغ. أضف مواضعك من الهاتف حين يكون ذلك آمنًا."
                 else "دفتر المراجعة فارغ. أضف إليه المواضع التي تريد مراجعتها.")
             return false
         }
         keepDay(); captureListening()
-        practiceState = HifzPracticeState(plan.points.map { it.id }, elapsed)
-        mode = HifzSessionMode.Notebook
+        begin(plan.points.map { it.id }, HifzReviewOrigin.List, learning)
+        refresh(); changed()
+        return true
+    }
+
+    /** A new review of [ids], from [from]: what the day answered so far goes with it. */
+    private fun begin(ids: List<Long>, from: HifzReviewOrigin, learning: HifzLearning) {
+        reviewState = HifzReviewState(elapsed, dayTally(), learning.exposed, learning.seen, now, list = from == HifzReviewOrigin.List)
+        reviewIds.value = ids
+        reviewStartedDay.longValue = day()
+        reviewSession.intValue++
+        mode = HifzSessionMode.Review
+        origin = from
         sessionId = UUID.randomUUID().toString()
         paused = false
         problem = null
         notice = null
-        refresh(); changed()
-        return true
     }
 
     fun usePhone() { carActive = false; paused = false; changed() }
@@ -240,7 +297,10 @@ internal class HifzSessionCoordinator(
     }
     fun resume() { if (!savingAnswer) {
         if (hasSession) notice = null
-        captureListening(); paused = false; reviewState.resume(); takeInDue(); refresh(); changed()
+        captureListening(); paused = false; reviewState.resume()
+        // A list review left at its end, a card skipped there: on from the first one still unanswered.
+        if (listing) reviewState.reopen(queue())
+        takeInDue(); refresh(); changed()
     } else retry() }
 
     /** The points a daily review may ask now. */
@@ -264,12 +324,18 @@ internal class HifzSessionCoordinator(
      * began joins it as it goes on.
      */
     fun dailyCanContinue(eligibleIds: Set<Long>): Boolean =
-        initialized && mode == HifzSessionMode.Daily && reviewStartedDay.longValue == day() && reviewState.point(queue()) != null &&
+        initialized && daily && reviewStartedDay.longValue == day() && reviewState.point(queue()) != null &&
             eligibleIds.none { it in reviewState.gradedIds || it in reviewState.deferredIds }
+
+    /** A list review left unfinished, on any day: a card of it still unanswered, skipped ones too. */
+    fun listCanContinue(): Boolean = initialized && listing && reviewState.unanswered(queue()) > 0
+
+    /** The cards a list review left unfinished still asks; 0 when there is none to go on with. */
+    fun listLeft(): Int = if (listCanContinue()) reviewState.unanswered(queue()) else 0
 
     /** What fell due since the daily review began joins it, after the questions it holds. */
     private fun takeInDue() {
-        if (mode != HifzSessionMode.Daily || reviewState.point(queue()) == null) return
+        if (!daily || reviewState.point(queue()) == null) return
         val held = reviewIds.value.toSet()
         val due = dueNow().filter { it.id !in held }
         if (due.isNotEmpty()) reviewIds.value = reviewIds.value + due.reviewSitting(day(), now()).map { it.id }
@@ -291,7 +357,9 @@ internal class HifzSessionCoordinator(
         bridge()?.restore(reviewReturn.value)
         reviewReturn.value = null
         reviewPlayed.value = false
-        if (view().phase == HifzSessionPhase.Finished && (mode != HifzSessionMode.Daily || !reviewState.stopping)) mode = HifzSessionMode.None
+        // Done: nothing left to go on with. A list review keeps a card skipped and never answered for «تابع المراجعة»;
+        // a review of due points leaves it due, for the next one.
+        if (view().phase == HifzSessionPhase.Finished && !reviewState.stopping && !listCanContinue()) mode = HifzSessionMode.None
         carActive = false
         changed()
     }
@@ -303,7 +371,6 @@ internal class HifzSessionCoordinator(
         reviewIds.value = emptyList()
         reviewSession.intValue++
         reviewState = HifzReviewState(clock = elapsed, wallClock = now)
-        practiceState = HifzPracticeState(emptyList(), elapsed)
         clip = null
         reviewReturn.value = null
         reviewPlayed.value = false
@@ -315,9 +382,10 @@ internal class HifzSessionCoordinator(
 
     fun refresh() {
         if (!initialized || savingAnswer) return
-        if (mode == HifzSessionMode.Daily && reviewStartedDay.longValue != day()) {
+        if (daily && reviewStartedDay.longValue != day()) {
             // A new date is not a failure. Answers are already in the notebook; unanswered points stay due.
-            // Do not carry yesterday's tally or audio into today's review.
+            // Do not carry yesterday's tally or audio into today's review. A list review goes on: its cards not looked
+            // at yet decide R0 when they are.
             reviewActions.leaveCard()
             reviewIds.value = emptyList()
             mode = HifzSessionMode.None
@@ -327,67 +395,73 @@ internal class HifzSessionCoordinator(
         }
         val learning = HifzLearning.read(context, day())
         reviewState.syncExposed(learning.exposed, reviewActions, learning.seen)
-        if (mode == HifzSessionMode.Daily) {
+        if (mode != HifzSessionMode.None) {
             reviewState.follow(queue(), reviewActions)
             reviewState.shown(reviewState.point(queue()))
-        } else if (mode == HifzSessionMode.Notebook) {
-            val cards = practiceState.cards(HifzRepository.points.value)
-            practiceState.keepWithin(cards.size)
-            practiceState.shown(cards.getOrNull(practiceState.index))
         }
     }
 
     private fun queue() = reviewState.questions(reviewIds.value.mapNotNull { id -> HifzRepository.points.value.firstOrNull { it.id == id } })
 
     fun view(): HifzSessionView {
-        val daily = mode == HifzSessionMode.Daily
-        val cards = if (daily) queue() else practiceState.cards(HifzRepository.points.value)
-        val index = if (daily) reviewState.index(cards) else practiceState.index
+        val cards = queue()
+        val index = reviewState.index(cards)
         val point = cards.getOrNull(index)
         val phase = when {
-            mode == HifzSessionMode.None || point == null || daily && reviewState.atEnd(cards) -> HifzSessionPhase.Finished
-            daily && reviewState.training(point) || !daily && practiceState.answer(point) in listOf(HifzGrade.Hesitated, HifzGrade.Again) -> HifzSessionPhase.Training
-            if (daily) reviewState.revealed(point) else practiceState.revealed(point) -> HifzSessionPhase.Assessment
+            mode == HifzSessionMode.None || point == null || reviewState.atEnd(cards) -> HifzSessionPhase.Finished
+            reviewState.training(point) -> HifzSessionPhase.Training
+            reviewState.answered(point) -> HifzSessionPhase.Answered
+            reviewState.revealed(point) -> HifzSessionPhase.Assessment
             else -> HifzSessionPhase.Question
         }
         val question = point?.let { p -> catalog?.let { hifzQuestionAbout(it, p) } }.orEmpty()
-        return HifzSessionView(mode, phase, point, index, if (daily) reviewState.count(cards) else cards.size,
-            question, if (daily) reviewState.round else practiceState.tally,
-            if (daily) reviewState.assisted(point) else practiceState.assisted(point),
-            if (daily) reviewState.deferredIds.size else 0, "$sessionId:${mode.name}:${point?.id}:$phase")
+        val open = mode != HifzSessionMode.None
+        return HifzSessionView(mode, phase, point, index, reviewState.count(cards),
+            question, reviewState.round, reviewState.assisted(point), reviewState.deferredIds.size,
+            "$sessionId:${mode.name}:${point?.id}:$phase", origin,
+            canBack = open && reviewState.canStepBack(cards), canForward = open && reviewState.canStepForward(cards),
+            cue = phase == HifzSessionPhase.Question && point != null && cueAllowed(point, cards))
+    }
+
+    /**
+     * The verse before [point]'s, its cue, is no other question still waiting: a card of this review unanswered, skipped
+     * or to come, or a point due now. Hearing it would give that answer away.
+     */
+    private fun cueAllowed(point: HifzPoint, cards: List<HifzPoint>): Boolean {
+        if (point.verse.ayah <= 1) return false
+        val before = QuranVerseReference(point.verse.surah, point.verse.ayah - 1)
+        return cards.none { it.id != point.id && !reviewState.answered(it) && before in it.span } &&
+            dueNow().none { it.id != point.id && before in it.span }
     }
 
     fun reveal(exposeAnswer: Boolean = true): Boolean {
         if (savingAnswer) return false
-        if (mode == HifzSessionMode.Daily) reviewState.reveal(queue(), reviewActions, exposeAnswer)
-        else view().point?.let { practiceState.reveal(it, practiceActions, exposeAnswer) }
+        if (mode != HifzSessionMode.None) reviewState.reveal(queue(), reviewActions, exposeAnswer)
         refresh(); changed()
         return view().phase == HifzSessionPhase.Assessment
     }
 
     fun assess(grade: HifzGrade) {
         if (savingAnswer || view().phase != HifzSessionPhase.Assessment) return
-        if (mode == HifzSessionMode.Daily) reviewState.grade(queue(), reviewActions, grade)
-        else view().point?.let { point ->
-            val counted = practiceState.counted(point)
-            val actual = practiceState.gradeFor(point, grade)
-            val outcome = hifzPracticeOutcome(point, actual, counted, "في تذكير لاحق", "غدًا")
-                ?.text(withBack = true, short = false).orEmpty()
-            practiceState.answer(point, actual, outcome, practiceState.cards(HifzRepository.points.value).size, practiceActions)
+        view().point?.let { point ->
+            val actual = if (grade == HifzGrade.Held && reviewState.assisted(point)) HifzGrade.Hesitated else grade
+            val outcome = hifzAnswerOutcome(point, actual, reviewState.counted(point), "في تذكير لاحق", "غدًا")
+            reviewState.grade(queue(), reviewActions, grade, outcome = outcome.text(withBack = true, short = false))
         }
         changed()
     }
 
+    /** On: the drill's «التالي», a skip before «أظهر», or past a card answered. Nothing after «أظهر» before an answer. */
     fun next() {
         if (savingAnswer) return
-        if (mode == HifzSessionMode.Daily) {
-            if (view().phase == HifzSessionPhase.Training) reviewState.next(queue(), reviewActions)
-        } else practiceState.step(1, practiceState.cards(HifzRepository.points.value).size, practiceActions)
+        if (view().phase == HifzSessionPhase.Training) reviewState.next(queue(), reviewActions)
+        else reviewState.step(queue(), reviewActions, 1)
         refresh(); changed()
     }
 
+    /** Back to the card before: read-only when answered; one skipped is asked as it was. */
     fun previous() {
-        if (!savingAnswer && mode == HifzSessionMode.Notebook) practiceState.step(-1, practiceState.cards(HifzRepository.points.value).size, practiceActions)
+        if (!savingAnswer) reviewState.step(queue(), reviewActions, -1)
         refresh(); changed()
     }
 
@@ -400,7 +474,7 @@ internal class HifzSessionCoordinator(
     fun cue() { view().point?.let { reviewActions.listenBefore(it) } }
     fun answerAudio() { view().point?.let { reviewActions.listen(it) } }
     fun drill() {
-        view().point?.let { if (mode == HifzSessionMode.Daily) reviewState.drill(it, reviewActions) else practiceState.drill(it, practiceActions) }
+        view().point?.let { reviewState.drill(it, reviewActions) }
         changed()
     }
 
@@ -445,15 +519,24 @@ internal class HifzSessionCoordinator(
 
     val reviewActions: HifzReviewActions = object : HifzReviewActions {
         override fun grade(point: HifzPoint, grade: HifzGrade) = Unit // The durable receipt already wrote it.
-        override fun tryGrade(point: HifzPoint, grade: HifzGrade): Boolean {
-            if (mode != HifzSessionMode.Daily) return false
+        override fun tryGrade(point: HifzPoint, grade: HifzGrade, counted: Boolean, outcome: String): Boolean {
+            if (mode == HifzSessionMode.None) return false
             if (committing) return true
-            requestGrade(point, grade, counted = true, outcome = "")
+            requestGrade(point, grade, counted, outcome)
             return false
         }
+        // R0 in a list review: the same test as the reminders' and «الآن»'s, read before the look is written.
+        override fun canCount(point: HifzPoint): Boolean {
+            if (!listing) return true
+            val learning = HifzLearning.read(context, day())
+            return HifzRepository.points.value.firstOrNull { it.id == point.id }?.isDue(day(), now(), learning.seen, learning.exposed) == true
+        }
         override fun seen(verses: Set<QuranVerseReference>) = expose(verses)
-        override fun exposed(verses: Set<QuranVerseReference>) = expose(verses)
-        override fun listenBefore(point: HifzPoint) { if (view().point?.id == point.id) play(catalog?.let { hifzCue(it, point) }) }
+        override fun exposed(verses: Set<QuranVerseReference>) = exposeToday(verses)
+        override fun listenBefore(point: HifzPoint) {
+            val shown = view()
+            if (shown.point?.id == point.id && shown.cue) play(catalog?.let { hifzCue(it, point) })
+        }
         override fun listen(point: HifzPoint) { if (view().point?.id == point.id) play(catalog?.let { hifzListen(it, listOf(point)) }) }
         override fun drill(point: HifzPoint) { if (view().point?.id == point.id) play(catalog?.let { hifzDrill(it, point) }) }
         override fun leaveCard() { if (reviewAudio.value) bridge()?.pause(); reviewAudio.value = false; clip = null }
@@ -462,30 +545,16 @@ internal class HifzSessionCoordinator(
         override fun dismiss() { close() }
     }
 
-    val practiceActions: HifzPracticeActions = object : HifzPracticeActions {
-        override fun dueNow(point: HifzPoint): Boolean {
-            val learning = HifzLearning.read(context, day())
-            return HifzRepository.points.value.firstOrNull { it.id == point.id }?.isDue(day(), now(), learning.seen, learning.exposed) == true
-        }
-        override fun seen(verses: Set<QuranVerseReference>) = expose(verses)
-        override fun grade(point: HifzPoint, grade: HifzGrade, counted: Boolean) = Unit
-        override fun tryGrade(point: HifzPoint, grade: HifzGrade, counted: Boolean, outcome: String): Boolean {
-            if (mode != HifzSessionMode.Notebook) return false
-            if (committing) return true
-            requestGrade(point, grade, counted, outcome)
-            return false
-        }
-        override fun listenBefore(point: HifzPoint) = reviewActions.listenBefore(point)
-        override fun listen(point: HifzPoint) = reviewActions.listen(point)
-        override fun drill(point: HifzPoint) = reviewActions.drill(point)
-        override fun addWords(point: HifzPoint, words: Set<Int>) = Unit // Phone editor owns word selection.
-        override fun leaveCard() = reviewActions.leaveCard()
-        override fun close() { this@HifzSessionCoordinator.close() }
-    }
-
     private fun expose(verses: Set<QuranVerseReference>) {
         if (verses.isEmpty()) return
         HifzLearning.read(context, day()).expose(verses, now()).write(context)
+        changed()
+    }
+
+    /** A test's own «أظهر»: seen today, its time written only if its answer is not a right one without help. */
+    private fun exposeToday(verses: Set<QuranVerseReference>) {
+        if (verses.isEmpty()) return
+        HifzLearning.read(context, day()).exposeToday(verses).write(context)
         changed()
     }
 
@@ -497,7 +566,6 @@ internal class HifzSessionCoordinator(
         lastReceiptAt = stamp
         pending = PendingGrade(mode, point, grade, counted, outcome, day(), stamp)
         reviewState.inputBlocked = true
-        practiceState.inputBlocked = true
         scope.launch { finishPending() }
     }
 
@@ -506,13 +574,18 @@ internal class HifzSessionCoordinator(
         if (busy) return
         busy = true
         reviewState.inputBlocked = true
-        practiceState.inputBlocked = true
         changed()
         try {
             persist() // Journal the explicit response before changing the notebook.
             val saved = withContext(Dispatchers.IO) {
-                if (receipt.counted || receipt.grade == HifzGrade.Again) HifzRepository.gradeReview(context, receipt.point, receipt.grade, receipt.day, receipt.at)
-                else HifzRepository.points.value.any { it.id == receipt.point.id && it.verse == receipt.point.verse }
+                // Every answer is saved; [graded] decides what it moves (R0 at save time).
+                HifzRepository.gradeReview(context, receipt.point, receipt.grade, receipt.day, receipt.at, receipt.counted).also { saved ->
+                    // A right answer without help forgives its own «أظهر»: the next test needs no new wait. Any other
+                    // answer writes the look's time now.
+                    if (saved && receipt.grade != HifzGrade.Held) {
+                        HifzLearning.read(context, day()).expose(receipt.point.span.toSet(), now()).write(context)
+                    }
+                }
             }
             if (!saved) {
                 pending = null
@@ -520,14 +593,9 @@ internal class HifzSessionCoordinator(
             } else if (!receipt.applied) {
                 committing = true
                 reviewState.inputBlocked = false
-                practiceState.inputBlocked = false
-                if (receipt.mode == HifzSessionMode.Daily && reviewState.point(queue())?.id == receipt.point.id) {
-                    reviewState.grade(queue(), reviewActions, receipt.grade, confirmed = true)
+                if (mode != HifzSessionMode.None && reviewState.point(queue())?.id == receipt.point.id) {
+                    reviewState.grade(queue(), reviewActions, receipt.grade, confirmed = true, outcome = receipt.outcome)
                     keepDay()
-                } else if (receipt.mode == HifzSessionMode.Notebook) {
-                    if (receipt.counted || receipt.grade == HifzGrade.Again) reviewDayDraft.value = null
-                    practiceState.answer(receipt.point, receipt.grade, receipt.outcome,
-                        practiceState.cards(HifzRepository.points.value).size, practiceActions, confirmed = true)
                 }
                 receipt.applied = true
             }
@@ -542,7 +610,6 @@ internal class HifzSessionCoordinator(
             committing = false
             busy = false
             reviewState.inputBlocked = pending != null
-            practiceState.inputBlocked = pending != null
             refresh(); changed()
         }
     }
@@ -563,10 +630,10 @@ internal class HifzSessionCoordinator(
     private fun <T : Any> restored(saver: Saver<T, Any>, rows: JSONArray): T? =
         saver.restore(List(rows.length()) { rows.optString(it) })
 
-    private fun encode() = JSONObject().put("version", 1).put("id", sessionId).put("mode", mode.name)
+    private fun encode() = JSONObject().put("version", 1).put("id", sessionId).put("mode", mode.name).put("origin", origin.name)
         .put("dailyIds", JSONArray(reviewIds.value)).put("generation", reviewSession.intValue)
         .put("day", reviewStartedDay.longValue).put("dayDraft", reviewDayDraft.value)
-        .put("review", saved(HifzReviewState.Saver, reviewState)).put("practice", saved(HifzPracticeState.Saver, practiceState))
+        .put("review", saved(HifzReviewState.Saver, reviewState))
         .put("return", reviewReturn.value).put("played", reviewPlayed.value).put("clip", clip?.encode())
         .put("position", clipPosition).put("clipIndex", clipIndex).put("clipRound", clipRound).put("clipEnded", clipEnded)
         .put("clipReciter", clipReciterId)
@@ -577,13 +644,18 @@ internal class HifzSessionCoordinator(
     private fun restore(row: JSONObject) {
         require(row.getInt("version") == 1)
         sessionId = row.getString("id")
-        mode = HifzSessionMode.valueOf(row.getString("mode"))
+        // A review of due points saved before 16 November reads on; a saved «مراجعة الدفتر», whose cards were kept
+        // apart, does not (development phase: no migration), and the notebook is kept.
+        mode = when (val saved = row.getString("mode")) {
+            "Daily" -> HifzSessionMode.Review
+            else -> HifzSessionMode.valueOf(saved)
+        }
+        origin = HifzReviewOrigin.valueOf(row.optString("origin", HifzReviewOrigin.Daily.name))
         reviewIds.value = row.getJSONArray("dailyIds").let { ids -> List(ids.length()) { ids.getLong(it) } }
         reviewSession.intValue = row.optInt("generation")
         reviewStartedDay.longValue = row.getLong("day")
         reviewDayDraft.value = row.opt("dayDraft") as? String
         reviewState = restored(HifzReviewState.Saver, row.getJSONArray("review")) ?: error("Invalid review state")
-        practiceState = restored(HifzPracticeState.Saver, row.getJSONArray("practice")) ?: error("Invalid practice state")
         reviewReturn.value = row.opt("return") as? String
         reviewPlayed.value = row.optBoolean("played")
         clip = QuranPlaylist.decode(row.opt("clip") as? String)
@@ -639,7 +711,7 @@ internal class HifzSessionCoordinator(
         fun encode() = JSONObject().put("mode", mode.name).put("point", encodeHifzPoints(listOf(point)))
             .put("grade", grade.name).put("counted", counted).put("outcome", outcome).put("day", day).put("at", at).put("applied", applied)
         companion object {
-            fun decode(row: JSONObject) = PendingGrade(HifzSessionMode.valueOf(row.getString("mode")),
+            fun decode(row: JSONObject) = PendingGrade(HifzSessionMode.Review,
                 decodeHifzPoints(row.getString("point")).single(), HifzGrade.valueOf(row.getString("grade")),
                 row.getBoolean("counted"), row.getString("outcome"), row.getLong("day"), row.getLong("at"), row.optBoolean("applied"))
         }

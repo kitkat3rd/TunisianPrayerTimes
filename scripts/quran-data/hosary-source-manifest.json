@@ -20,6 +20,44 @@
       "endMs": 28970
     }
   ],
+  "boundaryCorrections": [
+    {
+      "surah": 79,
+      "ayah": 27,
+      "sourceStartMs": 195380,
+      "startMs": 194020
+    },
+    {
+      "surah": 108,
+      "ayah": 1,
+      "sourceStartMs": 8085,
+      "startMs": 6950
+    },
+    {
+      "surah": 108,
+      "ayah": 3,
+      "sourceStartMs": 20853,
+      "startMs": 19970
+    },
+    {
+      "surah": 112,
+      "ayah": 1,
+      "sourceStartMs": 9240,
+      "startMs": 8280
+    },
+    {
+      "surah": 112,
+      "ayah": 3,
+      "sourceStartMs": 17850,
+      "startMs": 17100
+    },
+    {
+      "surah": 112,
+      "ayah": 4,
+      "sourceStartMs": 23226,
+      "startMs": 22240
+    }
+  ],
   "files": [
     {
       "surah": 1,

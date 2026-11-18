@@ -11,7 +11,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -61,17 +60,16 @@ class HifzSheetsRestorationTest {
         }
         compose.onNodeWithTag("hifz_plan_own_times").performScrollTo().performClick()
         compose.onNodeWithTag("hifz_times_once").performScrollTo().performClick()
-        compose.onNodeWithTag("hifz_plan_once_per_day").performScrollTo().performClick()
         compose.onNodeWithTag("hifz_plan_intense").performScrollTo().performClick()
         assertNull("Choosing a draft must not save it", saved)
 
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("hifz_times_once").assertIsSelected()
-        compose.onNodeWithTag("hifz_plan_once_per_day").assertIsOn()
         compose.onNodeWithTag("hifz_plan_intense").assertIsSelected()
         assertNull("Restoration must not silently commit the draft", saved)
         compose.onNodeWithTag("hifz_plan_done").performClick()
-        assertEquals(HifzPlan(HifzPace.Intense, HifzTimesPreset.Once.times), saved)
+        assertEquals(HifzPace.Intense, saved?.pace)
+        assertEquals(HifzTimesPreset.Once.times, saved?.times)
     }
 
     @Test
@@ -131,24 +129,6 @@ class HifzSheetsRestorationTest {
         compose.onNodeWithTag("hifz_plan_intense").performScrollTo().performClick()
         compose.onNodeWithTag("hifz_plan_done").performClick()
         assertEquals(HifzPlan(HifzPace.Intense, null, oncePerDay = true), saved)
-    }
-
-    @Test
-    fun followingSettingsDoesNotChangeIndependentOnceDailyFrequency() {
-        var saved: HifzPlan? = null
-        compose.setContent {
-            AdhkarTheme {
-                HifzPlanDialog(
-                    auto = 3, pace = HifzPace.Auto, times = HifzTimes(minutes = setOf(1290)), oncePerDay = true,
-                    settings = HifzSettings(times = HifzTimesPreset.Prayers.times),
-                    onChange = { saved = it }, onDismiss = {},
-                )
-            }
-        }
-        compose.onNodeWithTag("hifz_plan_follow_settings").performScrollTo().performClick()
-        compose.onNodeWithTag("hifz_plan_once_per_day").assertIsOn()
-        compose.onNodeWithTag("hifz_plan_done").performClick()
-        assertEquals(HifzPlan(HifzPace.Auto, null, oncePerDay = true), saved)
     }
 
     @Test

@@ -108,7 +108,7 @@ def build(args: argparse.Namespace) -> None:
                         aliases[i1] = joined
         assert not ambiguous, (number, ambiguous)
         assert all(p is not None for p in locations)
-        # The scans share most Madinah page boundaries, but four verses differ.
+        # The scans share most Madinah page boundaries, but two verses differ (the owner's 2017 copy too).
         # These source-image corrections are individually verified, never inferred.
         for override in page_overrides:
             if override["surah"] != number:
@@ -152,7 +152,7 @@ def build(args: argparse.Namespace) -> None:
         "edition": "Quran_Qaloun.pdf",
         "verseNumbering": "Qaloun, later Madani (6214 verses); opening basmalah headings use ayah 0",
         "quranPages": 603,
-        "totalPages": 621,
+        "totalPages": 603,
         "textSource": "https://quranpedia.net/surah/7/{surah}",
         "pageBoundarySource": "https://tanzil.net/res/text/metadata/quran-data.xml",
         "spellingSource": "https://tanzil.net/download/",

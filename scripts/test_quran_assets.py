@@ -137,6 +137,20 @@ class ArchiveTest(unittest.TestCase):
             self.assertEqual(['quran/audio/x/001.mp3', 'quran/audio/x/002.mp3'], zipped.namelist())
             self.assertTrue(all(i.compress_type == zipfile.ZIP_STORED for i in zipped.infolist()))
 
+    def test_the_books_fonts_and_layouts_are_deflated_and_scans_stored(self):
+        files = [('quran/book/plates.json', self.file('plates.json', b'{"fonts": []}' * 50)),
+                 ('quran/book/book_0.otf', self.file('book_0.otf', b'OTTO' + bytes(4000))),
+                 ('quran/book/pages/page_001.bin', self.file('page_001.bin', b'QBP1' + bytes(3000))),
+                 ('quran/pages/604.webp', self.file('604.webp', b'RIFF' + bytes(3000)))]
+        one = assets.build_archive(files, self.root / 'one.zip')
+        self.assertEqual(one, assets.build_archive(list(reversed(files)), self.root / 'two.zip'))
+        with zipfile.ZipFile(self.root / 'one.zip') as zipped:
+            kinds = {i.filename: i.compress_type for i in zipped.infolist()}
+        self.assertEqual(zipfile.ZIP_STORED, kinds.pop('quran/pages/604.webp'))
+        self.assertEqual({zipfile.ZIP_DEFLATED}, set(kinds.values()))
+        assets.extract_archive(self.root / 'one.zip', self.root / 'out', {name: source.stat().st_size for name, source in files})
+        self.assertEqual(files[1][1].read_bytes(), (self.root / 'out' / 'quran/book/book_0.otf').read_bytes())
+
     def test_extraction_refuses_entries_that_escape_the_folder(self):
         evil = self.root / 'evil.zip'
         with zipfile.ZipFile(evil, 'w') as zipped:
@@ -209,6 +223,7 @@ class EndToEndTest(unittest.TestCase):
             'MANIFEST': self.repo / 'android-app/quran-assets/manifest.tsv',
             'BUILD': self.repo / 'android-app/quran-assets/build',
             'PACKS_ROOT': self.repo / 'android-app/quran-packs',
+            'DEFAULT_CACHE': self.repo / 'cache',
         }
         for name, value in patches.items():
             original = getattr(assets, name)
@@ -312,6 +327,82 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual({p['name']: p['delivery'] for p in layout['packs']},
                          {p['name']: p['delivery'] for p in again['packs'] if p.get('reciterId') != 'a_new-id'})
         self.assertEqual({'cdn'}, {p['delivery'] for p in again['packs'] if p.get('reciterId') == 'a_new-id'})
+
+    def make_book(self, pages=2):
+        """A book as book_pack.py writes it, setting the first [pages] pages: pages.json's third is its appendix."""
+        root = self.repo / 'book' / 'quran' / 'book'
+        (root / 'pages').mkdir(parents=True)
+        (root / 'plates.json').write_text(json.dumps({'fonts': ['book_0.otf', 'book_1.otf'], 'plates': []}))
+        for n in (0, 1):
+            (root / f'book_{n}.otf').write_bytes(b'OTTO' + bytes([n]) * 3000)
+        for n in range(1, pages + 1):
+            (root / 'pages' / f'page_{n:03d}.bin').write_bytes(b'QBP1' + bytes([n]) * 500)
+        # What the build leaves beside its output is no part of the book.
+        (root.parent.parent / 'own.pkl').write_bytes(b'not the book')
+        return self.repo / 'book'
+
+    def test_the_book_takes_the_scans_place_with_the_scans_it_does_not_set(self):
+        book = self.make_book()
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--book', str(book), '--cdn', self.cdn)
+        self.assertEqual(0, code, output)
+        layout = json.loads(assets.LAYOUT_JSON.read_text())
+        first = layout['packs'][0]
+        self.assertEqual(('quran_book', 'book', 'play'), (first['name'], first['kind'], first['delivery']))
+        self.assertEqual(['quran/book/plates.json', 'quran/book/book_0.otf', 'quran/book/book_1.otf',
+                          'quran/book/pages/page_001.bin', 'quran/book/pages/page_002.bin', 'quran/pages/003.webp'],
+                         [f['path'] for f in first['files']])
+        self.assertNotIn('pages', {p['kind'] for p in layout['packs']})
+        self.assertEqual(assets.GENERATED_BUILD_FILE, (assets.PACKS_ROOT / 'quran_book' / 'build.gradle.kts').read_text())
+        self.assertEqual(6, len([r for r in assets.read_manifest() if r.pack == 'quran_book']))
+        for archive in assets.BUILD.glob('*.zip'):
+            (self.repo / 'served' / 'v1' / 'packs' / archive.name).write_bytes(archive.read_bytes())
+        code, output = self.run_command('stage', '--cache', str(self.repo / 'cache'), '--packs', 'quran_book')
+        self.assertEqual(0, code, output)
+        staged = assets.PACKS_ROOT / 'quran_book' / 'src/main/assets/quran'
+        self.assertEqual(b'OTTO' + bytes([1]) * 3000, (staged / 'book/book_1.otf').read_bytes())
+        self.assertEqual(b'page3', (staged / 'pages/003.webp').read_bytes())
+
+        # Laid out again with the same files, every pack keeps its archive; without the book, the layout is refused.
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--book', str(book), '--cdn', self.cdn)
+        self.assertEqual(0, code, output)
+        self.assertIn('quran_book: unchanged', output)
+        self.assertEqual(layout, json.loads(assets.LAYOUT_JSON.read_text()))
+        # Its zip gone from the build folder (a fresh clone): the copy stage kept, or else the CDN's, keeps its key.
+        for archive in assets.BUILD.glob('quran_book-*.zip'):
+            archive.unlink()
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--book', str(book), '--cdn', self.cdn)
+        self.assertEqual(0, code, output)
+        self.assertIn('quran_book: unchanged', output)
+        self.assertEqual(layout, json.loads(assets.LAYOUT_JSON.read_text()))
+        for cached in (self.repo / 'cache').glob('quran_book-*.zip'):
+            cached.unlink()
+        for archive in assets.BUILD.glob('quran_book-*.zip'):
+            archive.unlink()
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--book', str(book), '--cdn', self.cdn)
+        self.assertEqual(0, code, output)
+        self.assertIn('quran_book: unchanged', output)
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--cdn', self.cdn)
+        self.assertEqual(1, code)
+        self.assertIn('--book', output)
+
+    def test_a_book_with_a_missing_page_or_font_is_refused(self):
+        book = self.make_book()
+        (book / 'quran/book/pages/page_001.bin').unlink()
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--book', str(book), '--cdn', self.cdn)
+        self.assertEqual(1, code)
+        self.assertIn('no gap', output)
+        (book / 'quran/book/pages/page_001.bin').write_bytes(b'QBP1')
+        (book / 'quran/book/book_1.otf').unlink()
+        code, output = self.run_command('layout', '--from-dir', str(self.audio), '--from-dir', str(self.media / 'pages'),
+                                        '--book', str(book), '--cdn', self.cdn)
+        self.assertEqual(1, code)
+        self.assertIn('book_1.otf', output)
 
     def test_layout_refuses_recordings_not_yet_converted(self):
         (self.audio / '050.mp3').write_bytes(recording(50, 300, kbps_index=9, mono=False))
@@ -465,6 +556,161 @@ class ConvertTest(unittest.TestCase):
         code, output = run('convert', '--from-dir', str(self.originals), '--to', str(self.originals))
         self.assertEqual(1, code, output)
         self.assertEqual(before, (self.originals / '001.mp3').read_bytes())
+
+
+def quiet_mask(*spans):
+    """Frames from (milliseconds, silent) spans, e.g. (3000, False), (1000, True): 3 s of recitation, then 1 s of pause."""
+    return [silent for length, silent in spans for _ in range(length // assets.STOP_FRAME_MS)]
+
+
+def verses(*boundaries):
+    """Timing rows: the first verse's start, then each verse's end, the next starting where it ends."""
+    return [{'ayah': n + 1, 'startMs': start, 'endMs': end} for n, (start, end) in enumerate(zip(boundaries, boundaries[1:]))]
+
+
+class VerseStopsTest(unittest.TestCase):
+    def test_a_boundary_just_before_the_next_verse_stops_in_the_middle_of_the_pause(self):
+        quiet = quiet_mask((3000, False), (1000, True), (4000, False))
+        self.assertEqual([3500, 8000], assets.verse_stops(quiet, verses(0, 3930, 8000)))
+
+    def test_a_boundary_already_far_from_the_next_verse_is_kept(self):
+        quiet = quiet_mask((3000, False), (1000, True), (4000, False))
+        self.assertEqual([3200, 8000], assets.verse_stops(quiet, verses(0, 3200, 8000)))
+
+    def test_a_short_pause_keeps_the_lead_but_not_into_the_verse_itself(self):
+        quiet = quiet_mask((3000, False), (500, True), (4500, False))
+        self.assertEqual(3200, assets.verse_stops(quiet, verses(0, 3450, 8000))[0])
+        quiet = quiet_mask((3000, False), (200, True), (4800, False))
+        self.assertEqual(3000 + assets.STOP_TAIL_MS, assets.verse_stops(quiet, verses(0, 3150, 8000))[0])
+        # Shorter still: the least lead wins over the verse's fading sound.
+        quiet = quiet_mask((3000, False), (160, True), (4840, False))
+        self.assertEqual(3160 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(quiet, verses(0, 3100, 8000))[0])
+
+    def test_a_boundary_inside_the_next_verse_stops_before_it(self):
+        quiet = quiet_mask((3000, False), (1000, True), (4000, False))
+        self.assertEqual(3500, assets.verse_stops(quiet, verses(0, 4100, 8000))[0])
+        # Farther inside, after a long clean pause: a timing source that starts the next verse late.
+        self.assertEqual(3500, assets.verse_stops(quiet, verses(0, 4500, 8000))[0])
+        # Too far inside, or after a short pause: the sound may be the verse's own end, joined to the next.
+        self.assertEqual(4700 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(quiet, verses(0, 4700, 8000))[0])
+        short = quiet_mask((3000, False), (300, True), (4700, False))
+        self.assertEqual(3700 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(short, verses(0, 3700, 8000))[0])
+
+    def test_a_verse_sounding_past_its_end_or_a_click_on_it_keeps_the_end(self):
+        # The verse's last sound ends 100 ms after its boundary, before a pause: nothing of the next verse there.
+        quiet = quiet_mask((3000, False), (1000, True), (4000, False))
+        self.assertEqual(2900, assets.verse_stops(quiet, verses(0, 2900, 8000))[0])
+        # A click on the boundary, in the middle of a long pause.
+        click = quiet_mask((3000, False), (500, True), (60, False), (1000, True), (3440, False))
+        self.assertEqual(3520, assets.verse_stops(click, verses(0, 3520, 8000))[0])
+        # Too short a silence for that: the closure of a consonant in the next verse's first word, joined to this one.
+        closure = quiet_mask((4220, False), (200, True), (3580, False))
+        self.assertEqual(4000 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(closure, verses(0, 4000, 8000))[0])
+
+    def test_joined_verses_stop_before_the_next_ones_sound(self):
+        joined = verses(0, 4000, 8000)
+        self.assertEqual(4000 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(quiet_mask((8000, False)), joined)[0])
+        # A dip around the boundary: the next verse's sound starts where it ends.
+        dip = quiet_mask((3950, False), (100, True), (3950, False))
+        self.assertEqual(4050 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(dip, joined)[0])
+        end = quiet_mask((3000, False), (500, True), (100, False), (100, True), (4300, False))
+        self.assertEqual(3700 - assets.STOP_MIN_LEAD_MS, assets.verse_stops(end, verses(0, 3650, 8000))[0])
+        # Never at or before the verse's start.
+        self.assertEqual(4100, assets.verse_stops(quiet_mask((8000, False)), verses(4000, 4100, 8000))[0])
+
+    def test_a_start_inside_the_verses_first_word_is_reported(self):
+        # Verse 2's sound starts at 4000, after a 1 s pause; its start is 400 ms into it.
+        quiet = quiet_mask((3000, False), (1000, True), (4000, False))
+        self.assertEqual([2], assets.late_starts(quiet, verses(0, 4400, 8000)))
+        # On time, only 50 ms in, or after a short pause: not reported.
+        self.assertEqual([], assets.late_starts(quiet, verses(0, 3990, 8000)))
+        self.assertEqual([], assets.late_starts(quiet, verses(0, 4050, 8000)))
+        short = quiet_mask((3000, False), (300, True), (4700, False))
+        self.assertEqual([], assets.late_starts(short, verses(0, 3700, 8000)))
+        # A click in a long pause is no verse, and a verse joined to the one before starts far into its sound.
+        click = quiet_mask((3000, False), (1000, True), (200, False), (1000, True), (2800, False))
+        self.assertEqual([], assets.late_starts(click, verses(0, 4150, 8000)))
+        self.assertEqual([], assets.late_starts(quiet, verses(0, 4000, 6000, 8000))[1:])
+
+    def test_the_threshold_ignores_digital_silence_and_clicks_do_not_end_a_pause(self):
+        speech, noise, zero = -15.0, -60.0, -120.0
+        levels = [zero] * 300 + [speech] * 300 + [noise] * 40 + [-20.0] * 4 + [noise] * 40 + [-20.0] * 6 + [noise] * 40 + [speech] * 300
+        quiet = assets.quiet_frames(levels)
+        self.assertTrue(all(quiet[:300]))
+        self.assertFalse(any(quiet[300:600]))
+        self.assertTrue(all(quiet[600:684]))  # a 40 ms click inside the pause
+        self.assertFalse(any(quiet[684:690]))  # 60 ms is a sound
+        self.assertFalse(any(quiet[730:]))
+
+    def test_a_flicker_of_silence_inside_a_sound_is_sound(self):
+        speech, noise = -15.0, -60.0
+        # The next verse's first sound dips under the threshold for one frame: it starts before the dip.
+        levels = [speech] * 300 + [noise] * 86 + [speech] + [noise] + [speech] * 300
+        quiet = assets.quiet_frames(levels)
+        self.assertTrue(all(quiet[300:386]))
+        self.assertFalse(any(quiet[386:]))
+        self.assertEqual([3430, 6880], assets.verse_stops(quiet, verses(0, 3880, 6880)))
+
+    def test_a_fading_end_stays_sound(self):
+        speech, noise = -15.0, -60.0
+        # The verse's last sound dips under the threshold for 20 ms at a time: no click, the pause starts after it.
+        levels = [speech] * 300 + ([noise] * 2 + [-20.0] * 2) * 3 + [noise] * 100 + [speech] * 300
+        quiet = assets.quiet_frames(levels)
+        self.assertFalse(any(quiet[302:304] + quiet[306:308] + quiet[310:312]))
+        self.assertTrue(all(quiet[312:412]))
+
+
+@unittest.skipUnless(shutil.which('ffmpeg'), 'needs ffmpeg')
+class StopsCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        for name, value in {'REPO': self.root, 'TIMINGS_DIR': self.root / 'audio'}.items():
+            original = getattr(assets, name)
+            setattr(assets, name, value)
+            self.addCleanup(setattr, assets, name, original)
+        media = self.root / 'media' / 'test'
+        media.mkdir(parents=True)
+        # A tone recited from 0.5 to 3 s and from 4 to 7 s over faint noise; mono 64 kbps like the recitations.
+        tone = "if(between(t,0.5,3)+between(t,4,7),0.3*sin(2*PI*440*t),0)+0.002*(random(0)-0.5)"
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f"aevalsrc='{tone}':s=44100:d=8", '-ac', '1',
+                        '-c:a', 'libmp3lame', '-b:a', '64k', '-write_xing', '0', str(media / '001.mp3')], check=True)
+        self.media = media.parent
+        self.timings = assets.TIMINGS_DIR / 'test' / 'timings.json'
+        self.timings.parent.mkdir(parents=True)
+        surah = {'number': 1, 'assetPath': 'quran/audio/test/001.mp3', 'durationMs': 8000,
+                 'timings': [{'ayah': 1, 'startMs': 400, 'endMs': 3950}, {'ayah': 2, 'startMs': 3950, 'endMs': 7500}]}
+        text = json.dumps({'version': 1, 'reciterId': 'test-qaloun', 'reciterName': 'قارئ', 'surahs': [surah]},
+                          ensure_ascii=False, separators=(',', ':'))
+        self.timings.write_bytes(text.encode('utf-8') + b'\r\n')
+
+    def test_stops_are_written_in_the_pause_and_the_file_is_otherwise_kept(self):
+        before = json.loads(self.timings.read_bytes())
+        code, output = run('stops', '--from-dir', str(self.media))
+        self.assertEqual(0, code, output)
+        written = self.timings.read_bytes()
+        self.assertTrue(written.endswith(b'}]}]}\r\n'))
+        self.assertIn('قارئ'.encode('utf-8'), written)
+        rows = json.loads(written)['surahs'][0]['timings']
+        # The pause is 3 to 4 s, shifted a little by the encoder: stopped in its middle.
+        self.assertTrue(3400 <= rows[0]['stopMs'] <= 3650, rows[0])
+        self.assertEqual(['ayah', 'startMs', 'endMs', 'stopMs'], list(rows[0]))
+        # The last verse is followed by no other: no stop.
+        self.assertEqual(before['surahs'][0]['timings'][1], rows[1])
+        code, output = run('stops', '--from-dir', str(self.media), '--reciter', 'test')
+        self.assertEqual(0, code, output)
+        self.assertEqual(written, self.timings.read_bytes())
+
+    def test_a_recording_that_does_not_match_its_timings_is_refused(self):
+        data = json.loads(self.timings.read_bytes())
+        data['surahs'][0]['durationMs'] = 20000
+        self.timings.write_text(json.dumps(data))
+        before = self.timings.read_bytes()
+        code, output = run('stops', '--from-dir', str(self.media))
+        self.assertEqual(1, code, output)
+        self.assertIn('20000 ms', output)
+        self.assertEqual(before, self.timings.read_bytes())
+        code, output = run('stops', '--from-dir', str(self.media), '--reciter', 'other')
+        self.assertEqual(1, code, output)
 
 
 if __name__ == '__main__':

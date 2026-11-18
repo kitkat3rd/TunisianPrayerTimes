@@ -23,6 +23,31 @@ The bundled Arabic catalog is a selection, not an exhaustive adhkar collection. 
 - The optional night reminder groups the last two verses of al-Baqarah with Sayyid al-istighfar. Their sources describe recitation at night; the suggested alert 15 minutes after Maghrib is a convenient personal setting, not a prescribed post-prayer formula or required time.
 - Quranic verse markers use the Qaloon mushaf's later Madani verse boundaries and the app's `0–9` digits. The basmala preceding the three short surahs is not counted among their verses. In this count, the passage commonly called Ayat al-Kursi spans al-Baqarah 253–254, with a verse break after `الْقَيُّومُ`. The last two verses of al-Baqarah are 284–285. The displayed text preserves Qaloon readings such as `كُفُؤًا`, `وَهْوَ`, and `لِذِكْرِيَ` while using the app's readable Arabic spelling.
 
+## Source access and provenance update — 2026-10-25
+
+Since 2026-10-26, the Android reader includes the full **المصدر وعدد التكرار** details inside **الشرح**, with no separate source chip or source sheet. This single explanation control is available even for entries without a narration or explanation. It retains source links, grading and attribution notes, count context and content-version notes. Source links open only when selected; the expanded detail card has its own touch and accessibility boundary so reading it does not activate the counter. The abbreviated citation remains compact; the home-entry narration's recorded weakening and the market narration's dispute also remain visible beside the reading. These qualifications are explicit catalog metadata, not inferred from a collection name. A selected wording variant clears metadata that belongs only to the original wording.
+
+The source review's H02 gaps were addressed with the following locators and links. Quoted formulas, Qur'an text, repetition counts, collection membership and reminder behavior were preserved. Newly supplied bibliographic metadata has content version `2026-10-25`.
+
+| Entry or route | Source now identified | Assessment and wording limit |
+| --- | --- | --- |
+| `fitrah_islam` | [Musnad Ahmad 15360, al-Risalah edition 24/77](https://shamela.ws/book/25794/11622), 1421 AH / 2001, edited by Shuayb al-Arnaut, Adil Murshid and others | The edition's investigators say its chain is sahih on the conditions of the two Sahih collections. The morning wording matches. |
+| `fitrah_islam_evening` | [Musnad Ahmad 15363, 24/79](https://shamela.ws/book/25794/11624), [continuation 24/80](https://shamela.ws/book/25794/11625) | The investigators call the hadith sahih and this chain hasan, accepting the addition that mentions the evening. The report mentions both occasions but quotes `أصبحنا`; the displayed `أمسينا` is expressly identified as the evening adaptation. |
+| `ya_hayyu` | al-Nasa'i, *Amal al-Yawm wa'l-Laylah* 46 and *al-Sunan al-Kubra* 6/147; al-Hakim, *al-Mustadrak* 1/730; [quoted text and takhrij](https://islamqa.info/ar/answers/109609) | The Fatima report specifies morning and evening. This source explicitly attributes **إسناده حسن** to al-Albani, *al-Silsilah al-Sahihah* 227. Volume/page locators follow the editions cited by that source. |
+| `ayat_kursi`, morning/evening | [al-Hakim 2064, Dar al-Kutub al-Ilmiyyah edition 1/749](https://shamela.ws/book/2266/2117); al-Albani, *Sahih al-Targhib wa'l-Tarhib* 662: [grade and start](https://shamela.ws/book/171/414), [complete occasion wording](https://shamela.ws/book/171/415) | Al-Albani's **صحيح** is directly visible. The app attributes that assessment to him and links a [contrary assessment of the chains](https://islamqa.info/ar/answers/448652), without claiming consensus. Other editions cite al-Hakim 1/561–562. |
+| `ayat_kursi`, after prayer | [al-Nasa'i, al-Sunan al-Kubra 9848, 9/44](https://hadeethenc.com/ar/browse/hadith/10950); [explicit attribution of al-Albani's grade](https://islamqa.info/ar/answers/215945) | The latter source quotes al-Albani's **صحيح** in *Sahih al-Jami* 6464. This is a separate report from the morning/evening and bedtime reports. |
+| `newborn` | [General congratulatory supplication and the attributed athar's chains](https://islamqa.info/ar/answers/205068); [al-Nawawi, al-Adhkar, p.289, no.853](https://shamela.ws/book/1956/287), Dar al-Fikr / Abd al-Qadir al-Arnaut edition, 1414 AH / 1994 | The current app wording is explicitly a general supplication, not a Prophetic hadith or verbatim athar. It has `وبلغ رشده`; the related quoted sources have `وبلغ أشده`. The source traces the attributed athar to Ali ibn al-Ja'd p.488 and Tarikh Dimashq 59/276 and judges both chains weak. The displayed formulation is no longer attributed to al-Hasan. The digitized Nawawi edition itself says al-Husayn, so it is cited for a related formula, not used to settle that attribution. |
+
+The death-remembrance source panels retain their original collection links and now provide separate grading evidence:
+
+| Entry | Grading evidence | What was verified |
+| --- | --- | --- |
+| `tirmidhi_2307` | [al-Albani, Sahih al-Targhib wa'l-Tarhib 3333](https://shamela.ws/book/171/1642) | The primary digitized text explicitly says **حسن صحيح**. The source label now uses that precise assessment. |
+| `ibnmajah_4259` | [al-Albani, Sahih al-Targhib wa'l-Tarhib 3335, grade](https://shamela.ws/book/171/1642), [text continuation](https://shamela.ws/book/171/1643) | The grade **حسن** and the narration are directly visible. |
+| `ibnmajah_4171` | [al-Albani, al-Silsilah al-Sahihah 401](https://shamela.ws/book/9442/753), [continuation](https://shamela.ws/book/9442/754); [secondary index naming al-Albani's Hasan assessment](https://raw.githubusercontent.com/fawazahmed0/hadith-api/1/editions/ara-ibnmajah/4171.json) | The primary pages discuss the weak individual chain and its supporting reports, but do not print the literal label **حسن**. The app explicitly identifies the linked index as the source for that label; it does not present the index as a primary grading edition or invent a new assessment. The prior source-table locator *Sahih Ibn Majah* 3381 was not independently rechecked in this update. |
+
+All retrievals used the machine's configured HTTP/HTTPS proxy. Original Sunnah.com and Dorar access was blocked during the review; digitized editions and the specifically identified scholarly pages above supply the new evidence. The unconfirmed review questions concerning Tirmidhi 3432's precise grade wording, the sleep-qini repetition qualification, the selected al-Adab al-Mufrad 1199 wording and Ahmad 3712's exact grading remain separate; no speculative correction was made to them.
+
 ## Source mapping
 
 | Entries | Sources |
@@ -46,7 +71,7 @@ The bundled Arabic catalog is a selection, not an exhaustive adhkar collection. 
 | Bedtime bismika and waking | [Sahih al-Bukhari 6324](https://sunnah.com/bukhari:6324) |
 | Bedtime supplication (Bismika Rabbi wada'tu janbi) | [Sahih al-Bukhari 6320](https://sunnah.com/bukhari:6320) |
 | Last two verses of al-Baqarah at night | [Qaloon 2:284–285](https://quranpedia.net/surah/7/2), [Sahih al-Bukhari 5009](https://sunnah.com/bukhari:5009) |
-| Ayat al-Kursi | [Qaloon 2:253–254](https://quranpedia.net/surah/7/2); before sleep: [Sahih al-Bukhari 2311](https://sunnah.com/bukhari:2311); morning/evening: al-Hakim's al-Mustadrak (hadith of Ubayy ibn Ka'b); after every prayer: al-Nasa'i's al-Sunan al-Kubra (hadith of Abu Umama); Al-Albani graded both sahih |
+| Ayat al-Kursi | [Qaloon 2:253–254](https://quranpedia.net/surah/7/2); before sleep: [Sahih al-Bukhari 2311](https://sunnah.com/bukhari:2311); morning/evening: [al-Hakim 2064](https://shamela.ws/book/2266/2117), al-Albani [Sahih al-Targhib 662](https://shamela.ws/book/171/414); after every prayer: [al-Nasa'i al-Sunan al-Kubra 9848](https://hadeethenc.com/ar/browse/hadith/10950), al-Albani [Sahih al-Jami 6464, as cited](https://islamqa.info/ar/answers/215945); see the update above for editions and grading differences |
 | Bedtime submission supplication | [Sahih al-Bukhari 6311](https://sunnah.com/bukhari:6311) |
 | Bedtime tasbih, tahmid, takbir | [Sahih Muslim 2727a](https://sunnah.com/muslim:2727a) |
 | Mentioning Allah and greeting on home entry | [Sahih Muslim 2018a](https://sunnah.com/muslim:2018a), [Qaloon 24:59](https://quranpedia.net/surah/7/24) |
@@ -102,12 +127,16 @@ One word of the source differs from the scans and is corrected in `scripts/quran
 
 ### Waqf signs and verse numbers
 
-The source has no Madinah waqf signs, so the Quran tab and «المراجعة» show verses without them. Since 2026-10-18 the mushaf's signs of every verse are in `assets/quran/waqf.json`, read on the scans (see «Shared verses» below); only a shared verse uses them so far. The passages shown outside the Quran tab carry the mushaf's own signs, read line by line on the scans:
+The source encoding's waqf signs are at different positions from this mushaf and are removed by the text conversion. The replacement signs of every verse are in `assets/quran/waqf.json`, read on the scans since 2026-10-18 (see «Shared verses» below). Since 2026-10-25 the typed Quran and «المراجعة» views also use these scan-derived signs, as copied/shared verses already did. Each sign stays attached to its source word; raw search text and Hifz word-selection indexes remain unchanged. Page fragments use the appropriate slice of the complete verse's converted words. The passages shown outside the Quran tab carry the same signs, read line by line on the scans:
 - `scripts/mushaf_text/build_passages.py` writes them to `MushafPassages` (shared module).
 - They are the adhkar passages, the closing card's verses, the 14 header verses and the basmala.
 - A header verse keeps the sign that follows its last word in the mushaf (7 of them).
 
 A verse ends with its frame and number in Western digits, bound to the verse's last word by a no-break space. `MushafPassagesTest` holds each passage's SHA-256 and checks that its words are the Quran tab's words.
+
+### Qur'an quotations in adhkar explanations
+
+Since 2026-10-25, explicitly Qur'anic quotations in the explanations of Ayat al-Kursi, al-Ikhlas, al-Falaq, an-Nas and the fourfold tasbih use canonical word ranges from the bundled Qaloun text, including the scan-derived waqf at their endpoints. `scripts/mushaf_text/build_explanation_quotes.py` generates the separate `MushafExplanationQuotes` registry; it does not change the 39 standalone `MushafPassages` records. The Android reader renders only these registered quotation spans in the mushaf font. Surrounding prose, non-Qur'an definitions and attributed hadith quotations retain their original text. The readable explanation remains available for search and accessibility.
 
 ### The font
 
@@ -126,7 +155,7 @@ Some text is not set in the mushaf font:
 - **Search and TalkBack:** the catalog's readable wording stays for search and for TalkBack.
 - **Copied and shared verses (since 2026-10-18):** the mushaf's converted words and its waqf signs (`waqf.json`), in code points other apps' fonts draw as the mushaf means them (`QuranMushafText.plain`), then the surah, the verse number, the riwaya and the count. The source encoding is not shared: other fonts draw its wasl as a vowel to read (a kasra on the alif of al-hamdu, 1:1), its open tanween as an inverted damma, a fatha with two dots or a subscript alif, and its ya as the Urdu yeh barree, and its waqf signs are at Maghribi positions.
 - **Notifications:** «المراجعة» notifications show the same form (`QuranMushafText.plain`).
-- **Hadith quotations:** duas that quote the Qur'an inside a hadith's wording keep the hadith's text. These are the travel supplication (Muslim 1342, with al-Zukhruf 12–13), the supplication of Dhul-Nun (al-Anbiya 86) and the home-entry greeting. So does commentary quoting a few words.
+- **Hadith quotations:** duas that quote the Qur'an inside a hadith's wording keep the hadith's text. These are the travel supplication (Muslim 1342, with al-Zukhruf 12–13), the supplication of Dhul-Nun (al-Anbiya 86) and the home-entry greeting. Non-Qur'an quotations and word definitions in commentary also retain their original wording; explicitly Qur'anic explanation spans use the canonical text described above.
 
 ### Shared verses
 
@@ -142,11 +171,11 @@ The shared text was checked on 2026-10-18 against the King Fahd Complex's own Qa
 - The count is the scan's own: the edition's afterword (scan 604) says it follows the later Madani count (6214 verses).
 - The medallions match the index's verse ends on all 603 pages (`highlights-audit.json`). Printed numbers were read at 1:1–7, 2:1–4, 2:70–71, 2:252–253, 7:96–97, 13:4–5, 15:6–7, 15:32, 17:61–62, 27:19–20, 36:20–21, 37:16–17 and 56:50–51.
 
-The waqf signs (`assets/quran/waqf.json`, 4305 signs in 2630 verses) were read on the scans on 2026-10-18 by `scripts/mushaf_waqf` (its `build.py` says how):
-- **The signs:** the mushaf prints four: ج (2037), صلى (1678), قلى (586) and the paired ∴ (4, at 2:1 and 2:194). It prints no lazim mim and no «لا», not even where both Madinah Hafs texts have them (2:25, 2:117, 5:53, 10:65, 29:25, 36:75, 54:6 were read).
+The waqf signs (`assets/quran/waqf.json`, 4331 signs in 2638 verses) were read on the scans on 2026-10-18 by `scripts/mushaf_waqf` (its `build.py` says how), and checked on 2026-11-04 against the owner's 2017 copy and the book drawn from it (`work/mushaf-photos-2017/textcheck`):
+- **The signs:** the mushaf prints five: ج (2033), صلى (1677), قلى (582), the paired ∴ (10) and the lazim mim ۘ (29), as the app's data now has them (the 2017 printing's changes included). The scans print the lazim mim at the 22 places where both Madinah Hafs texts have one and after 6:140 «وصفهم», 36:51 «مرقدنا» and 57:18 «ونورهم»; the 2017 printing sets four more, in «waladan ... subhanahu» verses. Its small loop with a tail, set high, reads like a damma: the reading of 2026-10-18 took it for one, and the matching had no template for it; a template cut from seven of them found all 25 on 2026-11-04. It prints no «لا».
 - **The scan decides** each sign's kind and how many a verse has. Every glyph was found by matching one template of each sign, cut from the scans, over all 603 pages; true signs score 0.65 or more and everything else 0.62 or less, which was read on contact sheets of every hit in between.
 - **The word** each sign follows comes from its place in the verse's width on the page, choosing among the words after which the Madinah Hafs texts (KFGQPC data v18 and Tanzil's 1405H text) put a sign. Where neither has one, it is the nearest word. Most signs (3988) are where both Madinah texts have the same sign; 66 differ from both in kind, and Qaloun's own readings move some (2:283 has no sign after the name of Allah, before the jussive «fa-yaghfir»).
-- **Read on the scans:** 145 signs the matching flagged, 107 near a place where the Qaloun words differ from the Hafs ones, and the 17 whose kind neither Madinah text has. Five verses were corrected (`overrides.json`: 7:58, 9:102, 27:84, 57:18, 78:37). The 26 signs read by hand for `MushafPassages` all agree, and a test checks it.
+- **Read on the scans:** 145 signs the matching flagged, 107 near a place where the Qaloun words differ from the Hafs ones, and the 17 whose kind neither Madinah text has. Five verses were corrected (`overrides.json`: 7:58, 9:102, 27:84, 57:18, 78:37). On 2026-11-04 every sign the 2017 book draws was matched to its word: all sit on their data word but 34:3's صلى, which stands after «لتأتينكم» (Qaloun reads «عالم» with a damma, a new clause; the matching had given it Hafs's place, after «الغيب»): corrected, with the 25 lazim mims. The five pages the 2017 printing lays out anew (its line breaks differ from the scans', printed 121, 317 and 354-356) were read on its photos line by line: one sign the scans' page does not have, the صلى after 24:36 «والآصال», was added. The 26 signs read by hand for `MushafPassages` all agree, and a test checks it.
 
 ## Closing card
 
@@ -181,6 +210,23 @@ The hadith were built from sunnah.com's code points with the `DhikrNarrations` c
 - the reference is kept apart from the text, and the card shows it under the text.
 
 Bukhari 6465, rather than Muslim 783 or Bukhari 6464, gives «أدومها وإن قل» as a whole answer. The card labels it «من فضل المداومة», and the other texts «من فضل الذكر».
+
+### Salawat reminder completion — 2026-11-06
+
+Only a single-dhikr Salawat reminder uses `DhikrSalawatClosingTexts`; other reminders and collection closings retain their generic pool, and free library counting still has no closing card. All wording variants share the stable Salawat ID. The eight owner-approved benefits have a short heading, quoted evidence and its reference, without grading labels or extra explanatory summaries. One eligible benefit is chosen per card and saved across recreation, including across midnight. The Friday report is eligible only when the card first opens on Friday. These texts concern Salawat generally, not a reward restricted to the Ibrahimiyya formula or the app's personal counting goal.
+
+| Benefit | Quoted evidence and source |
+| --- | --- |
+| Ten prayers from Allah | [Muslim 408](https://sunnah.com/muslim:408), complete Prophetic saying. |
+| Obeying Allah's command | Al-Ahzab 56, generated from the bundled Qaloun text at `33:56:0-12`, with the bundled mushaf's waqf after word 5. Retains Qaloun's hamza in `النبيء`; rendered in the mushaf font. |
+| Presented to the Prophet on Friday | [Abu Dawud 1531](https://sunnah.com/abudawud:1531), the first Prophetic statement, without the subsequent question and answer. This is the shorter parallel report to Abu Dawud 1047 researched in the proposal. |
+| Erased sins and raised degrees | [al-Nasa'i 1297](https://sunnah.com/nasai:1297), complete Prophetic saying; kept together as one benefit. |
+| Salawat reaches him wherever one is | [Abu Dawud 2042](https://sunnah.com/abudawud:2042), complete Prophetic saying. |
+| A means of answered supplication | [Abu Dawud 1481](https://sunnah.com/abudawud:1481), the complete instruction beginning `إذا صلى أحدكم`, preserving praise of Allah before Salawat and supplication. |
+| Increasing love for the Prophet | **Scholarly explanation, not hadith:** Ibn al-Qayyim, *Jala' al-Afham*, benefit 33, printed p.525, Dar Ata'at al-Ilm / Ibn Hazm, fifth edition 1440 AH / 2019; [primary digitized page](https://shamela.ws/book/18124/575). Quotes its opening clause, explicitly attributed to Ibn al-Qayyim in the text and reference. |
+| Nearness on the Day of Resurrection | [al-Tirmidhi 484](https://sunnah.com/tirmidhi:484), complete Prophetic saying. The source calls it hasan gharib; some scholars weaken it. This research qualification is retained here, not displayed as a grading label in the completion card, as the owner requested. |
+
+Hadith wording was checked directly on Sunnah.com in the proposal's research; the Ibn al-Qayyim excerpt was additionally checked against the primary digitized edition during implementation. The reports on anxiety/forgiveness and angels praying for the reader were not approved and are not included. Source collection names such as `صحيح مسلم` remain collection names, not appended assessments.
 
 ## «ذكر الموت» (عباداتي)
 

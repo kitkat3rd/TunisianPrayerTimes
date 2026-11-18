@@ -86,13 +86,17 @@ class QuranAutoReviewInstrumentedTest {
     @Test fun dailyReviewRequiresAnExplicitAnswerAndResumesTheSameNextQuestion() = browser { browser ->
         val controller = MediaController(context, browser.sessionToken)
         controller.transportControls.playFromMediaId(QuranAutoReview.DAILY_ID, null)
-        await { core.mode == HifzSessionMode.Daily && core.view().point?.id == fixture.first().id && core.active }
+        await { daily() && core.view().point?.id == fixture.first().id && core.active }
         await { controller.playbackState?.customActions?.any { it.action == "${QuranAutoReview.ACTION_PREFIX}${core.view().token}/reveal" } == true }
-        assertEquals(0L, controller.playbackState!!.actions and PlaybackState.ACTION_SKIP_TO_NEXT)
+        // Before «أظهر» a card can be skipped, and Back finds it as it was.
+        await { controller.playbackState!!.actions and PlaybackState.ACTION_SKIP_TO_NEXT != 0L }
         controller.transportControls.skipToNext()
+        await { core.view().point?.id == fixture[1].id }
+        controller.transportControls.skipToPrevious()
+        await { core.view().point?.id == fixture.first().id }
         Thread.sleep(450)
-        assertEquals(fixture.first().id, core.view().point!!.id)
         reveal(controller)
+        assertEquals(0L, controller.playbackState!!.actions and PlaybackState.ACTION_SKIP_TO_NEXT)
         assertTrue(HifzRepository.points.value.first().checks.isEmpty())
         val oldAgain = action(controller, "again")
         controller.transportControls.sendCustomAction(action(controller, "held"), null)
@@ -110,10 +114,10 @@ class QuranAutoReviewInstrumentedTest {
         assertEquals(1, HifzRepository.points.value.first().checks.size)
     }
 
-    @Test fun notebookReviewKeepsThePhoneRulesForANonDueRecall() = browser { browser ->
+    @Test fun aListReviewKeepsThePhoneRulesForANonDueRecall() = browser { browser ->
         val controller = MediaController(context, browser.sessionToken)
         controller.transportControls.playFromMediaId(QuranAutoReview.NOTEBOOK_ID, null)
-        await { core.mode == HifzSessionMode.Notebook && core.active }
+        await { core.mode == HifzSessionMode.Review && core.origin == HifzReviewOrigin.List && core.active }
         controller.transportControls.skipToNext()
         await { core.view().index == 1 }
         controller.transportControls.skipToNext()
@@ -122,15 +126,18 @@ class QuranAutoReviewInstrumentedTest {
         reveal(controller)
         controller.transportControls.sendCustomAction(action(controller, "held"), null)
         await { !core.savingAnswer && core.view().phase == HifzSessionPhase.Finished }
+        // Saved, not counted: its dates stay as they were.
         val point = HifzRepository.points.value.single { it.id == fixture[2].id }
-        assertEquals(fixture[2], point)
-        assertEquals(HifzGrade.Held, core.practiceState.answer(point))
+        assertFalse(point.checks.single().counted)
+        assertEquals(fixture[2].step, point.step)
+        assertEquals(fixture[2].dueDay, point.dueDay)
+        assertEquals(HifzGrade.Held, core.reviewState.answer(point))
     }
 
     @Test fun thePhoneContinuesTheCarQuestionAndItsAnswerUpdatesTheHeadUnit() = browser { browser ->
         val controller = MediaController(context, browser.sessionToken)
         controller.transportControls.playFromMediaId(QuranAutoReview.DAILY_ID, null)
-        await { core.mode == HifzSessionMode.Daily && core.active }
+        await { daily() && core.active }
         Thread.sleep(500)
         reveal(controller)
         val questionId = core.view().point!!.id
@@ -158,11 +165,13 @@ class QuranAutoReviewInstrumentedTest {
         Assume.assumeTrue("Preview hold was not requested", hold > 0)
         val controller = MediaController(context, browser.sessionToken)
         controller.transportControls.playFromMediaId(QuranAutoReview.DAILY_ID, null)
-        await { core.mode == HifzSessionMode.Daily && core.active }
+        await { daily() && core.active }
         val until = System.currentTimeMillis() + hold.coerceAtMost(300_000L)
         while (System.currentTimeMillis() < until) Thread.sleep(500)
         controller.transportControls.pause()
     }
+
+    private fun daily() = core.mode == HifzSessionMode.Review && core.origin == HifzReviewOrigin.Daily
 
     private fun reveal(controller: MediaController) {
         await { controller.playbackState?.customActions?.any { it.action == "${QuranAutoReview.ACTION_PREFIX}${core.view().token}/reveal" } == true }

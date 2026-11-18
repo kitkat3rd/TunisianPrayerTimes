@@ -75,8 +75,10 @@ import kotlinx.coroutines.withContext
 /**
  * The full-screen countdown of the warning (owner's idea, 2026-11-15): the prayer, the seconds left and one large
  * «إلغاء هذا الأذان», over the lock screen. Once the adhan sounds, the same page offers «إيقاف»; if it stays quiet,
- * the page gives the reason and «إغلاق». A volume key here does what the button does and leaves the volume as it was.
- * Android opens it only on a locked or dark phone; a phone in use shows the notification's banner.
+ * the page gives the reason and «إغلاق». Before the adhan, and on the quiet page, a volume key does what the button
+ * does. While the adhan sounds (owner, 2026-11-16), volume down mutes it, the first volume up brings it back, and
+ * then volume up raises it as usual. Only that last case moves the volume. Android opens the page only on a locked or
+ * dark phone; a phone in use shows the notification's banner.
  */
 class AdhanAlertActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +90,8 @@ class AdhanAlertActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         }
+        // Volume up during the adhan raises the adhan's own volume.
+        volumeControlStream = AdhanPlaybackService.ADHAN_STREAM
         // Dark clock and icons on the light paper, whatever the phone's theme.
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = true
@@ -149,22 +153,38 @@ class AdhanAlertActivity : ComponentActivity() {
         super.onPause()
     }
 
+    /** The volume keys whose press the page used: their repeats and release are swallowed too. */
+    private val swallowedKeys = mutableSetOf<Int>()
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val volumeKey = keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
-            keyCode == KeyEvent.KEYCODE_VOLUME_MUTE
-        if (volumeKey && AdhanPlaybackService.alert.value != null) {
-            if (event.repeatCount == 0) AdhanPlaybackService.cancelFromPage(this)
-            return true
+        if (!isVolumeKey(keyCode)) return super.onKeyDown(keyCode, event)
+        // A held key the page already used keeps doing nothing, even once the page has no adhan.
+        if (event.repeatCount > 0 && keyCode in swallowedKeys) return true
+        val shown = AdhanPlaybackService.alert.value ?: return super.onKeyDown(keyCode, event)
+        if (shown.sounding) {
+            when {
+                // Volume up on a heard adhan takes the default way, on [volumeControlStream].
+                keyCode == KeyEvent.KEYCODE_VOLUME_UP && !shown.muted -> return super.onKeyDown(keyCode, event)
+                keyCode == KeyEvent.KEYCODE_VOLUME_UP -> AdhanPlaybackService.muteFromPage(this, muted = false)
+                keyCode == KeyEvent.KEYCODE_VOLUME_MUTE -> AdhanPlaybackService.muteFromPage(this, muted = !shown.muted)
+                !shown.muted -> AdhanPlaybackService.muteFromPage(this, muted = true)
+            }
+        } else if (event.repeatCount == 0) {
+            AdhanPlaybackService.cancelFromPage(this)
         }
-        return super.onKeyDown(keyCode, event)
+        swallowedKeys += keyCode
+        return true
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        val volumeKey = keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
-            keyCode == KeyEvent.KEYCODE_VOLUME_MUTE
         // Swallowed with its press, so the volume does not move.
-        return if (volumeKey) true else super.onKeyUp(keyCode, event)
+        if (isVolumeKey(keyCode) && swallowedKeys.remove(keyCode)) return true
+        return super.onKeyUp(keyCode, event)
     }
+
+    private fun isVolumeKey(keyCode: Int): Boolean =
+        keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            keyCode == KeyEvent.KEYCODE_VOLUME_MUTE
 
     companion object {
         private const val OPEN_GRACE_MILLIS = 2_000L
@@ -334,6 +354,8 @@ private fun VoiceWave(alert: AdhanAlert) {
     }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) withFrameMillis { now = System.currentTimeMillis() } }
+    // Muted by volume down: the voice runs on, faded, so the page shows the adhan is still going.
+    val shade = if (alert.muted) WAVE_MUTED_ALPHA else 1f
     Canvas(Modifier.fillMaxSize()) {
         val data = levels
         val position = (now - alert.startedAtMillis).coerceAtLeast(0L) / 1000f * LEVELS_PER_SECOND
@@ -347,7 +369,7 @@ private fun VoiceWave(alert: AdhanAlert) {
             val height = barWidth + (tallest - barWidth) * level.pow(WAVE_CURVE) * (1f - WAVE_EDGE_DROP * distance)
             val x = center.x + k * step
             drawLine(
-                color = Gold.copy(alpha = 1f - WAVE_EDGE_FADE * distance),
+                color = Gold.copy(alpha = (1f - WAVE_EDGE_FADE * distance) * shade),
                 start = Offset(x, center.y - height / 2f),
                 end = Offset(x, center.y + height / 2f),
                 strokeWidth = barWidth,
@@ -375,6 +397,7 @@ private const val WAVE_HEIGHT_SHARE = 0.6f
 private const val WAVE_EDGE_DROP = 0.35f
 private const val WAVE_EDGE_FADE = 0.55f
 private const val WAVE_CURVE = 1.6f
+private const val WAVE_MUTED_ALPHA = 0.3f
 private val WAVE_BAR_WIDTH = 5.dp
 private val WAVE_BAR_GAP = 5.dp
 

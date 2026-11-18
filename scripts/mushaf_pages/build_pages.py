@@ -2,7 +2,8 @@
 
 Each PDF page holds one heavily JPEG-compressed scan.  Every scan is restored (see
 enhance.py) and written as one lossy WebP at the scan's native resolution, plus a
-pages.json manifest.  Requires Pillow and PyMuPDF.
+pages.json manifest.  Only the Quran's pages: the PDF's first QURAN_PAGES; the pages
+after them (the appendix on the reading's rules) are left out.  Requires Pillow and PyMuPDF.
 
     python build_pages.py Quran_Qaloun.pdf out_dir
     python build_pages.py Quran_Qaloun.pdf out_dir --scale 1.5 --quality 40
@@ -20,6 +21,8 @@ from PIL import Image
 from enhance import enhance
 
 _doc = None
+# The PDF's pages that hold the Quran; its last 18 are the appendix.
+QURAN_PAGES = 603
 
 
 def name(i):
@@ -58,7 +61,9 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     doc = pymupdf.open(args.pdf)
-    total = doc.page_count
+    if doc.page_count < QURAN_PAGES:
+        raise SystemExit(f"{args.pdf} has {doc.page_count} pages; the Quran fills {QURAN_PAGES}")
+    total = QURAN_PAGES
     box = [round(doc[0].rect.width), round(doc[0].rect.height)]
     jobs = [(i, args.pdf, args.out_dir, args.scale, args.quality) for i in range(total)]
     t = time.time()

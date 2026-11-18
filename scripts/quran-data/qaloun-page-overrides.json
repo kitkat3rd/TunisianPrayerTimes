@@ -1,33 +1,24 @@
 {
-  "source": "Quran_Qaloun_pages, visually verified against the supplied scans",
+  "source": "Quran_Qaloun_pages, visually verified against the supplied scans; kept where the owner's 2017 copy (photographed 2026-10-30) paginates as the scans do",
   "overrides": [
     {
       "surah": 4,
       "ayah": 44,
-      "expectedAlignedPages": [84, 85],
+      "expectedAlignedPages": [
+        84,
+        85
+      ],
       "sourcePage": 84,
-      "evidence": "page_084.webp ends with the complete verse through وكفى بالله نصيرا and medallion 44; page_085.webp starts من الذين هادوا (verse 45)."
-    },
-    {
-      "surah": 24,
-      "ayah": 36,
-      "expectedAlignedPages": [353, 354],
-      "sourcePage": 353,
-      "evidence": "page_353.webp ends with the complete verse through تتقلب فيه القلوب والأبصار and medallion 36; page_354.webp starts ليجزيهم الله (verse 37)."
-    },
-    {
-      "surah": 24,
-      "ayah": 42,
-      "expectedAlignedPages": [354, 355],
-      "sourcePage": 354,
-      "evidence": "page_354.webp ends with يقلب الله الليل والنهار إن في ذلك لعبرة لأولي الأبصار and medallion 42; page_355.webp starts والله خلق كل دابة (verse 43)."
+      "evidence": "page_084.webp ends with the complete verse through وكفى بالله نصيرا and medallion 44; page_085.webp starts من الذين هادوا (verse 45). The 2017 printing (the owner's copy) has the same page break."
     },
     {
       "surah": 87,
       "ayah": 15,
-      "expectedAlignedPages": [590],
+      "expectedAlignedPages": [
+        590
+      ],
       "sourcePage": 591,
-      "evidence": "page_590.webp ends with قد أفلح من تزكى and medallion 14; page_591.webp starts وذكر اسم ربه فصلى and medallion 15."
+      "evidence": "page_590.webp ends with قد أفلح من تزكى and medallion 14; page_591.webp starts وذكر اسم ربه فصلى and medallion 15. The 2017 printing (the owner's copy) has the same page break."
     }
   ]
 }

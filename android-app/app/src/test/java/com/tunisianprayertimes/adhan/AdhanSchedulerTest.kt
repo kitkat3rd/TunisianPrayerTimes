@@ -2,6 +2,8 @@ package com.tunisianprayertimes.adhan
 
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerTimesRepository.PrayerOccurrence
+import com.tunisianprayertimes.silence.EndResolution
+import com.tunisianprayertimes.silence.SilenceWindow
 import java.time.Instant
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -62,5 +64,24 @@ class AdhanSchedulerTest {
         val warnings = slots.mapNotNull { (prayer, day) -> AdhanScheduler.warningCode(prayer, day) }.toSet()
         assertEquals(slots.size, warnings.size)
         assertEquals(emptySet<Int>(), adhans intersect warnings)
+    }
+
+    @Test
+    fun aBuzzComesBeforeASilenceThatWouldKeepTheWarningStill() {
+        val adhan = Instant.parse("2026-11-09T13:45:00Z")
+        val warning = adhan.toEpochMilli() - AdhanScheduler.WARNING_LEAD_MILLIS
+        fun silence(start: String) = SilenceWindow(
+            Prayer.ASR, today, adhan, Instant.parse(start), Instant.parse("2026-11-09T14:15:00Z"), EndResolution.AS_SET, clamped = false,
+        )
+        val early = silence("2026-11-09T13:40:00Z")
+        val start = AdhanScheduler.silenceStartBeforeWarning(listOf(early), warning) { false }
+        assertEquals(early.start.toEpochMilli(), start)
+        assertEquals(early.start.toEpochMilli() - 10_000L, AdhanScheduler.beforeSilenceAt(start, now.toEpochMilli()))
+        // A silence that starts with the adhan: its warning comes first and vibrates.
+        assertNull(AdhanScheduler.silenceStartBeforeWarning(listOf(silence("2026-11-09T13:45:00Z")), warning) { false })
+        // Dismissed: no silence will come.
+        assertNull(AdhanScheduler.silenceStartBeforeWarning(listOf(early), warning) { true })
+        // Begun already: the phone is already still.
+        assertNull(AdhanScheduler.beforeSilenceAt(start, early.start.toEpochMilli()))
     }
 }

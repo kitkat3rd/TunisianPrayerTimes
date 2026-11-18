@@ -406,6 +406,9 @@ internal fun QuranReflowView(
     erasing: Boolean = false,
     /** «مراجعة»: the verses whose words a stroke of the eraser went over. */
     onErased: (Set<QuranVerseReference>) -> Unit = {},
+    /** «مراجعة»: verses the eraser leaves covered, the answers of questions waiting; [onEraserLocked] is told of one. */
+    eraserLocked: Set<QuranVerseReference> = emptySet(),
+    onEraserLocked: (QuranVerseReference) -> Unit = {},
     /** «مراجعة»: a fast swipe over the cover, for the pages to follow. */
     onSwipePages: (moves: ReceiveChannel<Float>, release: Deferred<Float>) -> Unit = { _, _ -> },
     /** The rows in view count toward [onRead]: the page is in front of the reader, nothing over it. */
@@ -422,6 +425,8 @@ internal fun QuranReflowView(
     // The rows' touch outlives recompositions: it must see what is covered now, and call the newest callbacks.
     val currentErasing by rememberUpdatedState(erasing)
     val currentOnErased by rememberUpdatedState(onErased)
+    val currentEraserLocked by rememberUpdatedState(eraserLocked)
+    val currentOnEraserLocked by rememberUpdatedState(onEraserLocked)
     val currentOnSwipePages by rememberUpdatedState(onSwipePages)
     val currentOnRead by rememberUpdatedState(onRead)
     val currentOnTap by rememberUpdatedState(onTap)
@@ -585,11 +590,16 @@ internal fun QuranReflowView(
         fun report(piece: QuranRowErased) {
             reflow.rows[piece.row].versesUnder(page, piece.left, piece.right).takeIf { it.isNotEmpty() }?.let { currentOnErased(it) }
         }
+        /** The first verse under [piece] the eraser must leave covered, told to the reader; null when it may go on. */
+        fun lockedUnder(piece: QuranRowErased): QuranVerseReference? =
+            reflow.rows[piece.row].versesUnder(page, piece.left, piece.right).firstOrNull { it in currentEraserLocked }
+                ?.also { currentOnEraserLocked(it) }
         /**
          * «مراجعة»: adds [piece], cut out of the older pieces it overlaps, so that each point fades on its own clock. The
          * pieces of one moment ([QuranEraseJoinMs]) make one: a stroke leaves a few pieces, not one a move.
          */
         fun addErased(piece: QuranRowErased) {
+            if (lockedUnder(piece) != null) return
             report(piece)
             val moment = piece.at / QuranEraseJoinMs
             val joined = erased.filter { it.row == piece.row && it.left <= piece.right && piece.left <= it.right && it.at / QuranEraseJoinMs == moment }
@@ -618,7 +628,7 @@ internal fun QuranReflowView(
             (0 until steps).mapNotNull { s -> rowAt(origin, from + (to - from) * (s / steps.toFloat()))?.let { (row, x) -> erasedAt(row, x, now) } }
                 .groupBy { it.row }
                 .forEach { (row, pieces) -> addErased(QuranRowErased(row, pieces.minOf { it.left }, pieces.maxOf { it.right }, now)) }
-            erasingUnder = rowAt(origin, to)?.let { (row, x) -> erasedAt(row, x, now) }
+            erasingUnder = rowAt(origin, to)?.let { (row, x) -> erasedAt(row, x, now) }?.takeIf { lockedUnder(it) == null }
         }
         fun releaseEraser() {
             erasingUnder?.let { addErased(QuranRowErased(it.row, it.left, it.right, SystemClock.uptimeMillis())) }
@@ -698,6 +708,8 @@ internal fun QuranReflowView(
                                     if (stroking[0]) return false
                                     val piece = erasedAt(index, (point.x - margin) / k, 0L) ?: return false
                                     stroking[0] = true
+                                    // A waiting answer stays covered: the stroke is the eraser's, and uncovers nothing there.
+                                    if (lockedUnder(piece) != null) return true
                                     erasingUnder = piece
                                     report(piece)
                                     return true

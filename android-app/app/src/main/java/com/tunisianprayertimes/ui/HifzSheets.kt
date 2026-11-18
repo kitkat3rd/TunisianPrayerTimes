@@ -172,17 +172,17 @@ internal fun hifzWhen(days: Long): String = when {
     else -> "بعد $days${NB}يومًا"
 }
 
-/** «مرة واحدة», «مرتان», «4 مرات»: right answers, «دون مساعدة», as a count on its own. */
+/** «يوم واحد», «يومان», «4 أيام»: the plan's days, each with a right answer «دون مساعدة», as a count on its own. */
 internal fun hifzRecallsLabel(count: Int): String = when {
-    count == 1 -> "مرة واحدة"
-    count == 2 -> "مرتان"
-    count % 100 in 3..10 -> "$count${NB}مرات"
-    else -> "$count${NB}مرة"
+    count == 1 -> "يوم واحد"
+    count == 2 -> "يومان"
+    count % 100 in 3..10 -> "$count${NB}أيام"
+    else -> "$count${NB}يومًا"
 }
 
 /** A configurable suggestion, not a validated threshold for memorizing a Quran verse. */
 internal fun hifzAutoReason(auto: Int): String =
-    "اقتراح قابل للتغيير: ${HifzReminder.recallsPhrase(auto)} دون مساعدة، بحسب سجلّ مراجعتك الأخير."
+    "اقتراح قابل للتغيير: ${hifzRecallsLabel(auto)}، بحسب سجلّ مراجعتك الأخير."
 
 /** No prayer-time estimate: the actual first available slot depends on that date and the current reminder policy. */
 internal fun hifzLaterReminders(settings: HifzSettings): String {
@@ -272,14 +272,9 @@ internal fun HifzPlanDialog(
                     } else Text("تتغيّر أوقات هذه الآية مع أوقات الإعدادات: ${HifzReminder.slipTimesPhrase(shown)}.",
                         fontSize = 13.sp, color = TextMuted, modifier = Modifier.testTag("hifz_plan_times"))
                 } else Text("التذكير متوقّف في الإعدادات: تجد أسئلتها في «مراجعة اليوم».", fontSize = 13.sp, color = TextMuted)
-                HifzPolicySwitch("سؤال واحد لهذه الآية في اليوم", chosenPlan.oncePerDay, "hifz_plan_once_per_day") {
-                    chosenPlan = chosenPlan.copy(oncePerDay = it)
-                }
-                Text(if (chosenPlan.oncePerDay) "تنتقل الإجابة التالية إلى يوم آخر، حتى لو اخترت عدة أوقات للتذكير."
-                    else "يمكن أن تعود في اليوم نفسه بعد مهلة المراجعة. نحتسب إجابتين صحيحتين كحدّ أقصى في اليوم، ثم نتابع غدًا.",
-                    fontSize = 12.sp, color = TextMuted)
+                // No once-a-day switch: the plan counts days, one right answer a day (16 November).
                 Text("إلى متى؟", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, modifier = Modifier.padding(top = 6.dp))
-                Text("إلى أن تتذكّرها دون مساعدة:", fontSize = 13.sp, color = TextDark)
+                Text("إلى أن تتذكّرها دون مساعدة في أيام مختلفة:", fontSize = 13.sp, color = TextDark)
                 // Different counts only: the suggestion may already be the most.
                 val options = buildList {
                     add(HifzPace.Light to 1)
@@ -299,13 +294,9 @@ internal fun HifzPlanDialog(
                     }
                 }
                 Text(hifzAutoReason(auto), fontSize = 13.sp, color = TextMuted)
-                if (count >= HifzFreshRecalls) Text(
-                    "تتوزّع الإجابات الصحيحة على 3 أيام على الأقل، ولا يزيد المحتسب منها على إجابتين في اليوم.",
-                    fontSize = 13.sp, color = TextMuted,
-                )
                 // What is already done counts; enough of it ends the reminders that follow one another, said before «تم».
                 if (done > 0) Text(
-                    "تذكّرتها ${HifzReminder.recallsPhrase(done)} دون مساعدة منذ سجّلت الخطأ، " +
+                    "تذكّرتها دون مساعدة في ${HifzReminder.daysPhrase(done)} منذ سجّلت الخطأ، " +
                         if (count <= done) "وهذا يكفي لما اخترت." else "وهذا محسوب لك.",
                     fontSize = 13.sp, color = if (count <= done) GreenPrimaryDark else TextMuted, modifier = Modifier.testTag("hifz_plan_done_count"),
                 )
@@ -452,8 +443,8 @@ internal fun HifzLadder(point: HifzPoint) {
     val fresh = point.fresh > 0
     val label = when {
         point.mastered -> "ثبتت"
-        fresh && point.freshDone == 0 -> "نسألك عنها إلى أن تتذكّرها ${HifzReminder.recallsPhrase(point.recalls)} دون مساعدة"
-        fresh -> "تذكّرتها ${HifzReminder.recallsPhrase(point.freshDone)} دون مساعدة، من أصل ${HifzReminder.recallsPhrase(point.recalls)} ${if (point.recalls == 2) "مطلوبتين" else "مطلوبة"}. تتباعد مواعيد مراجعتها بعد إتمام العدد"
+        fresh && point.freshDone == 0 -> "نسألك عنها ${HifzReminder.untilPhrase(point.recalls)}"
+        fresh -> "تذكّرتها دون مساعدة في ${HifzReminder.daysPhrase(point.freshDone)} من ${point.recalls}. تتباعد مواعيد مراجعتها بعد ذلك"
         else -> hifzHoldsAfter(point.checksToHold)
     }
     val color = if (fresh) QuranHifzViolet else GreenPrimary
@@ -644,7 +635,8 @@ internal fun HifzRecordSheet(
         "" -> null
         else -> HifzTimes.decode(chosen)
     }
-    val daily = chosenOncePerDay ?: recorded?.daily ?: (settings.times.count == 1)
+    // Never once a day since the plan counts days (16 November).
+    val daily = false
     val autoRecalls = recorded?.autoRecallsAfterSlip() ?: HifzFreshRecalls
     val recalls = when (pace) {
         HifzPace.Auto -> autoRecalls
@@ -1554,6 +1546,11 @@ private fun HifzPointHistory(point: HifzPoint) {
         if (point.checks.isEmpty()) {
             Text("لم نسألك عنها بعد.", fontSize = 13.sp, color = TextMuted)
         } else {
+            // Every right answer ever given, counted or not: the list below keeps only the latest that moved nothing.
+            if (point.rightAnswers > 0) Text(
+                "تذكّرتها دون مساعدة ${HifzReminder.recallsPhrase(point.rightAnswers)} في ${HifzReminder.daysPhrase(point.rightDays.coerceAtLeast(1))}",
+                fontSize = 13.sp, color = GreenPrimaryDark, modifier = Modifier.testTag("hifz_point_totals"),
+            )
             val recent = point.checks.asReversed()
             (if (all) recent else recent.take(3)).forEach { check ->
                 val zone = ZoneId.systemDefault()
@@ -1563,7 +1560,12 @@ private fun HifzPointHistory(point: HifzPoint) {
                     HifzGrade.Hesitated -> "تذكّرتها بتردّد أو بمساعدة"
                     HifzGrade.Again -> "نسيت أو أخطأت"
                 }
-                Text("$date · $outcome", fontSize = 13.sp, color = if (check.grade == HifzGrade.Held) GreenPrimaryDark else TextDark)
+                // An answer that moved nothing is listed in a quieter colour, with no word about it.
+                Text("$date · $outcome", fontSize = 13.sp, color = when {
+                    !check.counted -> TextMuted
+                    check.grade == HifzGrade.Held -> GreenPrimaryDark
+                    else -> TextDark
+                })
             }
             if (recent.size > 3) TextButton(onClick = { all = !all }) {
                 Text(if (all) "اعرض آخر 3${NB}أجوبة" else "اعرض كل الأجوبة (${recent.size})")
@@ -2193,19 +2195,19 @@ internal fun HifzHowItWorksDialog(onDismiss: () -> Unit) {
                 part(
                     "التذكير",
                     "في الأوقات التي تختارها، يصلك إشعار عند وجود مراجعة مستحقة، ضمن حدّ الإشعارات اليومي وخارج أوقات الهدوء. إن فات الموعد بمدة طويلة، تبقى المراجعة متاحة في التطبيق وينتظر الإشعار موعدًا لاحقًا. ومن الإشعار يمكنك تأجيله أو إيقافه لبقية اليوم.",
-                    "نقترح بعد الخطأ 5 إجابات صحيحة دون مساعدة، وتزداد إلى 7 ثم 9 إذا تكرّر الخطأ حديثًا. نحتسب إجابتين صحيحتين كحدّ أقصى في اليوم، فتتوزّع الإجابات الخمس على 3 أيام على الأقل. ويبدأ التثبيت مجدّدًا إن أخطأت في آية سبق أن ثبتت.",
+                    "نقترح بعد الخطأ أن تتذكّرها دون مساعدة في 3 أيام مختلفة، وتزداد إلى 4 ثم 5 إذا تكرّر الخطأ في أيام قريبة. نحتسب إجابة صحيحة واحدة في اليوم، ونحفظ كل إجاباتك الأخرى في «أجوبتك». ويبدأ التثبيت مجدّدًا إن أخطأت في آية سبق أن ثبتت.",
                     "بعد إتمام العدد نراجعها بفواصل: ${hifzReviewGapsPhrase()}. كل فاصل يبدأ من الإجابة الصحيحة السابقة؛ وليست هذه تواريخ محسوبة من يوم تسجيل الخطأ.",
-                    "نقترح عددًا قابلًا للتغيير بحسب صعوبتها في مراجعاتك الأخيرة. هذه الأعداد ومهلة الانتظار اختيارات تنظيمية، وليست مقياسًا مؤكدًا لحفظ القرآن. من «غيّر التذكير» تختار عدد الإجابات، وهل تُسأل مرة واحدة في اليوم، وهل تتبع الآية أوقات الإعدادات أو أوقاتًا خاصة لمرحلة التثبيت بعد الخطأ.",
-                    "النقاط بجانب كل موضع في «دفتر المراجعة» تُظهر تقدّمه: البنفسجية للمرات التي تذكّرت فيها آيته دون مساعدة، ثم الخضراء لأسئلته اللاحقة إلى أن تثبت.",
+                    "نقترح عددًا قابلًا للتغيير بحسب صعوبتها في مراجعاتك الأخيرة. هذه الأعداد ومهلة الانتظار اختيارات تنظيمية، وليست مقياسًا مؤكدًا لحفظ القرآن. من «غيّر التذكير» تختار عدد الأيام، وهل تتبع الآية أوقات الإعدادات أو أوقاتًا خاصة لمرحلة التثبيت بعد الخطأ.",
+                    "النقاط بجانب كل موضع في «دفتر المراجعة» تُظهر تقدّمه: البنفسجية للأيام التي تذكّرت فيها آيته دون مساعدة، ثم الخضراء لأسئلته اللاحقة إلى أن تثبت.",
                 )
                 part(
                     "السؤال",
                     "تُغطّى الآية في المصحف، فتقرؤها من حفظك، ثم تضغط «أظهر» وتختار:",
-                    "• «دون مساعدة»: قرأت الآية كاملة من حفظك، دون تردّد أو تلميح، قبل كشفها أو سماعها. تُحسب من مرات التثبيت المطلوبة، ثم تنقلك كل مراجعة صحيحة متباعدة إلى الفاصل التالي.",
+                    "• «دون مساعدة»: قرأت الآية كاملة من حفظك، دون تردّد أو تلميح، قبل كشفها أو سماعها. يُحسب بها يوم من أيام التثبيت المطلوبة، ثم تنقلك كل مراجعة صحيحة متباعدة إلى الفاصل التالي.",
                     "• «بتردّد أو تلميح»: تُسجَّل المحاولة ولا تُحسب نجاحًا. أثناء التثبيت نسألك في تذكير لاحق. وفي المراجعات المتباعدة نعود بعد يومين؛ إذا تذكّرتها دون مساعدة نعيد الفاصل الذي تردّدت فيه قبل الانتقال إلى فاصل أطول.",
                     "• «نسيت أو أخطأت»: يُسجّل الخطأ، ونذكّرك بها من جديد إلى أن تتذكّرها دون مساعدة، وقد يتغيّر العدد بحسب مراجعاتك الأخيرة. وإن أخطأت في كلمة لم تسجّلها من قبل، فأضفها من «أخطأت في كلمة أخرى؟».",
                     "إذا استعنت بملاحظتك أو كشفت جزءًا من الآية، فاختر «تذكّرتها بمساعدة» أو «لم أتذكّرها».",
-                    "لا نسألك عن آية رأيتها أو سمعتها قبل قليل: بعد الخطأ ننتظر ${HifzFreshGapMs / 60_000L}${NB}دقيقة، حتى إن مرّ وقت صلاة أثناءها؛ أما المراجعة المتباعدة فتنتظر اليوم التالي. القراءة وحدها لا تُكمل المراجعة. ابدأ بالمراجعة قبل فتح الآيات كي لا تتأجل أسئلتها.",
+                    "لا نحتسب سؤالًا عن آية رأيتها أو سمعتها قبل قليل: بعد الخطأ ننتظر ${HifzFreshGapMs / 60_000L}${NB}دقيقة، حتى إن مرّ وقت صلاة أثناءها؛ أما المراجعة المتباعدة فتنتظر اليوم التالي. وإن تذكّرتها دون مساعدة ثم أظهرتها، فلا ننتظر بعد ذلك الإظهار. القراءة وحدها لا تُكمل المراجعة. ابدأ بالمراجعة قبل فتح الآيات كي لا تتأجل أسئلتها.",
                     "بعد التردّد أو الخطأ، استمع إليها وكرّرها، ثم نسألك عنها في موعدها وهي مغطاة.",
                     "تظهر «ثبتت» بعد اجتياز المراجعات المتباعدة التسع، بما فيها المراجعة بعد فاصل 28 يومًا. ثم تعود كل 60 يومًا للتأكد.",
                     "يظهر «يحتاج عناية» على الآية التي تكرّرت صعوبتها حديثًا، ويزول حين تتذكّرها دون مساعدة في يومين مختلفين بعد آخر خطأ.",

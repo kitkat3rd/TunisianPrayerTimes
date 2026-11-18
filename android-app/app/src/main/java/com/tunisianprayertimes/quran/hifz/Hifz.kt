@@ -133,22 +133,24 @@ enum class HifzTimesPreset(val key: String, val label: String, val times: HifzTi
 const val HifzMaxClockTimes = 6
 
 /**
- * Starting target before checks space out. This and the intervals below are product defaults, not a validated
+ * Starting target before checks space out, in different days with a right answer (owner's plan, 16 November: days, not
+ * answers; docs/hifz-one-review-plan.md section 0). This and the intervals below are product defaults, not a validated
  * Quran-learning prescription; the reader can choose a different target.
  */
-const val HifzFreshRecalls = 5
-/** Upper limit offered by the current learning plan. */
-const val HifzMaxRecalls = 9
-/** At most two counted successes per day: the default five recalls span at least three days. */
-const val HifzFreshDailySuccessLimit = 2
+const val HifzFreshRecalls = 3
+/** Upper limit offered by the current learning plan, in days. */
+const val HifzMaxRecalls = 5
+/** One counted right answer a day: a night between counted answers. Every other answer is saved, not counted. */
+const val HifzFreshDailySuccessLimit = 1
 
 /**
- * The proposed target from recent difficulty, including the new slip: 5, 7 or 9. Previous mastery never reduces
- * reinforcement after another mistake. Lifetime mistake totals are kept separately.
+ * The proposed target from recent difficulty, including the new slip: 3, 4 or 5 days. Slips are counted once a day
+ * ([HifzPoint.autoRecallsAfterSlip]): a reader who retests often is not given a bigger plan for it. Previous mastery
+ * never reduces reinforcement after another mistake. Lifetime mistake totals are kept separately.
  */
 fun hifzAutoRecalls(slips: Int): Int = when {
     slips >= 3 -> HifzMaxRecalls
-    slips == 2 -> 7
+    slips == 2 -> 4
     else -> HifzFreshRecalls
 }
 
@@ -296,6 +298,10 @@ data class HifzPoint(
      * verse: one question, one answer, one plan (owner, 12 November). It may share verses with a verse's own point.
      */
     val last: Int? = null,
+    /** Every right answer without help ever given, counted or not: never trimmed with [checks]. */
+    val rightAnswers: Int = 0,
+    /** The days with at least one right answer without help: never trimmed with [checks]. */
+    val rightDays: Int = 0,
 ) {
     /** A forgotten passage, from [verse] to [last]. */
     val passage: Boolean get() = last != null
@@ -306,8 +312,12 @@ data class HifzPoint(
     /** [other] is one of the verses it asks ([span]). */
     fun asks(other: QuranVerseReference): Boolean = other.surah == verse.surah && other.ayah in verse.ayah..(last ?: verse.ayah)
     val mastered: Boolean get() = step >= HifzMasteredStep
-    /** The fresh-phase frequency, independent of whether its schedule follows the global settings. */
-    val daily: Boolean get() = oncePerDay ?: (times?.count == 1)
+    /**
+     * Asked once a day: no more since the plan counts days (16 November). One counted right answer a day already
+     * waits for the next day; before it, a fresh point is asked at each of its reminder times. [oncePerDay] is still
+     * read and written, unused.
+     */
+    val daily: Boolean get() = false
     /** The right answers this fresh phase asks for in all, as [pace] says. */
     val recalls: Int get() = when (pace) {
         HifzPace.Auto -> autoRecalls
@@ -332,8 +342,11 @@ data class HifzPoint(
     val linked: Boolean get() = atStart || skipped || passage
     /** When any of its verses was last [seen]: a passage's answer is all of them. */
     fun seenAt(seen: Map<QuranVerseReference, Long>): Long? = span.mapNotNull { seen[it] }.maxOrNull()
-    /** When a [fresh] point may be asked again: a while after its slip or its last answer, whichever came later. */
-    val freshDueAt: Long get() = hifzWaitEnd(maxOf(lastSlipAt, checks.lastOrNull()?.at ?: 0L))
+    /**
+     * When a [fresh] point may be asked again: a while after its slip or its last counted answer, whichever came later.
+     * An answer that did not count moves nothing.
+     */
+    val freshDueAt: Long get() = hifzWaitEnd(maxOf(lastSlipAt, checks.lastOrNull { it.counted }?.at ?: 0L))
     /** Recent difficulty has priority until two unaided checks show recovery. */
     val needsCare: Boolean
         get() {
@@ -459,18 +472,21 @@ private fun HifzPoint.knownRecentSlips(now: Long): List<Long> =
     (recentSlipTimes + createdAt + lastSlipAt + checks.filter { it.grade == HifzGrade.Again }.map { it.at })
         .filter { it in (now - HifzRecentDifficultyMs)..now }.distinct()
 
-/** A proposal for the next failure only; elapsed time never silently changes the target of an active fresh phase. */
+/**
+ * A proposal for the next failure only; elapsed time never silently changes the target of an active fresh phase. Slips
+ * are counted once a day: several misses on one day are one difficult day.
+ */
 fun HifzPoint.autoRecallsAfterSlip(now: Long = System.currentTimeMillis()): Int =
-    hifzAutoRecalls((knownRecentSlips(now) + now).distinct().size)
+    hifzAutoRecalls((knownRecentSlips(now) + now).map { epochDay(it) }.distinct().size)
 
-/** Right answers given since the slip: they count toward any count the plan asks for. */
+/** Counted right answers since the slip, one a day at most: the days the plan has had. */
 val HifzPoint.rightSinceSlip: Int
-    get() = checks.filter { it.at >= lastSlipAt && it.grade == HifzGrade.Held }
+    get() = checks.filter { it.counted && it.at >= lastSlipAt && it.grade == HifzGrade.Held }
         .groupingBy { it.day }.eachCount().values.sumOf { it.coerceAtMost(HifzFreshDailySuccessLimit) }
 
-/** Counted reinforcement successes today, also used when a plan is edited. */
+/** Counted reinforcement successes on [day], also used when a plan is edited. */
 private fun HifzPoint.rightOn(day: Long): Int =
-    checks.count { it.at >= lastSlipAt && it.day == day && it.grade == HifzGrade.Held }
+    checks.count { it.counted && it.at >= lastSlipAt && it.day == day && it.grade == HifzGrade.Held }
 
 /**
  * The plan changed by the reader on [today]: a fresh point keeps the right answers it already gave ([rightSinceSlip]);
@@ -504,23 +520,38 @@ const val HifzMasteredStep = 9
 /** How a check went: «أتقنتها», «ترددت», «ما زالت تحتاج تدريبا». */
 enum class HifzGrade { Held, Hesitated, Again }
 
-/** One scheduled recall result; immediate practice does not write a second check. */
-data class HifzCheck(val day: Long, val grade: HifzGrade, val at: Long)
+/**
+ * One answer to a point's question, whoever started it. [counted]: it moved the plan (decided by the time alone, R0);
+ * an answer that did not is kept too, for «أجوبتك», and moves nothing. A miss always counts.
+ */
+data class HifzCheck(val day: Long, val grade: HifzGrade, val at: Long, val counted: Boolean = true)
 
 private const val HifzCheckLimit = 60
+/** Answers that did not count, kept besides the counted ones: the latest only. */
+private const val HifzUncountedLimit = 20
 
-/** Compact format of the notebook's checks. */
-fun encodeHifzChecks(checks: List<HifzCheck>): String = checks.takeLast(HifzCheckLimit)
-    .joinToString(",") { "${it.day}:${it.grade.name}:${it.at}" }
+/**
+ * The last [HifzCheckLimit] counted answers and the last [HifzUncountedLimit] others, in their order: a day of many
+ * retests never pushes out the counted history the plan is read from.
+ */
+internal fun List<HifzCheck>.trimmedChecks(): List<HifzCheck> {
+    val counted = filter { it.counted }.takeLast(HifzCheckLimit).toSet()
+    val others = filter { !it.counted }.takeLast(HifzUncountedLimit).toSet()
+    return filter { it in counted || it in others }
+}
+
+/** Compact format of the notebook's checks; an answer that did not count ends with «:0». */
+fun encodeHifzChecks(checks: List<HifzCheck>): String = checks.trimmedChecks()
+    .joinToString(",") { "${it.day}:${it.grade.name}:${it.at}" + if (it.counted) "" else ":0" }
 
 fun decodeHifzChecks(value: String?): List<HifzCheck> = value.orEmpty().split(',').mapNotNull { row ->
     val parts = row.split(':')
-    if (parts.size != 3) return@mapNotNull null
+    if (parts.size != 3 && parts.size != 4) return@mapNotNull null
     val day = parts[0].toLongOrNull() ?: return@mapNotNull null
     val grade = HifzGrade.entries.firstOrNull { it.name == parts[1] } ?: return@mapNotNull null
     val at = parts[2].toLongOrNull() ?: return@mapNotNull null
-    HifzCheck(day, grade, at)
-}.takeLast(HifzCheckLimit)
+    HifzCheck(day, grade, at, counted = parts.getOrNull(3) != "0")
+}.trimmedChecks()
 
 /**
  * The point after a review graded [grade] on [today]. A fresh point counts its right answers down, at the next reminders,
@@ -529,10 +560,19 @@ fun decodeHifzChecks(value: String?): List<HifzCheck> = value.orEmpty().split(',
  * and a held point hesitated on leaves «ثبتت» until it is held again. A failed check is a slip like any other: the point
  * is fresh again, asked at every reminder until it is answered right [HifzFreshRecalls] times.
  */
-fun HifzPoint.graded(grade: HifzGrade, today: Long, now: Long): HifzPoint {
-    // Optional practice or a stale caller cannot turn a third same-day success into reinforcement progress.
-    if (fresh > 0 && grade == HifzGrade.Held && rightOn(today) >= HifzFreshDailySuccessLimit) return this
-    return when {
+fun HifzPoint.graded(grade: HifzGrade, today: Long, now: Long, counted: Boolean = true): HifzPoint {
+    val held = grade == HifzGrade.Held
+    // The totals count every right answer, before [checks] is trimmed; a day once, at its first right answer.
+    val totals = if (!held) this else copy(
+        rightAnswers = rightAnswers + 1,
+        rightDays = rightDays + if (checks.none { it.day == today && it.grade == HifzGrade.Held }) 1 else 0,
+    )
+    // R0 at save time: a miss always counts; a right answer or a hesitation only when its question could count when it
+    // was asked ([counted]), and in the fresh phase one right answer a day. The others are saved and move nothing.
+    val counts = grade == HifzGrade.Again ||
+        (counted && !(fresh > 0 && held && rightOn(today) >= HifzFreshDailySuccessLimit))
+    if (!counts) return totals.copy(checks = (checks + HifzCheck(today, grade, now, counted = false)).trimmedChecks())
+    return with(totals) { when {
         grade == HifzGrade.Again -> relapsed(today, now, askedToday = true)
         // Asked once a day: the next question is tomorrow's.
         fresh > 0 -> when {
@@ -549,7 +589,7 @@ fun HifzPoint.graded(grade: HifzGrade, today: Long, now: Long): HifzPoint {
             val back = (step - 1).coerceAtLeast(0)
             copy(step = back, dueDay = today + 2, masteredAt = masteredAt.takeIf { back >= HifzMasteredStep })
         }
-    }.copy(checks = (checks + HifzCheck(today, grade, now)).takeLast(HifzCheckLimit))
+    }.copy(checks = (checks + HifzCheck(today, grade, now)).trimmedChecks()) }
 }
 
 /** A «أتقنتها» now makes the point held («ثبتت»). */
@@ -608,7 +648,7 @@ fun List<HifzPoint>.dueToday(today: Long, now: Long, limit: Int = Int.MAX_VALUE)
  */
 fun List<HifzPoint>.reviewBatch(today: Long, now: Long, limit: Int, first: HifzPoint? = null): List<HifzPoint> {
     if (limit <= 0) return emptyList()
-    val answered = { point: HifzPoint -> maxOf(point.lastSlipAt, point.checks.lastOrNull()?.at ?: Long.MIN_VALUE) }
+    val answered = { point: HifzPoint -> maxOf(point.lastSlipAt, point.checks.lastOrNull { it.counted }?.at ?: Long.MIN_VALUE) }
     val sees = { a: HifzPoint, b: HifzPoint -> a.id != b.id && a.showsAnswerOf(b) }
     val chosen = mutableListOf<HifzPoint>().apply { first?.let(::add) }
     val ranked = dueToday(today, now).filterNot { it.id == first?.id || (first != null && sees(first, it)) }
@@ -681,7 +721,7 @@ fun List<HifzPoint>.reviewBatch(today: Long, now: Long, limit: Int, first: HifzP
 /**
  * [this] in its own order, except that a point comes once every one whose verse it [shows] is asked, so that no answer
  * gives away a question still to come; on a loop, which cannot be ordered so, the first one left goes. A
- * [reviewBatch]'s order after its first question, and the order of «مراجعة الدفتر».
+ * [reviewBatch]'s order after its first question, and the order of a list review ([hifzListPlan]).
  */
 internal fun List<HifzPoint>.answerSafeOrder(): List<HifzPoint> {
     val rest = toMutableList()
@@ -980,14 +1020,16 @@ object HifzRepository {
     }
 
     /** A shared review receipt is replayable after a process death, without applying the answer twice. */
-    internal fun gradeReview(context: Context, expected: HifzPoint, grade: HifzGrade, day: Long, at: Long): Boolean = change(context) { points ->
+    internal fun gradeReview(
+        context: Context, expected: HifzPoint, grade: HifzGrade, day: Long, at: Long, counted: Boolean = true,
+    ): Boolean = change(context) { points ->
         val current = points.firstOrNull { it.id == expected.id } ?: return@change points to false
         if (current.checks.any { it.at == at && it.grade == grade }) return@change points to true
         // Preserve edits, and reject a deleted/replaced question or a response already written by another caller.
         if (current.verse != expected.verse || current.mistakes != expected.mistakes || current.checks != expected.checks) {
             return@change points to false
         }
-        points.map { if (it.id == current.id) current.graded(grade, day, at) else it } to true
+        points.map { if (it.id == current.id) current.graded(grade, day, at, counted) else it } to true
     }
 
     /** An edited mistake and any newly requested reverse mistake are saved together, so retry cannot leave half an edit. */
@@ -1104,6 +1146,8 @@ internal fun encodeHifzPoints(points: List<HifzPoint>): String = JSONObject()
                 if (point.autoRecalls != HifzFreshRecalls) put("autoRecalls", point.autoRecalls)
                 point.oncePerDay?.let { put("oncePerDay", it) }
                 if (point.recentSlipTimes.isNotEmpty()) put("recentSlipTimes", JSONArray(point.recentSlipTimes.takeLast(HifzRecentSlipLimit)))
+                if (point.rightAnswers > 0) put("rightAnswers", point.rightAnswers)
+                if (point.rightDays > 0) put("rightDays", point.rightDays)
             }
             .put("key", point.key)
             .put("slips", point.slips)
@@ -1158,6 +1202,8 @@ internal fun decodeHifzPoints(value: String): List<HifzPoint> {
                 List(list.length()) { list.getLong(it) }.distinct().sorted().takeLast(HifzRecentSlipLimit)
             }.orEmpty(),
             last = row.optInt("last").takeIf { it > verse.ayah },
+            rightAnswers = row.optInt("rightAnswers").coerceAtLeast(0),
+            rightDays = row.optInt("rightDays").coerceAtLeast(0),
         ).let { if (oldPlan) it.withCurrentLearningPlan() else it }
     }
 }
@@ -1167,7 +1213,8 @@ internal fun decodeHifzPoints(value: String): List<HifzPoint> {
  * the five new retention checks. Existing due dates may move earlier, never later merely because of migration.
  */
 private fun HifzPoint.withCurrentLearningPlan(): HifzPoint {
-    val changed = copy(autoRecalls = when (autoRecalls) { 4 -> 7; 5 -> 9; else -> HifzFreshRecalls })
+    // The first plan asked 3, 4 or 5 answers; today's plan asks as many days (3, 4 or 5), never more.
+    val changed = copy(autoRecalls = autoRecalls.coerceIn(HifzFreshRecalls, HifzMaxRecalls))
     if (fresh > 0) {
         val last = checks.lastOrNull()
         return changed.copy(

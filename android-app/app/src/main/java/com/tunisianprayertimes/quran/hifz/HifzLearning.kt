@@ -21,6 +21,12 @@ internal data class HifzLearning(
         seen = seen.filterValues { it > at - HifzFreshGapMs } + verses.associateWith { verse -> seen[verse]?.takeIf { it > at - 60_000L } ?: at },
     )
 
+    /**
+     * Seen today, with no new time: a test's own «أظهر», which restarts no wait until it is answered. A right answer
+     * without help leaves it so (owner's plan, 16 November, D10); any other answer writes the time ([expose]).
+     */
+    fun exposeToday(verses: Set<QuranVerseReference>): HifzLearning = copy(exposed = exposed + verses)
+
     /** Merged with what is stored: the playback service records what it plays for a point while the reader's copy is older. */
     fun write(context: Context): HifzLearning = synchronized(storageLock) {
         val stored = readStored(context, day)

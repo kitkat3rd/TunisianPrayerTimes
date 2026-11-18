@@ -111,7 +111,10 @@ class AdhanAlertDeliveryTest {
 
         assertTrue(AdhanPlaybackService.alert.value!!.countingDown)
         assertNotNull(notification().fullScreenIntent)
-        assertSoundlessChannel()
+        // A quiet adhan's warning vibrates too (owner, 2026-11-16); Android keeps it still on a silent phone.
+        val channel = notifications.getNotificationChannel(notification().channelId)
+        assertNull(channel.sound)
+        assertTrue(channel.shouldVibrate())
 
         shadowOf(Looper.getMainLooper()).idleFor(15_000L, TimeUnit.MILLISECONDS)
         deliver(occurrence)

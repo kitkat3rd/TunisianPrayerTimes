@@ -78,8 +78,18 @@ import com.tunisianprayertimes.ui.theme.*
 /** What a review card can ask of the reader. */
 internal interface HifzReviewActions {
     fun grade(point: HifzPoint, grade: HifzGrade)
-    /** The shared session can finish a durable write before the card counts the response. */
-    fun tryGrade(point: HifzPoint, grade: HifzGrade): Boolean { grade(point, grade); return true }
+    /**
+     * The shared session can finish a durable write before the card counts the response. [counted]: R0, whether the
+     * answer could count when its card was first looked at; [outcome]: what the answer does, as said when it is given.
+     */
+    fun tryGrade(point: HifzPoint, grade: HifzGrade, counted: Boolean = true, outcome: String = ""): Boolean {
+        grade(point, grade); return true
+    }
+    /**
+     * R0 in a list review: whether [point]'s answer can count now, asked at its card's first look of any kind, before
+     * that look is written. In a review of due points every card is due, and counts.
+     */
+    fun canCount(point: HifzPoint): Boolean = true
     /** The verse before the point, once, as a cue. */
     fun listenBefore(point: HifzPoint)
     /** The right wording, once. */
@@ -129,6 +139,19 @@ internal data class HifzTally(
 private fun List<String>?.intAt(i: Int): Int = this?.getOrNull(i)?.toIntOrNull() ?: 0
 private fun List<String>?.longAt(i: Int): Long? = this?.getOrNull(i)?.toLongOrNull()
 private fun List<String>?.idsAt(i: Int): List<Long> = this?.getOrNull(i)?.split(',')?.mapNotNull { it.toLongOrNull() }.orEmpty()
+private fun List<String>?.gradesAt(i: Int): Map<Long, HifzGrade> = this?.getOrNull(i)?.split(',')?.mapNotNull { row ->
+    val parts = row.split(':')
+    val id = parts.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+    val grade = parts.getOrNull(1)?.let { name -> HifzGrade.entries.firstOrNull { it.name == name } } ?: return@mapNotNull null
+    id to grade
+}.orEmpty().toMap()
+private const val ReviewRowSeparator = "\u001E"
+private const val ReviewFieldSeparator = "\u001F"
+private fun List<String>?.textsAt(i: Int): Map<Long, String> = this?.getOrNull(i)?.takeIf { it.isNotEmpty() }?.split(ReviewRowSeparator)?.mapNotNull { row ->
+    val parts = row.split(ReviewFieldSeparator, limit = 2)
+    val id = parts.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+    id to parts.getOrNull(1).orEmpty()
+}.orEmpty().toMap()
 private fun List<String>?.versesAt(i: Int): Set<QuranVerseReference> = this?.getOrNull(i)?.split(',')?.mapNotNull { value ->
     val parts = value.split(':')
     val surah = parts.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
@@ -156,6 +179,11 @@ private fun mergeSeen(a: Map<QuranVerseReference, Long>, b: Map<QuranVerseRefere
  *
  * Kept by the reader rather than by a card: the review shows on the page or in a sheet, and goes from one to the other
  * with its place and its answers. Saved as text, so a re-created activity finds it again.
+ *
+ * One review, whoever starts it (owner, 16 November): the points due now, or a list the reader chose in the notebook
+ * ([list]). Before «أظهر» a card can be skipped, and come back to with Back; after «أظهر» it is answered before the
+ * review moves on; an answered card shows read-only. In a list review a card's answer counts only when its question
+ * could count at its first look (R0), and a card whose answer an earlier one showed is asked all the same, as helped.
  */
 @Stable
 internal class HifzReviewState private constructor(
@@ -165,12 +193,13 @@ internal class HifzReviewState private constructor(
     exposedVerses: Set<QuranVerseReference>,
     seenVerses: Map<QuranVerseReference, Long>,
     private val wallClock: () -> Long,
+    list: Boolean,
 ) {
     internal var inputBlocked = false
     /**
      * [clock]: [SystemClock.uptimeMillis], or a test's. [earlier]: the answers of the day's reviews before this one.
      * [exposedVerses]: the verses looked at today, whose spaced checks wait for tomorrow. [seenVerses]: when each verse's
-     * answer was last seen, by [wallClock], for the fresh points.
+     * answer was last seen, by [wallClock], for the fresh points. [list]: the points the reader chose, not those due.
      */
     constructor(
         clock: () -> Long = SystemClock::uptimeMillis,
@@ -178,7 +207,11 @@ internal class HifzReviewState private constructor(
         exposedVerses: Set<QuranVerseReference> = emptySet(),
         seenVerses: Map<QuranVerseReference, Long> = emptyMap(),
         wallClock: () -> Long = System::currentTimeMillis,
-    ) : this(null, clock, earlier, exposedVerses, seenVerses, wallClock)
+        list: Boolean = false,
+    ) : this(null, clock, earlier, exposedVerses, seenVerses, wallClock, list)
+
+    /** The points the reader chose in the notebook, rather than those due now. */
+    val list: Boolean = saved?.getOrNull(28)?.let { it == "1" } ?: list
 
     var held by mutableIntStateOf(saved.intAt(0))
         private set
@@ -229,8 +262,11 @@ internal class HifzReviewState private constructor(
         private set
     /** The card whose «ضابطي» the reader asked to see before «أظهر», as a hint. */
     private var hintId by mutableStateOf(saved.longAt(15))
-    /** A hint or the page's eraser helped before the answer was revealed. */
-    private var assistedId by mutableStateOf(saved.longAt(16))
+    /**
+     * The cards a hint, the page's eraser or, in a list review, an earlier card helped before their answer was revealed.
+     * One id in states saved before 16 November.
+     */
+    private var assistedIds by mutableStateOf(saved.idsAt(16).toSet())
     private var exposedVerses by mutableStateOf(saved?.getOrNull(17)?.let { saved.versesAt(17) } ?: exposedVerses)
     private var attemptId by mutableStateOf(saved.longAt(18))
     private var attemptVerse by mutableStateOf(saved.versesAt(19).firstOrNull())
@@ -241,13 +277,33 @@ internal class HifzReviewState private constructor(
     /** Points no longer asked in this review: their verse was looked at in it, so they wait for the next reminder. */
     var deferredIds by mutableStateOf(saved.idsAt(21).toSet())
         private set
+    /** Each answer given in this review, by its point, for the card come back to. */
+    private var answers by mutableStateOf(saved.gradesAt(29))
+    /** What each answer did, as said when it was given: the point changes once it is written. */
+    private var outcomes by mutableStateOf(saved.textsAt(30))
+    /** The cards whose first look of any kind decided R0, and among them those whose answer can count. */
+    private var lookedIds by mutableStateOf(saved.idsAt(31).toSet())
+    private var countedIds by mutableStateOf(saved.idsAt(32).toSet())
+    /** Every verse shown or heard during this review: in a list review, a card among them is asked as helped. */
+    private var shownHere by mutableStateOf(saved.versesAt(33))
+    /** The point of [attemptId], once drawn; not saved. */
+    private var attempt: HifzPoint? = null
     private var shownKey: Any? = null
     private var shownAt = 0L
 
     fun index(queue: List<HifzPoint>): Int = cardId?.let { id -> queue.indexOfFirst { it.id == id }.takeIf { it >= 0 } } ?: position
     fun point(queue: List<HifzPoint>): HifzPoint? = queue.getOrNull(index(queue))
-    fun revealed(point: HifzPoint?): Boolean = point != null && revealedId == point.id
+    /** Its answer shown: by «أظهر» now, or answered earlier in this review. */
+    fun revealed(point: HifzPoint?): Boolean = point != null && (revealedId == point.id || point.id in gradedIds)
     fun training(point: HifzPoint?): Boolean = point != null && trainingId == point.id
+    /** Answered in this review: come back to, the card shows its answer, read-only (no undo). */
+    fun answered(point: HifzPoint?): Boolean = point != null && point.id in gradedIds
+    /** The answer given to [point] in this review; null before, or for a review saved before 16 November. */
+    fun answer(point: HifzPoint?): HifzGrade? = point?.let { answers[it.id] }
+    /** What its answer did, as said when it was given. */
+    fun outcome(point: HifzPoint?): String? = point?.let { outcomes[it.id] }
+    /** R0: its answer can count. Every card of a review of due points does; in a list review, as decided at its first look. */
+    fun counted(point: HifzPoint?): Boolean = point != null && (!list || point.id in countedIds)
     /** Answered «نسيت أو أخطأت», now in its drill: a word it went wrong at this time may be added to it. */
     fun missed(point: HifzPoint?): Boolean = training(point) && missedId == point?.id
     fun wordsOpen(point: HifzPoint): Boolean = wordDraft?.first == point.id
@@ -286,7 +342,7 @@ internal class HifzReviewState private constructor(
     /** Its drill was started and [audio] still plays or is paused: the strip is its control, in place of its button. */
     fun drillRunning(point: HifzPoint?, audio: HifzAudio?): Boolean = drilled(point) && audio != null && audio.stoppable
     fun hinted(point: HifzPoint?): Boolean = point != null && hintId == point.id
-    fun assisted(point: HifzPoint?): Boolean = point != null && assistedId == point.id
+    fun assisted(point: HifzPoint?): Boolean = point != null && point.id in assistedIds
     val tally: HifzTally get() = HifzTally(held, hesitated, again, heldNow)
     val graded: Int get() = tally.graded
     /** The day's answers, this review's with those before it. */
@@ -306,15 +362,18 @@ internal class HifzReviewState private constructor(
      */
     fun count(queue: List<HifzPoint>): Int = kept(queue).size
 
-    /** The unanswered questions from the card in view on. */
-    fun unanswered(queue: List<HifzPoint>): Int = kept(queue).drop(index(queue)).count { it.id !in gradedIds }
+    /** The questions still unanswered, a card skipped before the one in view among them. */
+    fun unanswered(queue: List<HifzPoint>): Int = kept(queue).count { it.id !in gradedIds }
 
     private fun kept(queue: List<HifzPoint>): List<HifzPoint> {
+        // A list review asks every card it holds: none waits for a reminder.
+        if (list) return queue
         val at = index(queue)
         // What the card in view and those kept after it show, as the review reaches each, revealed or not yet.
         val showing = listOfNotNull(queue.getOrNull(at)).toMutableList()
+        // A card answered after the one in view, come back to with Back, stays counted.
         return queue.filterIndexed { i, point ->
-            i <= at || (!spoiled(point) && showing.none { it.showsAnswerOf(point) }).also { if (it) showing += point }
+            i <= at || answered(point) || (!spoiled(point) && showing.none { it.showsAnswerOf(point) }).also { if (it) showing += point }
         }
     }
 
@@ -335,10 +394,57 @@ internal class HifzReviewState private constructor(
     fun settled(): Boolean = clock() - shownAt >= 400L
 
     private fun beginAttempt(point: HifzPoint?) {
-        if (point == null || attemptId == point.id) return
+        if (point == null) return
+        if (attemptId == point.id) {
+            if (attempt?.id != point.id) { attempt = point; attemptSpan = point.span.toSet() }
+            return
+        }
         attemptId = point.id
+        attempt = point
         attemptVerse = point.verse
         attemptSpan = point.span.toSet()
+    }
+
+    /**
+     * R0, at the card's first look of any kind («أظهر», a hint, the eraser), before that look is written: in a list
+     * review, whether its answer can count now, and whether an earlier card of it showed its answer, which makes it
+     * helped. Decided once; a review of due points needs neither.
+     */
+    private fun firstLook(point: HifzPoint, actions: HifzReviewActions) {
+        if (!list || point.id in lookedIds || point.id in gradedIds) return
+        lookedIds = lookedIds + point.id
+        if (actions.canCount(point)) countedIds = countedIds + point.id
+        if (point.span.any { it in shownHere }) assistedIds = assistedIds + point.id
+    }
+
+    /** The card can be left without an answer: before «أظهر», a skip, or once answered. After «أظهر», it is answered first. */
+    private fun canLeave(point: HifzPoint?): Boolean = point == null || !revealed(point) || answered(point)
+
+    /** Back to the card before: the card in view is not waiting for its answer, after «أظهر». */
+    fun canStepBack(queue: List<HifzPoint>): Boolean = !stopping && index(queue) > 0 && canLeave(point(queue))
+
+    /** On to the next card or the end: before «أظهر» this skips the card, which Back can reach again. */
+    fun canStepForward(queue: List<HifzPoint>): Boolean = !stopping && point(queue) != null && canLeave(point(queue))
+
+    /**
+     * The arrows, a swipe or the car's skip: [delta] 1 on, -1 back. An answered card is come back to read-only; one
+     * skipped is asked as it was. Not after «أظهر» before an answer, nor over what was answered after «إنهاء».
+     */
+    fun step(queue: List<HifzPoint>, actions: HifzReviewActions, delta: Int) {
+        if (inputBlocked || delta == 0) return
+        if (if (delta > 0) !canStepForward(queue) else !canStepBack(queue)) return
+        val index = index(queue)
+        actions.leaveCard()
+        trainingId = null
+        unfold()
+        if (delta > 0) moveTo(queue, index + 1) else moveBack(queue, index)
+    }
+
+    /** Going on with a list review left at its end, a card skipped there: the first card still unanswered. */
+    fun reopen(queue: List<HifzPoint>) {
+        if (inputBlocked || stopping || point(queue) != null || unanswered(queue) == 0) return
+        unfold()
+        moveTo(queue, 0, skipAnswered = true)
     }
 
     /**
@@ -348,21 +454,41 @@ internal class HifzReviewState private constructor(
     private fun spoiled(point: HifzPoint): Boolean =
         if (point.fresh > 0) point.seenAt(seenAt)?.let { wallClock() < hifzWaitEnd(it) } == true else point.span.any { it in exposedVerses }
 
-    /** The card at [from] in [queue], or the first after it still to ask; those passed wait for the next reminder. */
-    private fun moveTo(queue: List<HifzPoint>, from: Int) {
+    /**
+     * The card at [from] in [queue], or the first after it still to ask; in a review of due points, those passed wait
+     * for the next reminder. [skipAnswered], after an answer: the next card not answered yet.
+     */
+    private fun moveTo(queue: List<HifzPoint>, from: Int, skipAnswered: Boolean = false) {
         var at = from
         while (true) {
             val candidate = queue.getOrNull(at) ?: break
-            if (candidate.id in deferredIds) { at++; continue }
-            if (!spoiled(candidate)) break
+            if (candidate.id in deferredIds || (skipAnswered && answered(candidate))) { at++; continue }
+            if (list || answered(candidate) || !spoiled(candidate)) break
             deferredIds = deferredIds + candidate.id
             at++
         }
         val next = queue.getOrNull(at)
-        position = from - queue.take(from).count { it.id in deferredIds }
+        position = at - queue.take(at).count { it.id in deferredIds }
         cardId = next?.id
         keepEditorsFor(cardId)
         beginAttempt(next)
+    }
+
+    /** The card before [from], one now spoiled in a review of due points waiting for the next reminder. */
+    private fun moveBack(queue: List<HifzPoint>, from: Int) {
+        var at = from - 1
+        while (at >= 0) {
+            val candidate = queue[at]
+            if (candidate.id in deferredIds) { at--; continue }
+            if (list || answered(candidate) || !spoiled(candidate)) break
+            deferredIds = deferredIds + candidate.id
+            at--
+        }
+        val previous = queue.getOrNull(at) ?: return
+        position = at - queue.take(at).count { it.id in deferredIds }
+        cardId = previous.id
+        keepEditorsFor(cardId)
+        beginAttempt(previous)
     }
 
     /** Merge a restored day ledger before a new card starts, without rewriting an attempt already made. */
@@ -385,11 +511,21 @@ internal class HifzReviewState private constructor(
         if (wordsAddedId == id) wordsAddedId = null
     }
 
-    fun noteExposed(verses: Set<QuranVerseReference>, actions: HifzReviewActions) {
+    /**
+     * [test]: the card's own verses at its «أظهر». They are seen today, but their time is written only once the answer
+     * is not a right one without help ([HifzLearning.exposeToday]); the review's own record of them keeps the time.
+     */
+    fun noteExposed(verses: Set<QuranVerseReference>, actions: HifzReviewActions, test: Boolean = false) {
         if (verses.isEmpty()) return
         // A passage's verses, any of them; restored after a process death, the verse it opens with.
         val attempted = attemptSpan.ifEmpty { setOfNotNull(attemptVerse) }
-        if (attempted.any { it in verses } && attemptId != null && revealedId != attemptId) assistedId = attemptId
+        val current = attemptId
+        if (current != null && attempted.any { it in verses } && revealedId != current && current !in gradedIds) {
+            // A first look: R0 decided before it is written.
+            attempt?.takeIf { it.id == current }?.let { firstLook(it, actions) }
+            assistedIds = assistedIds + current
+        }
+        shownHere = shownHere + verses
         val added = verses - exposedVerses
         exposedVerses = exposedVerses + verses
         // A time seen within a minute stays: the eraser's every move is no new write.
@@ -397,7 +533,7 @@ internal class HifzReviewState private constructor(
         val moved = verses.filter { verse -> seenAt[verse]?.let { it > at - 60_000L } != true }.toSet()
         if (moved.isNotEmpty()) seenAt = seenAt + moved.associateWith { at }
         if (added.isNotEmpty()) actions.exposed(added)
-        if (moved.isNotEmpty()) actions.seen(moved)
+        if (moved.isNotEmpty() && !test) actions.seen(moved)
     }
 
     /** The fold button: the reader's own choice, which the pages turned after it leave as it is. */
@@ -450,42 +586,52 @@ internal class HifzReviewState private constructor(
         if (inputBlocked) return
         val point = point(queue) ?: return
         if (!settled() || revealed(point)) return
+        // Before the look this is, which would put a due question off.
+        firstLook(point, actions)
         actions.leaveCard()
         revealedId = point.id
         unfold()
-        if (exposeAnswer) noteExposed(point.span.toSet(), actions)
+        if (exposeAnswer) noteExposed(point.span.toSet(), actions, test = true)
     }
 
     fun showHint(point: HifzPoint, actions: HifzReviewActions? = null) {
         if (inputBlocked) return
+        if (actions != null && !revealed(point)) firstLook(point, actions)
         hintId = point.id
         markAssisted(point)
         if (actions != null) noteExposed(point.span.toSet(), actions)
     }
 
     /** Called only when help actually exposes an answer before «أظهر», never for ordinary reveal. */
-    fun markAssisted(point: HifzPoint) {
-        if (!revealed(point)) assistedId = point.id
+    fun markAssisted(point: HifzPoint, actions: HifzReviewActions? = null) {
+        if (revealed(point)) return
+        if (actions != null) firstLook(point, actions)
+        assistedIds = assistedIds + point.id
     }
 
+    /** «التالي» after the drill, or a right answer: on to the next card not answered yet. */
     fun next(queue: List<HifzPoint>, actions: HifzReviewActions) {
         if (inputBlocked) return
         val index = index(queue)
         actions.leaveCard()
         trainingId = null
         unfold()
-        moveTo(queue, index + 1)
+        moveTo(queue, index + 1, skipAnswered = true)
     }
 
-    fun grade(queue: List<HifzPoint>, actions: HifzReviewActions, grade: HifzGrade, confirmed: Boolean = false) {
+    /** [outcome]: what the answer does, as said when it is given; shown again when the card is come back to. */
+    fun grade(queue: List<HifzPoint>, actions: HifzReviewActions, grade: HifzGrade, confirmed: Boolean = false, outcome: String = "") {
         val shown = point(queue) ?: return
-        if ((!confirmed && (inputBlocked || !settled())) || !revealed(shown) || training(shown)) return
+        if ((!confirmed && (inputBlocked || !settled())) || !revealed(shown) || training(shown) || answered(shown)) return
         val answer = if (grade == HifzGrade.Held && assisted(shown)) HifzGrade.Hesitated else grade
-        if (!actions.tryGrade(shown, answer)) return
+        if (!actions.tryGrade(shown, answer, counted(shown), outcome)) return
         count(answer)
-        if (answer == HifzGrade.Held && shown.holdsNext) heldNow++
+        // «ثبتت» this round only for an answer that counted.
+        if (answer == HifzGrade.Held && counted(shown) && shown.holdsNext) heldNow++
         missedId = shown.id.takeIf { answer == HifzGrade.Again }
         gradedIds = gradedIds - shown.id + shown.id
+        answers = answers + (shown.id to answer)
+        outcomes = outcomes + (shown.id to outcome)
         if (answer != HifzGrade.Held) trainingId = shown.id else next(queue, actions)
     }
 
@@ -528,7 +674,7 @@ internal class HifzReviewState private constructor(
                 listOf(
                     s.held, s.hesitated, s.again, s.heldNow, s.cardId, s.position, s.revealedId, s.trainingId, s.drilledId,
                     s.missedId, if (s.howItWorks) 1 else 0, if (s.folded) 1 else 0, s.earlier.encode(),
-                    s.gradedIds.joinToString(","), if (s.stopping) 1 else 0, s.hintId, s.assistedId,
+                    s.gradedIds.joinToString(","), if (s.stopping) 1 else 0, s.hintId, s.assistedIds.joinToString(","),
                     s.exposedVerses.encodeReviewVerses(), s.attemptId,
                     setOfNotNull(s.attemptVerse).encodeReviewVerses(),
                     encodeSeenVerses(s.seenAt.filterValues { it > s.wallClock() - HifzFreshGapMs }),
@@ -536,12 +682,15 @@ internal class HifzReviewState private constructor(
                     // Optional trailing fields keep states saved by earlier versions readable.
                     s.noteDraft?.first, s.noteDraft?.second, s.wordDraft?.first,
                     s.wordDraft?.second?.sorted()?.joinToString(","), s.wordsAddedId, if (s.foldedAway) 1 else 0,
+                    if (s.list) 1 else 0, s.answers.entries.joinToString(",") { "${it.key}:${it.value.name}" },
+                    s.outcomes.entries.joinToString(ReviewRowSeparator) { "${it.key}$ReviewFieldSeparator${it.value}" },
+                    s.lookedIds.joinToString(","), s.countedIds.joinToString(","), s.shownHere.encodeReviewVerses(),
                 ).map { it?.toString().orEmpty() }
             },
             restore = {
                 HifzReviewState(
                     it, SystemClock::uptimeMillis, earlier = HifzTally(), exposedVerses = emptySet(), seenVerses = emptyMap(),
-                    wallClock = System::currentTimeMillis,
+                    wallClock = System::currentTimeMillis, list = false,
                 )
             },
         )
@@ -601,7 +750,11 @@ internal fun HifzReviewSheet(
     ModalBottomSheet(onDismissRequest = { if (!sheetState.isVisible) actions.dismiss() }, sheetState = sheetState, containerColor = BgCream) {
         // Back, predictive or not, stops on what was answered first, without leaving the sheet shrunk.
         BackHandler(enabled = !state.atEnd(queue) && state.graded > 0) { state.requestEnd(queue, actions) }
-        BoxWithConstraints(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp).testTag("hifz_review")) {
+        // A swipe goes to the next card or back, as the arrows do.
+        val swipe = Modifier.hifzStepSwipe(canBack = state.canStepBack(queue), canNext = state.canStepForward(queue)) { delta ->
+            if (state.settled()) state.step(queue, actions, delta)
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp).then(swipe).testTag("hifz_review")) {
           Column(Modifier.fillMaxSize()) {
             HifzReviewTitle(state, queue, point, actions)
             sessionFeedback()
@@ -627,7 +780,7 @@ internal fun HifzReviewSheet(
                 HifzReviewHeading(catalog, point, revealed = true, training = state.training(point))
                 HifzReviewControls(
                     state, catalog, queue, point, audio, audioControls, actions, compact = false, freshAgain = freshAgain,
-                    tomorrow = tomorrow, fixes = fixes,
+                    tomorrow = tomorrow, fixes = fixes, protectedVerses = protectedVerses,
                 )
             }
             Column(Modifier.weight(1f).verticalScroll(contentScroll).padding(top = 8.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -637,7 +790,7 @@ internal fun HifzReviewSheet(
                     HifzReviewHeading(catalog, point, revealed = true, training = state.training(point))
                     HifzReviewControls(
                         state, catalog, queue, point, audio, audioControls, actions, compact = false, freshAgain = freshAgain,
-                        tomorrow = tomorrow, fixes = fixes,
+                        tomorrow = tomorrow, fixes = fixes, protectedVerses = protectedVerses,
                     )
                 }
                 if (!state.revealed(point)) {
@@ -678,7 +831,10 @@ internal fun HifzReviewSheet(
                 }
             }
             if (fixes.isNotEmpty() && !revealed) Column(Modifier.padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                HifzReviewControls(state, catalog, queue, point, audio, audioControls, actions, compact = false, freshAgain = freshAgain, tomorrow = tomorrow, fixes = emptyList())
+                HifzReviewControls(
+                    state, catalog, queue, point, audio, audioControls, actions, compact = false, freshAgain = freshAgain, tomorrow = tomorrow,
+                    fixes = emptyList(), protectedVerses = protectedVerses,
+                )
             }
           }
         }
@@ -745,7 +901,7 @@ internal fun HifzReviewCard(
     QuranFloatingCard(modifier.widthIn(max = 560.dp).testTag("hifz_review_card"), scrolls = false) {
         Column(Modifier.heightIn(max = maxHeight).padding(start = 14.dp, end = 4.dp, bottom = 10.dp)) {
             // Quiet over the question, which is what the card asks.
-            HifzReviewTitle(state, queue, point, actions, fontSize = 13.sp, color = TextMuted, weight = FontWeight.Medium) {
+            HifzReviewTitle(state, queue, point, actions, fontSize = 13.sp, color = TextMuted, weight = FontWeight.Medium, stepSize = 36.dp) {
                 if (point != null && !state.atEnd(queue)) IconButton(onClick = { deleting = point }, modifier = Modifier.size(36.dp).testTag("hifz_review_delete")) {
                     Icon(painterResource(R.drawable.ic_delete), "حذف الموضع", Modifier.size(18.dp), tint = GreenPrimaryDark)
                 }
@@ -807,7 +963,7 @@ internal fun HifzReviewCard(
                 } else {
                     HifzReviewControls(
                         state, catalog, queue, point, audio, audioControls, actions, compact = true, freshAgain = freshAgain,
-                        tomorrow = tomorrow, fixes = fixes,
+                        tomorrow = tomorrow, fixes = fixes, protectedVerses = protectedVerses,
                     )
                     // The verse is on the page now; the card adds only what the page cannot show: where a look-alike
                     // parts from it, the words to mind. A look-alike's page opens on demand. Not in the drill: read at
@@ -820,7 +976,10 @@ internal fun HifzReviewCard(
             }
             // «أظهر» stays in reach under the question, however long.
             if (fixes.isNotEmpty() && !revealed) Column(Modifier.padding(end = 10.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                HifzReviewControls(state, catalog, queue, point, audio, audioControls, actions, compact = true, freshAgain = freshAgain, tomorrow = tomorrow, fixes = emptyList())
+                HifzReviewControls(
+                    state, catalog, queue, point, audio, audioControls, actions, compact = true, freshAgain = freshAgain, tomorrow = tomorrow,
+                    fixes = emptyList(), protectedVerses = protectedVerses,
+                )
             }
             }
         }
@@ -885,6 +1044,8 @@ private fun HifzReviewTitle(
     fontSize: TextUnit = 18.sp,
     color: Color = GreenPrimaryDark,
     weight: FontWeight = FontWeight.SemiBold,
+    /** The arrows' size: smaller on the page's card. */
+    stepSize: Dp = 48.dp,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val atEnd = state.atEnd(queue)
@@ -901,6 +1062,17 @@ private fun HifzReviewTitle(
             Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
             fontSize = fontSize, fontWeight = weight, color = color, maxLines = 2,
         )
+        // Back to a card answered, read-only, or skipped; on past a card not shown yet. Not after «أظهر» before an answer.
+        if (count > 1 && !state.stopping) {
+            IconButton(
+                onClick = { if (state.settled()) state.step(queue, actions, -1) }, enabled = state.canStepBack(queue),
+                modifier = Modifier.size(stepSize).testTag("hifz_review_previous"),
+            ) { Icon(painterResource(R.drawable.ic_adhkar_back), "الموضع السابق", Modifier.size(18.dp), tint = GreenPrimaryDark) }
+            IconButton(
+                onClick = { if (state.settled()) state.step(queue, actions, 1) }, enabled = state.canStepForward(queue),
+                modifier = Modifier.size(stepSize).testTag("hifz_review_next_card"),
+            ) { Icon(painterResource(R.drawable.ic_adhkar_next), "الموضع التالي", Modifier.size(18.dp), tint = GreenPrimaryDark) }
+        }
         if (!atEnd) TextButton(
             onClick = { state.requestEnd(queue, actions) }, contentPadding = PaddingValues(horizontal = 8.dp),
             modifier = Modifier.testTag("hifz_review_end"),
@@ -1064,6 +1236,8 @@ private fun ColumnScope.HifzReviewControls(
     tomorrow: String,
     /** The right wording of each mistake, shown once the answer is, before the answers: what to judge by. */
     fixes: List<HifzFix>,
+    /** The verses of questions still waiting: the cue never plays one. */
+    protectedVerses: Set<QuranVerseReference> = emptySet(),
 ) {
     // A drill recited to its end has no strip: its replay and «التالي» below say it is over.
     if (audio != null) HifzAudioStrip(audio, audioControls)
@@ -1073,8 +1247,9 @@ private fun ColumnScope.HifzReviewControls(
             Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // The verse the question names, which is all it plays: «استمع إلى الآية 39».
-            if (point.verse.ayah > 1) OutlinedButton(
+            // The verse the question names, which is all it plays: «استمع إلى الآية 39»; never a verse whose own question
+            // waits, a card skipped or still to come.
+            if (point.verse.ayah > 1 && QuranVerseReference(point.verse.surah, point.verse.ayah - 1) !in protectedVerses) OutlinedButton(
                 onClick = { if (state.settled()) actions.listenBefore(point) },
                 // The label takes the lines it needs, with large text or on a narrow phone, never cut short: «أظهر» grows
                 // with it.
@@ -1127,17 +1302,30 @@ private fun ColumnScope.HifzReviewControls(
                 onAdd = { state.addWords(point, actions) }, onCancel = { state.cancelWords(point) },
             )
         }
+        // Answered earlier in this review, come back to: the answer given and what it did, read-only.
+        state.answered(point) -> {
+            fixes.forEach { HifzAnswerLine(it) }
+            HifzReviewNote(state, point, actions, editable = false)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("hifz_review_answered")) {
+                state.answer(point)?.let {
+                    Text(hifzAnsweredLabel(it), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                }
+                state.outcome(point)?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 12.sp, color = TextMuted) }
+            }
+        }
         else -> {
             fixes.forEach { HifzAnswerLine(it) }
             HifzReviewNote(state, point, actions, editable = false)
             val assisted = state.assisted(point)
             val grades = if (assisted) listOf(HifzGrade.Hesitated, HifzGrade.Again) else HifzGrade.entries.toList()
+            // An answer whose question could not count names the next review, unchanged (R0).
+            val outcomes = grades.associateWith { hifzAnswerOutcome(point, it, state.counted(point), freshAgain, tomorrow) }
             HifzGradeChoices(
-                point.id, grades.associateWith { hifzGradeOutcome(point, it, freshAgain, tomorrow) }, assisted, compact,
+                point.id, outcomes, assisted, compact,
                 notice = if (!assisted) null else if (state.hinted(point)) "استعنت بملاحظتك قبل أن تكشفها." else "رأيت منها شيئًا قبل أن تكشفها.",
                 onHowItWorks = { state.howItWorks = true },
             ) { grade ->
-                state.grade(queue, actions, grade)
+                state.grade(queue, actions, grade, outcome = outcomes.getValue(grade).text(withBack = true, short = false))
             }
         }
     }
@@ -1197,17 +1385,18 @@ internal fun hifzRoundLine(
     own: String? = null,
 ): HifzRoundLine {
     val name = hifzPointName(catalog, point)
-    // The answer the line is about: the last one, given today.
-    val last = point.checks.lastOrNull()?.takeIf { it.day == today }
+    // The answer the line is about: the last counted one, given today. A milestone is never said of an answer that
+    // moved nothing.
+    val last = point.checks.lastOrNull { it.counted }?.takeIf { it.day == today }
     val back = hifzWhen(point.dueDay - today)
     return when {
         point.fresh > 0 -> {
             val next = own ?: if (point.daily || point.dueDay > today) tomorrow else again
-            HifzRoundLine("$name: بقي أن تتذكّرها ${HifzReminder.recallsPhrase(point.fresh)}، ونسألك عنها $next.", next, milestone = false)
+            HifzRoundLine("$name: ${HifzReminder.daysLeftPhrase(point.fresh)}، ونسألك عنها $next.", next, milestone = false)
         }
         // Its daily questions ended with this answer: the step it reached is said, and when it comes back.
         point.step == 0 && last?.grade == HifzGrade.Held -> HifzRoundLine(
-            "$name: تذكّرتها ${if (point.recalls == 1) "" else HifzReminder.recallsPhrase(point.recalls) + " "}دون مساعدة. نسألك عنها $tomorrow، ثم تتباعد مواعيد مراجعتها.",
+            "$name: تذكّرتها دون مساعدة${if (point.recalls == 1) "" else " " + HifzReminder.differentDaysPhrase(point.recalls)}. نسألك عنها $tomorrow، ثم تتباعد مواعيد مراجعتها.",
             tomorrow, milestone = true,
         )
         point.mastered && point.masteredAt?.let { epochDay(it) } == today ->
@@ -1329,11 +1518,17 @@ private fun HifzReviewEnd(
                 if (remaining > 0) Text("بقي أن نسألك عن ${HifzReminder.pointsAbout(remaining)}.", fontSize = 14.sp, color = TextMuted)
             }
             state.graded > 0 -> {
-                Text("أكملت المراجعة", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, textAlign = TextAlign.Center)
+                // A card skipped and never answered: the review ended, but was not completed.
+                Text(if (remaining > 0) "انتهت المراجعة" else "أكملت المراجعة", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, textAlign = TextAlign.Center)
                 Text(hifzRoundSummary(state.round), fontSize = 14.sp, color = TextDark, textAlign = TextAlign.Center)
             }
-            else -> Text(if (stillDue > 0) "انتهت المراجعة" else "لا أسئلة الآن", fontSize = 16.sp, color = GreenPrimaryDark)
+            else -> Text(if (stillDue > 0 || remaining > 0) "انتهت المراجعة" else "لا أسئلة الآن", fontSize = 16.sp, color = GreenPrimaryDark)
         }
+        // A list review's cards skipped, which Back reaches; in a review of due points they are still due, said below.
+        if (!stopped && state.list && remaining > 0) Text(
+            "بقي أن نسألك عن ${HifzReminder.pointsAbout(remaining)}.", fontSize = 14.sp, color = TextMuted,
+            modifier = Modifier.testTag("hifz_review_unanswered"),
+        )
         if (state.graded > 0) HifzRoundResults(state.round)
         if (!stopped) {
             val next = when {
@@ -1460,15 +1655,15 @@ internal fun hifzGradeOutcome(
         // A count that grows is said with its reason: it is no penalty, the mistake came back.
         val raised = !point.mastered && count > point.recalls
         val effect = when {
-            point.mastered -> if (short) "نثبّت حفظها من جديد" else "نثبّت حفظها من جديد حتى تتذكّرها ${HifzReminder.recallsPhrase(count)} دون مساعدة"
-            point.restartsOnAgain -> "نراجعها من جديد حتى تتذكّرها ${HifzReminder.recallsPhrase(count)} دون مساعدة" +
-                (if (raised && !short) " بدل ${HifzReminder.recallsPhrase(point.recalls)}، لأن الخطأ تكرّر" else "")
+            point.mastered -> if (short) "نثبّت حفظها من جديد" else "نثبّت حفظها من جديد حتى تتذكّرها دون مساعدة ${HifzReminder.differentDaysPhrase(count)}"
+            point.restartsOnAgain -> "نراجعها من جديد حتى تتذكّرها دون مساعدة ${HifzReminder.differentDaysPhrase(count)}" +
+                (if (raised && !short) " بدل ${HifzReminder.daysPhrase(point.recalls)}، لأن الخطأ تكرّر" else "")
             else -> "نُسجّل خطأً جديدًا"
         }
         return HifzGradeOutcome(effect, next)
     }
     if (point.fresh > 0) return when {
-        grade == HifzGrade.Hesitated -> HifzGradeOutcome(if (short) "لا تُحتسب ضمن مرات التذكّر دون مساعدة" else "نُسجّل المحاولة، لكنها لا تزيد عدد مرات التذكّر دون مساعدة", next)
+        grade == HifzGrade.Hesitated -> HifzGradeOutcome(if (short) "لا تُحتسب ضمن أيام التذكّر دون مساعدة" else "نُسجّل المحاولة، لكنها لا تُحتسب يومًا من أيام التذكّر دون مساعدة", next)
         point.spacesNext -> HifzGradeOutcome(if (short) "نراجعها على فترات أطول" else "اكتملت محاولات التثبيت؛ نراجعها الآن على فترات أطول", tomorrow)
         else -> HifzGradeOutcome(hifzFreshLeft(point.fresh - 1), if (point.daysAfter(grade) > 0) tomorrow else next)
     }
@@ -1483,6 +1678,29 @@ internal fun hifzGradeOutcome(
     }
 }
 
+/**
+ * What an answer does: as [hifzGradeOutcome] says, for a point whose question could count when it was asked ([counted],
+ * R0) and for a verse forgotten, counted as the slip it is. Another answer is saved and moves nothing: its line names
+ * the next review, unchanged, with no explanation (owner's rule, 15 November).
+ */
+internal fun hifzAnswerOutcome(point: HifzPoint, grade: HifzGrade, counted: Boolean, again: String, tomorrow: String): HifzGradeOutcome =
+    if (counted || grade == HifzGrade.Again) hifzGradeOutcome(point, grade, again, tomorrow)
+    else HifzGradeOutcome(null, hifzUnchangedNext(point, again, tomorrow))
+
+/** The next review of [point] as it stands, for an answer that moved nothing: «غدًا», «بعد 4 أيام», [again]. */
+internal fun hifzUnchangedNext(point: HifzPoint, again: String, tomorrow: String, today: Long = todayEpochDay()): String = when {
+    point.fresh > 0 -> if (point.dueDay > today) tomorrow else again
+    point.dueDay == today + 1 -> tomorrow
+    else -> hifzWhen((point.dueDay - today).coerceAtLeast(0L))
+}
+
+/** «تذكّرتها دون مساعدة»: an answer given, said back on its card come back to. */
+internal fun hifzAnsweredLabel(grade: HifzGrade): String = when (grade) {
+    HifzGrade.Held -> "تذكّرتها دون مساعدة"
+    HifzGrade.Hesitated -> "تذكّرتها بتردّد أو بمساعدة"
+    HifzGrade.Again -> "نسيتها أو أخطأت فيها"
+}
+
 /** [hifzGradeOutcome] said whole, with the next review named separately. */
 internal fun hifzGradeDetail(point: HifzPoint, grade: HifzGrade, again: String = "في تذكير لاحق", tomorrow: String = "غدًا"): String =
     hifzGradeOutcome(point, grade, again, tomorrow).text(withBack = true, short = false)
@@ -1494,8 +1712,8 @@ internal fun hifzGradeDetail(point: HifzPoint, grade: HifzGrade, again: String =
 internal fun hifzGradeShort(point: HifzPoint, grade: HifzGrade, again: String = "في تذكير لاحق", tomorrow: String = "غدًا"): String =
     hifzGradeOutcome(point, grade, again, tomorrow, short = true).text(withBack = true, short = true)
 
-/** «بقي أن تتذكّرها مرتين»: the right answers [left] still needed after this one, said as what is left to do. */
-private fun hifzFreshLeft(left: Int): String = "بقي أن تتذكّرها ${HifzReminder.recallsPhrase(left)}"
+/** «بقي أن تتذكّرها في يومين آخرين»: the days [left] still needed after this one, said as what is left to do. */
+private fun hifzFreshLeft(left: Int): String = HifzReminder.daysLeftPhrase(left)
 
 /**
  * «نسيت» now starts the right answers over: it sets back counted progress (a right answer of the fresh phase, or a step

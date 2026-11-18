@@ -47,7 +47,7 @@ while IFS= read -r -d '' entry; do
     IFS= read -r -d '' _ || true
   fi
   [[ -f "$path" ]] || continue
-  if [[ "$path" =~ ^android-app/(app/src/main/assets/quran|quran-packs)/.*\.(mp3|webp)$ ]]; then
+  if [[ "$path" =~ ^android-app/(app/src/main/assets/quran|quran-packs)/.*\.(mp3|webp|otf)$ || "$path" =~ ^android-app/app/src/main/assets/quran/book/ ]]; then
     QURAN_MEDIA+=("$path")
   elif (( $(wc -c < "$path") > 50 * 1024 * 1024 )); then
     TOO_BIG+=("$path")

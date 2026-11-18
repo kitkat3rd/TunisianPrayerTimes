@@ -451,8 +451,35 @@ object HifzReminder {
         return "نذكّرك بها ${slotLabel(first, today)}، ثم $often، $rest"
     }
 
-    /** «إلى أن تتذكّرها دون مساعدة 3 مرات»; one answer needs no count: «إلى أن تتذكّرها دون مساعدة». */
-    fun untilPhrase(recalls: Int): String = "إلى أن تتذكّرها " + (if (recalls == 1) "" else recallsPhrase(recalls) + " ") + "دون مساعدة"
+    /**
+     * «إلى أن تتذكّرها دون مساعدة في 3 أيام مختلفة»: the plan counts days, one right answer a day (16 November); one day
+     * needs no count: «إلى أن تتذكّرها دون مساعدة».
+     */
+    fun untilPhrase(recalls: Int): String = "إلى أن تتذكّرها دون مساعدة" + if (recalls == 1) "" else " " + differentDaysPhrase(recalls)
+
+    /** «يوم واحد», «يومين», «3 أيام», «11 يومًا»: days after «في», «بدل» or «من». */
+    fun daysPhrase(count: Int): String = when {
+        count == 1 -> "يوم واحد"
+        count == 2 -> "يومين"
+        count % 100 in 3..10 -> "$count${NB}أيام"
+        else -> "$count${NB}يومًا"
+    }
+
+    /** «في يومين مختلفين», «في 3 أيام مختلفة»: the plan's days, after a verb. */
+    fun differentDaysPhrase(count: Int): String = "في " + daysPhrase(count) + when {
+        count == 1 -> ""
+        count == 2 -> " مختلفين"
+        count % 100 in 3..10 -> " مختلفة"
+        else -> " مختلفًا"
+    }
+
+    /** «بقي أن تتذكّرها في يومين آخرين»: the days the plan still asks for. */
+    fun daysLeftPhrase(left: Int): String = "بقي أن تتذكّرها " + when {
+        left == 1 -> "في يوم آخر"
+        left == 2 -> "في يومين آخرين"
+        left % 100 in 3..10 -> "في $left${NB}أيام أخرى"
+        else -> "في $left${NB}يومًا آخر"
+    }
 
     /**
      * The reminder that next asks [point], a fresh one, as [nextReminder] arms it: a while after its slip, its answer

@@ -16,7 +16,7 @@ When you are done:
 | Piece | Where | Made by |
 |-------|-------|---------|
 | Recordings: 114 MP3s, 64 kbps mono at a constant bitrate | a media folder on the computer, never in git | `scripts/quran_assets.py convert` |
-| Verse timings | `android-app/app/src/main/assets/quran/audio/<folder>/timings.json`, shipped inside the app | produced separately, then checked here |
+| Verse timings | `android-app/app/src/main/assets/quran/audio/<folder>/timings.json`, shipped inside the app | produced separately, then checked here; each verse's stop is added by `scripts/quran_assets.py stops` |
 | Menu entry | `QuranAudioController.reciters` in `android-app/app/src/main/java/com/tunisianprayertimes/quran/audio/QuranAudioController.kt` | you |
 | Packs | `quran/packs.json`, `android-app/quran-assets/manifest.tsv`, `android-app/quran-packs/` | `scripts/quran_assets.py layout` |
 | Hosting | R2 bucket `tunisian-quran-assets`, served by the `tunisian-quran-cdn` Worker | `scripts/quran_assets.py publish` |
@@ -24,7 +24,7 @@ When you are done:
 **Google Play or Cloudflare: `layout` decides, so there is nothing for you to choose.**
 
 - **The first ten reciters, in the order they were added:** 9 Google Play packs each. With the
-  page scans that makes 91 of Play's 100 packs. Cloudflare serves these packs as well, for
+  mushaf's pages (the book, or the page scans) that makes 91 of Play's 100 packs. Cloudflare serves these packs as well, for
   installs that did not come from Google Play.
 - **Every later reciter:** about 30 MB packs, served only by Cloudflare, to Play installs as well.
 - **A reciter never moves** between Google Play and Cloudflare once it has been laid out.
@@ -52,10 +52,14 @@ Play packs reach Play users only inside an app bundle that the maintainer builds
   - A JDK and the Android SDK, for the app's tests.
 - **The media of everything already laid out:**
   - every existing reciter's converted recordings;
-  - the mushaf page scans, as a folder or a zip.
+  - the mushaf page scans, as a folder or a zip;
+  - once `packs.json` holds the book (a pack of kind `book`): the folder the book build's
+    `book_pack.py` wrote, the same one that was laid out. `layout` refuses to run without it.
 
   `layout` rebuilds every pack from local files. Unchanged files give byte-identical archives,
-  so nothing that is already published changes.
+  so nothing that is already published changes. The book's archive is deflated, which another
+  zlib may do differently: when its files have not changed, `layout` keeps the archive already
+  published instead (from `android-app/quran-assets/build`, the `stage` cache, or the CDN).
 - **Files that must already be committed:**
   - `quran/packs.json`;
   - `quran/index.json`;
@@ -126,8 +130,44 @@ Write the timings to `android-app/app/src/main/assets/quran/audio/<folder>/timin
 - **A last verse that runs past the end of the file:** if it overruns by a few hundred
   milliseconds, set its `endMs` to `durationMs`. Published timing data sometimes does this.
 
-**Check:** run the script in [Checking the timings](#checking-the-timings). It must print
-`timings.json is valid`.
+Then add where each verse stops when it is recited alone (repeated, before a silence to say it
+again, or at the sleep timer):
+
+```bash
+python scripts/quran_assets.py stops --from-dir <media> --reciter <folder>
+```
+
+A verse's `endMs` is where the next verse starts, and aligners put it just before that verse's
+first sound. Stopping there, the phone would still play the next verse's first letter: on its
+speaker, about 50 ms more of the recording is heard after the player stops. `stops` finds the pause
+between the two verses in the recording and writes a `stopMs` inside it:
+
+- in the pause's middle, or 300 ms before the next verse's first sound if that is earlier;
+- after the verse's own sound has died away, unless that leaves less than 120 ms before the next
+  verse's first sound;
+- for a verse the reciter joins to the next, with no pause between, 120 ms before the next verse's
+  first sound, which cuts the joining vowel;
+- never after `endMs`. Where the stop would be `endMs`, as for each surah's last verse, `stops`
+  writes nothing.
+
+It rewrites `timings.json` on one line and keeps everything else in it.
+
+Run `stops` again whenever the timings or the recordings change. Re-importing timings drops the
+stops.
+
+**Check:**
+
+- `stops` ends with `✓ Verse stops written` and prints, for the reciter, how many verses stop
+  before their end. With timings from an aligner, that is most of them.
+- It then lists the verses joined to the next one and those whose pause is too short for 300 ms:
+  the next verse is closest to their stops. Repeat a few of them in the app and listen to the end.
+- Last, it lists the verses that start inside their first word: the timings start them 100 ms or
+  more after a sound that follows a clean pause. Listen to each one's start. Where the word is cut,
+  move the verse's `startMs`, and the `endMs` of the verse before, into that pause: to its middle,
+  or for an aligner's timings as far before the sound as the reciter's other verses start. Record
+  each move in `boundaryCorrections` (see [Timings file](#timings-file)), then run `stops` again.
+- Run the script in [Checking the timings](#checking-the-timings). It must print
+  `timings.json is valid`.
 
 ### 4. Add the reciter to the menu
 
@@ -146,7 +186,10 @@ python scripts/quran_assets.py layout --from-dir <media> --from-dir <pages folde
     --cdn https://tunisian-quran-cdn.baroudi-safwen.workers.dev/
 ```
 
-If the page scans are inside `<media>`, `--from-dir <media>` alone is enough.
+If the page scans are inside `<media>`, `--from-dir <media>` alone is enough. Once `packs.json`
+holds the book, add `--book <the folder book_pack.py wrote>`: the reader's pages are then the book
+(its fonts, plates and page layouts: the Quran's 603 pages, no appendix), in place of the page scans
+pack.
 
 **Check:**
 
@@ -251,7 +294,7 @@ Do not run `release.sh` unless you were asked to.
       "assetPath": "quran/audio/<folder>/001.mp3",
       "durationMs": 52767,
       "timings": [
-        {"ayah": 1, "startMs": 1830, "endMs": 6120},
+        {"ayah": 1, "startMs": 1830, "endMs": 6120, "stopMs": 5640},
         {"ayah": 2, "startMs": 6120, "endMs": 11870}
       ]
     }
@@ -273,7 +316,12 @@ The app rejects the whole file if any of these rules is broken (`QuranRecitation
     mushaf's verses are the `entries` of `quran/index.json`.
   - `startMs` is 0 or more.
   - `endMs` is greater than `startMs` and no more than `durationMs`.
+  - `stopMs`, written by `stops`, is greater than `startMs` and no more than `endMs`. Without it,
+    the verse stops at `endMs`.
   - A verse never starts before the previous one ends.
+- **`boundaryCorrections`** (optional, ignored by the app): the verse starts moved by hand from
+  the timing source, as `{"surah", "ayah", "sourceStartMs", "startMs"}`. Al-Husary's importer,
+  `scripts/import-hosary-timings.py`, applies and records its own.
 - **Untimed audio is fine.** The introduction (isti'adha, basmala) and pauses between verses
   simply show no highlighted verse.
 
@@ -318,6 +366,8 @@ for s in surahs:
     for before, row in zip([None] + rows, rows):
         if not 0 <= row['startMs'] < row['endMs'] <= s['durationMs'] or before and before['endMs'] > row['startMs']:
             problems.append(f'{n}:{row["ayah"]}: bad interval {row["startMs"]}-{row["endMs"]} ms')
+        if 'stopMs' in row and not row['startMs'] < row['stopMs'] <= row['endMs']:
+            problems.append(f'{n}:{row["ayah"]}: stopMs {row["stopMs"]} is outside the verse')
 print('\n'.join(problems) or 'timings.json is valid')
 sys.exit(1 if problems else 0)
 ```

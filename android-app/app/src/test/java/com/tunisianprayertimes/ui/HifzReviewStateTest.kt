@@ -479,4 +479,105 @@ class HifzReviewStateTest {
         assertNull(state.noteDraft)
         assertFalse(state.wordsOpen(queue[0]))
     }
+
+    @Test
+    fun beforeShowACardIsSkipped_backReachesItAndItIsAskedAsItWas() {
+        val queue = listOf(point(36), point(37))
+        val state = opened(queue)
+        assertTrue(state.canStepForward(queue))
+        state.step(queue, actions, 1)
+        assertEquals(queue[1], state.point(queue))
+        assertTrue(calls.none { it.startsWith("grade ") })
+        shown(state, queue)
+        state.step(queue, actions, -1)
+        assertEquals(queue[0], state.point(queue))
+        assertFalse(state.revealed(queue[0]))
+        shown(state, queue)
+        answer(state, queue, HifzGrade.Held)
+        assertEquals(listOf("grade 36 Held"), calls.filter { it.startsWith("grade ") })
+        // On to the card not answered yet; the skipped one is left once both are answered.
+        assertEquals(queue[1], state.point(queue))
+    }
+
+    @Test
+    fun afterShowTheCardIsAnsweredBeforeMovingOn() {
+        val queue = listOf(point(36), point(37), point(38))
+        val state = opened(queue)
+        answer(state, queue, HifzGrade.Held)
+        shown(state, queue)
+        state.reveal(queue, actions)
+        assertFalse(state.canStepForward(queue))
+        assertFalse(state.canStepBack(queue))
+        state.step(queue, actions, 1)
+        state.step(queue, actions, -1)
+        assertEquals(queue[1], state.point(queue))
+        assertTrue(state.revealed(queue[1]))
+    }
+
+    @Test
+    fun backShowsAnAnsweredCardReadOnly_noSecondAnswer() {
+        val queue = listOf(point(36), point(37))
+        val state = opened(queue)
+        state.reveal(queue, actions)
+        shown(state, queue)
+        state.grade(queue, actions, HifzGrade.Held, outcome = "المراجعة القادمة: بعد 3 أيام")
+        shown(state, queue)
+        state.step(queue, actions, -1)
+        shown(state, queue)
+        assertEquals(queue[0], state.point(queue))
+        assertTrue(state.answered(queue[0]) && state.revealed(queue[0]))
+        assertEquals(HifzGrade.Held, state.answer(queue[0]))
+        assertEquals("المراجعة القادمة: بعد 3 أيام", saved(state).outcome(queue[0]))
+        state.grade(queue, actions, HifzGrade.Again)
+        assertEquals(listOf("grade 36 Held"), calls.filter { it.startsWith("grade ") })
+        assertEquals(1, state.graded)
+        // From the answered card, on again.
+        assertTrue(state.canStepForward(queue))
+    }
+
+    @Test
+    fun aListReviewDecidesR0AtTheFirstLook_andAsksACardAnEarlierOneShowedAsHelped() {
+        val due = mutableSetOf(36L)
+        val answers = mutableListOf<String>()
+        val listActions = object : HifzReviewActions by actions {
+            override fun canCount(point: HifzPoint) = point.id in due
+            override fun tryGrade(point: HifzPoint, grade: HifzGrade, counted: Boolean, outcome: String): Boolean {
+                answers += "${point.id} $grade $counted"; return true
+            }
+        }
+        val queue = listOf(point(36), point(37))
+        val state = HifzReviewState(clock = { now }, wallClock = { wall }, list = true)
+        state.follow(queue, listActions)
+        shown(state, queue)
+        state.reveal(queue, listActions)
+        // Decided before the look: what it put off afterwards changes nothing.
+        due.clear()
+        assertTrue(state.counted(queue[0]))
+        // 36's answer showed 37's verse, a look-alike: no card is put off in a list review.
+        state.noteExposed(setOf(queue[1].verse), listActions)
+        shown(state, queue)
+        state.grade(queue, listActions, HifzGrade.Held)
+        assertEquals(queue[1], state.point(queue))
+        shown(state, queue)
+        state.reveal(queue, listActions)
+        assertTrue(state.assisted(queue[1]))
+        assertFalse(state.counted(queue[1]))
+        shown(state, queue)
+        state.grade(queue, listActions, HifzGrade.Held)
+        assertEquals(listOf("36 Held true", "37 Hesitated false"), answers)
+        assertTrue(state.deferredIds.isEmpty())
+        assertTrue(saved(state).list)
+    }
+
+    @Test
+    fun aListPlanAsksTheTappedRowFirst_andAddsTheDueQuestionsItsCardsWouldShow() {
+        val all = listOf(point(1, HifzKind.Word), point(2, HifzKind.Word), point(3), point(4), point(6, HifzKind.Word))
+        // 4 shows 3 as its cue, and 3 shows 2; neither is in the filtered selection.
+        val plan = com.tunisianprayertimes.quran.hifz.hifzListPlan(all, listOf(4L, 4L, 99L), setOf(2L, 3L, 6L))
+        assertEquals(1, plan.selectedCount)
+        assertEquals(listOf(2L, 3L, 4L), plan.points.map { it.id })
+        // A tapped row is asked first, even before what it gives away.
+        val tapped = com.tunisianprayertimes.quran.hifz.hifzListPlan(all, listOf(4L), setOf(2L, 3L, 6L), lead = true)
+        assertEquals(4L, tapped.points.first().id)
+    }
 }

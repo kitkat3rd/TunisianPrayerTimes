@@ -11,6 +11,9 @@ import com.tunisianprayertimes.MainActivityPendingIntents
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.PrayerTimesRepository.PrayerOccurrence
+import com.tunisianprayertimes.SilenceScheduler
+import com.tunisianprayertimes.silence.SilenceWindow
+import com.tunisianprayertimes.silence.SilenceWindowPlanner
 import java.time.Instant
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
@@ -22,8 +25,10 @@ import kotlinx.coroutines.launch
  * Arms the adhans of the enabled prayers: every occurrence after now over prayer days D − 1..D + 1 in the place's zone
  * (6.6), at the time the prayer tab shows, Jumu'a at its resolved time on a Friday (A18). Each occurrence has its own
  * alarm-clock alarm under its prayer and day slot, as exact as the silence's, and, with [AdhanSettings.warnsBefore],
- * a second one [WARNING_LEAD_MILLIS] earlier for its warning vibration. Each adhan re-arms the next ones, and
- * the screens, boot and time changes refresh them through [com.tunisianprayertimes.ScheduleRefreshCoordinator].
+ * a second one [WARNING_LEAD_MILLIS] earlier for its warning vibration. When the app's own time silence will already
+ * be on at that warning, which then cannot vibrate, a third one buzzes [BEFORE_SILENCE_LEAD_MILLIS] before that silence
+ * begins. Each adhan re-arms the next ones, and the screens, boot and time changes refresh them through
+ * [com.tunisianprayertimes.ScheduleRefreshCoordinator].
  */
 object AdhanScheduler {
     private const val TAG = "AdhanScheduler"
@@ -37,6 +42,15 @@ object AdhanScheduler {
      * pocket, and short enough to wait for. The owner found one minute too long (2026-11-15).
      */
     internal const val WARNING_LEAD_MILLIS = 15_000L
+
+    /**
+     * Just before the app's time silence begins, when that silence would keep the warning still: Android's total
+     * silence stops every app's vibration, the app's own too. The owner: "vibrate before the app silences" (2026-11-16).
+     */
+    internal const val ACTION_BEFORE_SILENCE = "com.tunisianprayertimes.adhan.ACTION_BEFORE_SILENCE"
+
+    /** How long before such a silence the buzz comes: the silence's alarm is exact, so a few seconds are enough. */
+    internal const val BEFORE_SILENCE_LEAD_MILLIS = 10_000L
     private const val LEGACY_ACTION_RESUME_SILENCE = "com.tunisianprayertimes.adhan.ACTION_RESUME_SILENCE"
     private const val EXTRA_PRAYER = "com.tunisianprayertimes.adhan.extra.PRAYER"
     private const val EXTRA_PRAYER_DAY = "com.tunisianprayertimes.adhan.extra.PRAYER_DAY"
@@ -48,6 +62,9 @@ object AdhanScheduler {
 
     /** The warnings' request codes: the adhans' codes moved by this much. */
     private const val WARNING_SHIFT = 1_000
+
+    /** The buzzes before a silence: the adhans' codes moved by this much. */
+    private const val BEFORE_SILENCE_SHIFT = 2_000
     private val DAY_OFFSETS = -1L..1L
     private val SLOTS = DAY_OFFSETS.count()
 
@@ -79,6 +96,15 @@ object AdhanScheduler {
         if (enabled.isNotEmpty()) {
             val place = PrayerTimesRepository.place(app)
             val today = now.atZone(place.zone).toLocalDate()
+            // Only the time windows are known ahead; a mosque silence begins when the user arrives.
+            val silences = if (warns && AdhanPlaybackService.timeWindowsSilence(app)) {
+                runCatching { SilenceScheduler.planner(app, place) }
+                    .onFailure { Log.w(TAG, "Could not read the silence windows", it) }
+                    .getOrNull()
+            } else {
+                null
+            }
+            val buzzTimes = HashSet<Long>()
             val occurrences = DAY_OFFSETS.flatMap { PrayerTimesRepository.prayerOccurrences(app, today.plusDays(it), place) }
             for (occurrence in upcoming(occurrences, enabled, now)) {
                 val code = requestCode(occurrence.prayer, occurrence.prayerDay.toEpochDay() - today.toEpochDay()) ?: continue
@@ -92,6 +118,15 @@ object AdhanScheduler {
                     runCatching { arm(app, alarms, warningIntent(app, warningCode), warningCode, warningAt, adhan) }
                         .onSuccess { armed += warningCode }
                         .onFailure { Log.w(TAG, "Could not arm the warning of ${adhan.prayer} of ${adhan.prayerDay}", it) }
+                    val silenceStart = silences?.let { planner -> silenceStartBeforeWarning(app, planner, warningAt) }
+                    val buzzAt = beforeSilenceAt(silenceStart, now.toEpochMilli())
+                    // One buzz per silence, even when two adhans' warnings fall inside it.
+                    if (buzzAt != null && buzzTimes.add(buzzAt)) {
+                        val buzzCode = code + BEFORE_SILENCE_SHIFT
+                        runCatching { arm(app, alarms, beforeSilenceIntent(app, buzzCode), buzzCode, buzzAt, adhan) }
+                            .onSuccess { armed += buzzCode }
+                            .onFailure { Log.w(TAG, "Could not arm the buzz before the silence of ${adhan.prayer}", it) }
+                    }
                 }
             }
         }
@@ -99,13 +134,37 @@ object AdhanScheduler {
             if (code !in armed) cancel(app, alarms, code, adhanIntent(app, code))
             val warningCode = code + WARNING_SHIFT
             if (warningCode !in armed) cancel(app, alarms, warningCode, warningIntent(app, warningCode))
+            val buzzCode = code + BEFORE_SILENCE_SHIFT
+            if (buzzCode !in armed) cancel(app, alarms, buzzCode, beforeSilenceIntent(app, buzzCode))
         }
-        Log.d(TAG, "Armed ${armed.size} adhans and warnings for $enabled")
+        Log.d(TAG, "Armed ${armed.size} adhans, warnings and buzzes before a silence for $enabled")
     }
 
     /** When the warning of an adhan at [atMillis] comes; null when that moment has already passed. */
     internal fun warningAt(atMillis: Long, nowMillis: Long): Long? =
         (atMillis - WARNING_LEAD_MILLIS).takeIf { it > nowMillis }
+
+    /** The start of the app's time silence that will be on at this warning: the earliest, if several. */
+    internal fun silenceStartBeforeWarning(app: Context, planner: SilenceWindowPlanner, warningAtMillis: Long): Long? =
+        silenceStartBeforeWarning(planner.containing(Instant.ofEpochMilli(warningAtMillis)), warningAtMillis) { window ->
+            SilenceScheduler.isDismissed(app, window.prayer, window.prayerDay)
+        }
+
+    internal fun silenceStartBeforeWarning(
+        windows: List<SilenceWindow>,
+        warningAtMillis: Long,
+        dismissed: (SilenceWindow) -> Boolean,
+    ): Long? {
+        val warning = Instant.ofEpochMilli(warningAtMillis)
+        return windows.filter { warning in it && !dismissed(it) }.minOfOrNull { it.start.toEpochMilli() }
+    }
+
+    /**
+     * When the buzz before [silenceStart] comes; null without such a silence, or when it is too late: a silence that
+     * has begun already keeps the phone still. A silence that starts with the adhan is not one: its warning comes first.
+     */
+    internal fun beforeSilenceAt(silenceStart: Long?, nowMillis: Long): Long? =
+        silenceStart?.let { it - BEFORE_SILENCE_LEAD_MILLIS }?.takeIf { it > nowMillis }
 
     internal fun warningCode(prayer: Prayer, dayOffset: Long): Int? = requestCode(prayer, dayOffset)?.plus(WARNING_SHIFT)
 
@@ -151,6 +210,10 @@ object AdhanScheduler {
 
     private fun warningIntent(app: Context, code: Int): Intent =
         Intent(app, AdhanReceiver::class.java).setAction(ACTION_ADHAN_SOON).setData(Uri.parse("tunisianprayertimes://adhan-soon/$code"))
+
+    private fun beforeSilenceIntent(app: Context, code: Int): Intent = Intent(app, AdhanReceiver::class.java)
+        .setAction(ACTION_BEFORE_SILENCE)
+        .setData(Uri.parse("tunisianprayertimes://adhan-before-silence/$code"))
 
     /** Cancel the old adhan hold's safety alarm when upgrading; adhan no longer owns any silence changes. */
     private fun cancelLegacySilenceResume(app: Context, alarms: AlarmManager) {

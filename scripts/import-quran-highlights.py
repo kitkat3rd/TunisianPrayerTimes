@@ -5,16 +5,25 @@ Offline only. Requires Pillow, NumPy and opencv-python-headless. Input index mus
 already include the visually verified Qaloun page corrections. No OCR or Hafs
 coordinate data is used. Ordinary and final-verse templates come from source
 images 2 and 1, with their digit interiors masked out before matching.
+
+--relaid DIR: pages a later printing sets otherwise than the scans (the owner's 2017 copy: printed 317 and 354-356),
+drawn from the edited book as page_NNN.png (work/mushaf-typeset/book_build/exp/edit_2017.py writes them); those
+pages are measured there instead of on their scans.
 """
 from pathlib import Path
 import argparse, concurrent.futures, hashlib, json, sys, time
 import cv2
 import numpy as np
 from PIL import Image
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'mushaf_typeset'))
+import print_fixes
 
 cv2.setNumThreads(1)
+def source(n):
+ own=relaid/f'page_{n:03}.png' if relaid else None
+ return own if own and own.exists() else base/f'page_{n:03}.webp'
 def read(n):
- im=Image.open(base/f'page_{n:03}.webp').convert('RGB');return np.array(im.resize((round(im.width*1450/im.height),1450)))
+ im=Image.open(source(n)).convert('RGB');return np.array(im.resize((round(im.width*1450/im.height),1450)))
 def find(n):
  im=read(n);gray=cv2.cvtColor(im,cv2.COLOR_RGB2GRAY)
  h,w=gray.shape
@@ -58,7 +67,7 @@ def geometry(n,d):
   elif abs(b-a-95)<abs(banners[-1][1]-banners[-1][0]-95):banners[-1]=(a,b)
  manual={384:[(1244,1419)],495:[(116,290)],565:[(1402,1575)],567:[(1412,1586)],584:[(123,296)],588:[(288,463)],596:[(138,312),(1102,1276)],597:[(134,308),(942,1116)],599:[(287,462),(1560,1735)]}
  if n in manual:
-  scale=1450/Image.open(base/f'page_{n:03}.webp').height
+  scale=1450/Image.open(source(n)).height
   banners=[(a*scale,b*scale) for a,b in manual[n]]
  d['banners']=banners
  d['bannerOk']=len(banners)==len(starts.get(n,[]))
@@ -101,8 +110,10 @@ if __name__ == '__main__':
     parser.add_argument('--index', type=Path, default=Path('android-app/app/src/main/assets/quran/index.json'))
     parser.add_argument('--output', type=Path, default=Path('android-app/app/src/main/assets/quran/highlights.json'))
     parser.add_argument('--audit', type=Path, default=Path('scripts/quran-data/highlights-audit.json'))
+    parser.add_argument('--relaid', type=Path, default=None)
     args = parser.parse_args()
     base = args.source
+    relaid = args.relaid
     index = json.loads(args.index.read_text(encoding='utf-8'))
     manifest = {str(n): [] for n in range(1, 604)}
     for entry in index['entries']:
@@ -118,6 +129,17 @@ if __name__ == '__main__':
             expected = [e for e in manifest[str(n)] if e['ayah'] > 0 and e['isLastFragment']]
             assert len(detected['markers']) == len(expected), (n, len(detected['markers']), len(expected))
             data[str(n)] = detected
+    # A verse ring a later printing sets elsewhere on its line (mushaf_typeset/print_fixes.json) moves its marker: the
+    # verses' rectangles follow the corrected print.
+    for page, box, dx in print_fixes.ring_moves():
+        if source(page).suffix == '.png':        # drawn from the edited book: the ring is already where it is printed
+            continue
+        d = data[str(page)]
+        scale = 1450 / Image.open(source(page)).height
+        cx, cy = (box[0] + box[2]) / 2 * scale, (box[1] + box[3]) / 2 * scale
+        m = min(d['markers'], key=lambda m: (m['cx'] - cx) ** 2 + (m['cy'] - cy) ** 2)
+        m['x'] += dx * scale
+        m['cx'] += dx * scale
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
         values = list(pool.map(lambda n: geometry(n, data[str(n)]), range(1, 604)))
     data = {str(n): d for n, d in enumerate(values, 1)}
@@ -156,18 +178,21 @@ if __name__ == '__main__':
       verses.append({'surah':ch,'ayah':ayah,'rects':rects});row=erow;x=ex;prevch=ch
      output['pages'].append({'page':n,'verses':verses})
      audit.append({'page':n,'markers':len(markers),'rows':len(rows),'textRows':len(rows)-len(forbidden),'banners':len(d['banners'])})
-    assert sum(len(p['verses']) for p in output['pages']) == 6215
+    total_fragments = sum(1 for e in index['entries'] if e['ayah'] > 0)
+    assert sum(len(p['verses']) for p in output['pages']) == total_fragments
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
     for item in audit:
         n = item['page']
         item['minimumMarkerScore'] = min(m['score'] for m in data[str(n)]['markers'])
-        item['sourceSha256'] = hashlib.sha256((base / f'page_{n:03}.webp').read_bytes()).hexdigest()
+        item['sourceSha256'] = hashlib.sha256(source(n).read_bytes()).hexdigest()
+        if source(n).suffix == '.png':
+            item['source'] = 'edited book (relaid)'
     evidence = {'version': 1, 'source': 'User-supplied Quran_Qaloun_pages',
         'normalizedHeight': 1450, 'minimumAcceptedMarkerScore': 0.67,
         'templateSourceCrops': [{'page': 2, 'xyxy': [666,171,725,230]}, {'page':1, 'xyxy':[327,657,389,720]}],
         'digitMaskXyxy': [14,15,46,45], 'manuallyReviewedBannerPages': [384,495,565,567,584,588,596,597,599],
         'pages': audit}
     args.audit.write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
-    print(json.dumps({'pages': len(output['pages']), 'verses': 6214, 'fragments': 6215,
+    print(json.dumps({'pages': len(output['pages']), 'verses': 6214, 'fragments': total_fragments,
         'rectangles': sum(len(v['rects']) for p in output['pages'] for v in p['verses'])}))

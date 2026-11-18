@@ -63,7 +63,10 @@ Place names: GeoNames (CC BY 4.0) and Wikidata (CC0), credited in the app (`asse
 or a picked catalogue city, its time zone, the method and Friday time per country, all on the device only; that the
 time-zone change check asks for the location only with automatic location on, without the background-location
 permission, and otherwise posts a notification to choose the city (on the emulator, Android 17 refused that read with
-no screen of the app open, 2026-10-16, 9.1);
+no screen of the app open, 2026-10-16, 9.1). Updated 2026-10-25: the App now asks, after a disclosure, for location
+all the time, so the place follows a trip while the App is closed; without it, the place moves when the App is
+opened. That permission needs Play Console's background-location declaration (one feature, a short video showing
+the disclosure, the system request and the place changing with the App closed) before the next release;
 that prayer times abroad are computed on the device from bundled tables and place names (GeoNames, Wikidata); and
 that analytics carry only whether the place is a Tunisian municipality or a place abroad (`place_kind`).
 

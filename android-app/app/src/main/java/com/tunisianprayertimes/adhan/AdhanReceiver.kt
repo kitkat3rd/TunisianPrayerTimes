@@ -11,7 +11,10 @@ import com.tunisianprayertimes.adhan.AdhanScheduler.occurrence
 import com.tunisianprayertimes.adhan.AdhanScheduler.putOccurrence
 import kotlin.concurrent.thread
 
-/** Delivers an adhan's time, and its warning just before, without changing the silencer. */
+/**
+ * Delivers an adhan's time, its warning just before, and the buzz before a silence that would keep that warning
+ * still, without changing the silencer.
+ */
 class AdhanReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
@@ -40,6 +43,13 @@ class AdhanReceiver : BroadcastReceiver() {
                 if (!AdhanSettings.isEnabled(app, occurrence.prayer) || !AdhanSettings.warnsBefore(app)) return
                 // The forecast reads the silence windows: off the main thread, still inside the alarm's allowance.
                 inBackground { AdhanPlaybackService.warnBeforeAdhan(app, occurrence) }
+            }
+            AdhanScheduler.ACTION_BEFORE_SILENCE -> {
+                val occurrence = intent.occurrence() ?: return
+                if (!AdhanSettings.isEnabled(app, occurrence.prayer) || !AdhanSettings.warnsBefore(app)) return
+                if (AdhanSettings.isSkipped(app, occurrence.prayer, occurrence.prayerDay)) return
+                // It reads the silence windows again: off the main thread.
+                inBackground { AdhanPlaybackService.buzzBeforeSilence(app, occurrence) }
             }
             ACTION_SKIP -> {
                 val occurrence = intent.occurrence() ?: return

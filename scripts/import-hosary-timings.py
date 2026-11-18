@@ -2,7 +2,8 @@
 """Validate MP3Quran's Hosary Qaloun timing data against the original local MP3s.
 
 This importer is offline. Fetch its source JSON with fetch-hosary-timings.py.
-It never estimates verse boundaries or alters audio files.
+It never estimates verse boundaries or alters audio files: the few boundaries it moves are listed in
+BOUNDARY_CORRECTIONS, each measured on the recording.
 """
 
 from __future__ import annotations
@@ -12,6 +13,19 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+
+
+# Verse starts that MP3Quran places inside the verse's first word, after a clean pause: starting or repeating the
+# verse there cut that word, and repeating the verse before played it. Each moves to the middle of that pause, where
+# the verse before now ends. Measured on the recordings on 2026-10-26: (surah, ayah) -> (source startMs, startMs).
+BOUNDARY_CORRECTIONS = {
+    (79, 27): (195380, 194020),
+    (108, 1): (8085, 6950),
+    (108, 3): (20853, 19970),
+    (112, 1): (9240, 8280),
+    (112, 3): (17850, 17100),
+    (112, 4): (23226, 22240),
+}
 
 
 def sha256(path: Path) -> str:
@@ -42,6 +56,7 @@ def main() -> None:
     chapters = []
     source_manifest = []
     adjustments = []
+    corrections = []
     for number in range(1, 115):
         filename = f"{number:03d}.mp3"
         audio = args.audio / filename
@@ -67,6 +82,17 @@ def main() -> None:
             assert start < end <= duration_ms
             timings.append({"ayah": ayah, "startMs": start, "endMs": end})
             previous_end = end
+        for (surah, ayah), (source_start, start) in sorted(BOUNDARY_CORRECTIONS.items()):
+            if surah != number:
+                continue
+            row = timings[ayah - 1]
+            assert row["startMs"] == source_start and (ayah == 1 or timings[ayah - 2]["endMs"] == source_start), (surah, ayah)
+            row["startMs"] = start
+            if ayah > 1:
+                timings[ayah - 2]["endMs"] = start
+            corrections.append({"surah": surah, "ayah": ayah, "sourceStartMs": source_start, "startMs": start})
+        assert all(row["startMs"] < row["endMs"] for row in timings), number
+        assert all(before["endMs"] <= row["startMs"] for before, row in zip(timings, timings[1:])), number
 
         digest = sha256(audio)
         chapters.append({
@@ -103,6 +129,7 @@ def main() -> None:
         "numbering": "madani-later",
         "sourceReadId": 270,
         "timingSource": "https://www.mp3quran.net/api/v3/ayat_timing?surah={surah}&read=270",
+        "boundaryCorrections": corrections,
         "surahs": chapters,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +150,7 @@ def main() -> None:
         "sourceAudioBase": "https://server13.mp3quran.net/husr/Rewayat-Qalon-A-n-Nafi/",
         "verification": verification_summary,
         "endpointAdjustments": adjustments,
+        "boundaryCorrections": corrections,
         "files": source_manifest,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Validated {len(chapters)} chapters / {sum(len(c['timings']) for c in chapters)} Qaloun verses; {len(adjustments)} final endpoints clipped to track duration.")

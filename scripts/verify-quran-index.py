@@ -17,7 +17,7 @@ def main():
     base = Path(__file__).resolve().parents[1] / "android-app/app/src/main/assets/quran"
     data = json.loads((base / "index.json").read_text(encoding="utf-8"))
     manifest = json.loads((base / "pages/pages.json").read_text(encoding="utf-8"))
-    assert len(manifest["pages"]) == 621
+    assert len(manifest["pages"]) == 603
     assert [s["number"] for s in data["surahs"]] == list(range(1, 115))
     assert sum(s["verseCount"] for s in data["surahs"]) == 6214
     assert set(e["page"] for e in data["entries"]) == set(range(1, 604))
@@ -42,10 +42,13 @@ def main():
         assert [e["isFirstFragment"] for e in fragments] == [True] + [False] * (len(fragments) - 1), reference
         assert [e["isLastFragment"] for e in fragments] == [False] * (len(fragments) - 1) + [True], reference
         assert [e["page"] for e in fragments] == sorted(set(e["page"] for e in fragments)), reference
+    # The owner's 2017 printing (the book the reader draws) splits 24:36 and 24:42 where the reference page map does.
     assert {key: [e["page"] for e in fragments] for key, fragments in verses.items() if len(fragments) > 1} == {
         (20, 86): [316, 317],
+        (24, 36): [353, 354],
+        (24, 42): [354, 355],
     }
-    for reference, page in {(4, 44): 84, (24, 36): 353, (24, 42): 354, (87, 15): 591}.items():
+    for reference, page in {(4, 44): 84, (87, 15): 591}.items():
         assert [entry["page"] for entry in verses[reference]] == [page], reference
     def search(query):
         query = normalize(query)
@@ -63,15 +66,15 @@ def main():
         ("قل هو الله أحد", (112, 603)),
         ("من الجنة والناس", (114, 603)),
         ("وكفى بالله نصيرا", (4, 84)),
-        ("رجال لا تلهيهم", (24, 353)),
-        ("يقلب الله الليل والنهار", (24, 354)),
+        ("رجال لا تلهيهم", (24, 354)),
+        ("يقلب الله الليل والنهار", (24, 355)),
         ("وذكر اسم ربه فصلى", (87, 591)),
     ]
     for query, destination in checks:
         assert destination in search(query), (query, destination)
     assert (1, 1) not in search("مالك يوم الدين"), "Search aliases must not replace the Qaloun reading"
     assert not search("كلمات غير موجودة إطلاقا في المصحف")
-    print(f"PASS: 621 image files, 114 chapters, 6214 numbered Qaloun verses, 113 basmalah headings, 1 cross-page verse, 4 verified scan-page corrections, 603 indexed Quran pages, {len(checks)} navigation/search cases; reading distinction preserved.")
+    print(f"PASS: 603 image files, 114 chapters, 6214 numbered Qaloun verses, 113 basmalah headings, 3 cross-page verses, 2 verified scan-page corrections, 603 indexed Quran pages, {len(checks)} navigation/search cases; reading distinction preserved.")
 
 
 if __name__ == "__main__":

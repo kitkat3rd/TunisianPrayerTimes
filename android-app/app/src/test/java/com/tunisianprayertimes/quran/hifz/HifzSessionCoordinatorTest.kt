@@ -160,7 +160,7 @@ class HifzSessionCoordinatorTest {
             assertEquals(coordinator.notice, adapter.metadata().getString(android.media.MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE))
             coordinator.dismissNotice()
             assertNull(coordinator.notice)
-            assertFalse(coordinator.startNotebook())
+            assertFalse(coordinator.startList())
             assertNotNull(coordinator.notice)
             assertNull(coordinator.error)
         } finally { scope.cancel() }
@@ -175,7 +175,7 @@ class HifzSessionCoordinatorTest {
         assertNotNull(coordinator.notice)
         assertEquals(listOf(future), HifzRepository.points.value)
         assertFalse(coordinator.hasSession)
-        assertTrue(coordinator.startNotebook())
+        assertTrue(coordinator.startList())
         assertNull(coordinator.notice)
     }
 
@@ -231,8 +231,9 @@ class HifzSessionCoordinatorTest {
         assertTrue(coordinator.startDaily())
         assertEquals(fresh.id, coordinator.view().point!!.id)
         reveal(coordinator)
-        coordinator.assess(HifzGrade.Held)
-        await { !coordinator.savingAnswer && coordinator.view().tally.held == 1 }
+        // A hesitation counts no day: the fresh point is due again at its next reminder, today.
+        coordinator.assess(HifzGrade.Hesitated)
+        await { !coordinator.savingAnswer && coordinator.view().tally.hesitated == 1 }
         coordinator.pause()
         clock += HifzFreshGapMs + 60_000L
         assertFalse(coordinator.dailyCanContinue(setOf(fresh.id, 2L)))
@@ -261,17 +262,21 @@ class HifzSessionCoordinatorTest {
         } finally { scope.cancel() }
     }
 
-    @Test fun playbackPauseAndMediaNextDoNotSupplyAnAssessment() {
+    @Test fun playbackPauseAndMediaNextSkipWithoutSupplyingAnAssessment() {
         val first = point()
-        install(first)
+        install(first, point(2, 5))
         val coordinator = coordinator()
         assertTrue(coordinator.startDaily())
         coordinator.cue()
         assertEquals(1, played.size)
         coordinator.pause()
         coordinator.resume()
+        // Before «أظهر», next skips the card; back finds it as it was.
         coordinator.next()
-        assertEquals(first, HifzRepository.points.value.single())
+        assertEquals(2L, coordinator.view().point!!.id)
+        coordinator.previous()
+        assertEquals(first.id, coordinator.view().point!!.id)
+        assertTrue(HifzRepository.points.value.all { it.checks.isEmpty() })
         assertEquals(0, coordinator.view().tally.graded)
         assertEquals(HifzSessionPhase.Question, coordinator.view().phase)
     }
@@ -400,14 +405,14 @@ class HifzSessionCoordinatorTest {
         assertFalse(coordinator.view().assisted)
     }
 
-    @Test fun aNotebookReviewUpdatesTheSameDayTotalsAsPhoneReview() {
+    @Test fun aListReviewUpdatesTheSameDayTotalsAsTheDueReview() {
         install(point(), point(2, 3))
         val coordinator = coordinator()
         coordinator.startDaily()
         reveal(coordinator)
         coordinator.assess(HifzGrade.Held)
         await { !coordinator.savingAnswer && coordinator.view().tally.held == 1 }
-        assertTrue(coordinator.startNotebook(listOf(2L)))
+        assertTrue(coordinator.startList(listOf(2L)))
         reveal(coordinator)
         coordinator.assess(HifzGrade.Hesitated)
         await { !coordinator.savingAnswer && HifzRepository.points.value[1].checks.isNotEmpty() }
@@ -430,10 +435,12 @@ class HifzSessionCoordinatorTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val adapter = QuranAutoReview(context, coordinator, scope, player)
         try {
+            reveal(coordinator)
+            // After «أظهر», no skip in the car either: the card is answered first.
             assertEquals(0L, adapter.playbackState().actions and android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT)
+            assertEquals(0L, adapter.playbackState().actions and android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS)
             adapter.next()
             assertEquals(1L, coordinator.view().point!!.id)
-            reveal(coordinator)
             val oldActions = adapter.playbackState().customActions
             val held = oldActions.single { it.action.endsWith("/held") }.action
             val again = oldActions.single { it.action.endsWith("/again") }.action
@@ -446,17 +453,16 @@ class HifzSessionCoordinatorTest {
         } finally { scope.cancel() }
     }
 
-    @Test fun phoneControlsFromAnotherModeOrQuestionCannotSubmitOrPlayTheWrongAnswer() {
+    @Test fun phoneControlsForAnotherQuestionCannotSubmitOrPlayTheWrongAnswer() {
         val first = point()
         val second = point(2, 3)
         install(first, second)
         val coordinator = coordinator()
-        coordinator.startNotebook(listOf(first.id))
+        coordinator.startList(listOf(first.id))
         settle()
         assertTrue(coordinator.reveal(exposeAnswer = false))
         assertTrue(coordinator.startDaily(restart = true))
         reveal(coordinator)
-        assertFalse(coordinator.practiceActions.tryGrade(first, HifzGrade.Held, true, "stale notebook"))
         assertFalse(coordinator.reviewActions.tryGrade(second, HifzGrade.Again))
         coordinator.reviewActions.listen(second)
         settle()
@@ -482,22 +488,78 @@ class HifzSessionCoordinatorTest {
         assertEquals(1, coordinator.view().tally.hesitated)
     }
 
-    @Test fun notebookPracticeKeepsTheExistingNonDueAnswerSemantics() {
-        val first = point(due = epochDay(clock) + 5)
-        install(first)
+    @Test fun aListReviewCountsADueCard_andSavesANonDueRightAnswerWithoutMovingItsDates() {
+        val due = point()
+        val early = point(2, 5, due = epochDay(clock) + 5)
+        install(due, early)
         val coordinator = coordinator()
-        coordinator.startNotebook()
+        assertTrue(coordinator.startList(listOf(due.id, early.id)))
+        assertEquals(HifzReviewOrigin.List, coordinator.view().origin)
         reveal(coordinator)
         coordinator.assess(HifzGrade.Held)
-        await { !coordinator.savingAnswer && coordinator.practiceState.answer(first) != null }
-        assertEquals(first, HifzRepository.points.value.single())
-        assertEquals(HifzGrade.Held, coordinator.practiceState.answer(first))
+        await { !coordinator.savingAnswer && coordinator.view().point?.id == early.id }
+        assertTrue(HifzRepository.points.value.first { it.id == due.id }.checks.single().counted)
+        assertTrue(HifzRepository.points.value.first { it.id == due.id }.dueDay > due.dueDay)
+        reveal(coordinator)
+        coordinator.assess(HifzGrade.Held)
+        await { !coordinator.savingAnswer && coordinator.reviewState.answer(early) != null }
+        val saved = HifzRepository.points.value.first { it.id == early.id }
+        assertFalse(saved.checks.single().counted)
+        assertEquals(early.step, saved.step)
+        assertEquals(early.dueDay, saved.dueDay)
+        assertEquals(2, coordinator.view().tally.held)
     }
 
-    @Test fun aForgottenNonDueNotebookPointStillRecordsTheExistingSlip() {
+    @Test fun aListReviewGoesOnPastTheChangeOfDay_andResumesWhereItStood() {
+        clock = midMorning()
+        install(point(due = epochDay(clock) + 5), point(2, 5, due = epochDay(clock) + 5))
+        val original = coordinator()
+        assertTrue(original.startList())
+        reveal(original)
+        original.assess(HifzGrade.Held)
+        await { !original.savingAnswer && original.view().point?.id == 2L }
+        original.pause()
+        runBlocking { original.persist() }
+        original.dispose()
+        clock += 86_400_000L
+        val next = coordinator()
+        assertTrue(next.hasSession)
+        assertTrue(next.listCanContinue())
+        assertEquals(1, next.listLeft())
+        // The car's «مراجعة الدفتر», or the phone's «تابع المراجعة»: the same list, on from its card.
+        assertTrue(next.startList())
+        assertEquals(2L, next.view().point!!.id)
+        assertEquals(HifzSessionPhase.Question, next.view().phase)
+        assertEquals(1, next.view().tally.held)
+    }
+
+    @Test fun aCardComeBackToIsAnsweredInTheCar_noGradesOffered() {
+        install(point(), point(2, 5))
+        val coordinator = coordinator()
+        assertTrue(coordinator.startList())
+        reveal(coordinator)
+        coordinator.assess(HifzGrade.Held)
+        await { !coordinator.savingAnswer && coordinator.view().point?.id == 2L }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        try {
+            val adapter = adapter(coordinator, scope)
+            assertTrue(adapter.playbackState().actions and android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS != 0L)
+            adapter.previous()
+            assertEquals(1L, coordinator.view().point!!.id)
+            assertEquals(HifzSessionPhase.Answered, coordinator.view().phase)
+            val actions = adapter.playbackState().customActions.map { it.action.substringAfterLast('/') }
+            assertTrue(actions.none { it in setOf("held", "hesitated", "again", "reveal") })
+            assertTrue(adapter.playbackState().actions and android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT != 0L)
+            coordinator.assess(HifzGrade.Again)
+            settle()
+            assertEquals(1, HifzRepository.points.value.first { it.id == 1L }.checks.size)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun aForgottenNonDuePointInAListReviewIsASlip() {
         install(point(due = epochDay(clock) + 5))
         val coordinator = coordinator()
-        coordinator.startNotebook()
+        coordinator.startList()
         reveal(coordinator)
         coordinator.assess(HifzGrade.Again)
         await { !coordinator.savingAnswer && HifzRepository.points.value.single().checks.isNotEmpty() }
@@ -666,7 +728,8 @@ class HifzSessionCoordinatorTest {
             val adapter = adapter(coordinator, scope)
             assertTrue(adapter.customAction(adapter.playbackState().customActions.single { it.action.endsWith("/retry") }.action))
             await { coordinator.problem == null }
-            assertEquals(HifzSessionMode.Daily.name, JSONObject(stored.getString("session", null)!!).getString("mode"))
+            assertEquals(HifzSessionMode.Review.name, JSONObject(stored.getString("session", null)!!).getString("mode"))
+            assertEquals(HifzReviewOrigin.Daily.name, JSONObject(stored.getString("session", null)!!).getString("origin"))
             assertTrue(HifzRepository.points.value.single().checks.isEmpty())
         } finally { scope.cancel() }
     }

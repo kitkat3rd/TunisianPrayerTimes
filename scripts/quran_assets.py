@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Builds, publishes and stages the Quran media packs.
 
-The recitations and mushaf page scans never go into git or the base app. They are
+The recitations and the mushaf's pages never go into git or the base app. They are
 grouped into packs, which the quran-cdn Worker serves from R2. Google Play also serves the
-page scans and the first ten reciters' packs through Play Asset Delivery to Play installs;
-later reciters come from the Worker on every install.
+mushaf's pages and the first ten reciters' packs through Play Asset Delivery to Play installs;
+later reciters come from the Worker on every install. The mushaf's pages are the book (the
+mushaf set in the print's own type: fonts, plates and page layouts, built by the book build's
+book_pack.py), or, without --book, the page scans: the Quran's 603 pages alone, no appendix.
 
     convert  re-encode recordings as 64 kbps mono MP3 at a constant bitrate (needs ffmpeg).
     layout   (once, or whenever the media changes) hash the media, group surahs into
@@ -17,9 +19,11 @@ later reciters come from the Worker on every install.
              bundleRelease can package them; downloads from the CDN unless --from-dir.
     check    confirm local folders hold exactly the bytes the layout describes.
     fetch-origin  download the recordings the recitations were converted from.
+    stops    (whenever timings or recordings change) write into each reciter's timings.json where
+             every verse can stop without the next one being heard (needs ffmpeg).
 
 Only the standard library is used, so this runs the same way on Windows, macOS and CI;
-convert alone also needs ffmpeg.
+convert and stops also need ffmpeg.
 """
 from __future__ import annotations
 
@@ -28,6 +32,8 @@ import concurrent.futures
 import hashlib
 import http.client
 import json
+import math
+import operator
 import os
 import re
 import shutil
@@ -39,6 +45,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
+from array import array
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -61,7 +68,7 @@ MB = 1_000_000
 TARGET_PACK_BYTES = 30 * MB
 # Play asks for consent before downloading more than 200 MB over mobile data.
 MAX_PACK_BYTES = 200 * MB
-# A bundle holds at most 100 asset packs: the pages pack, then 9 per Play reciter for the first
+# A bundle holds at most 100 asset packs: the mushaf's pages, then 9 per Play reciter for the first
 # 10 reciters. Later reciters are served by the Worker alone, on Play installs too.
 MAX_PLAY_PACKS = 100
 PLAY_RECITERS = 10
@@ -74,6 +81,10 @@ PLAY, CDN = 'play', 'cdn'
 AUDIO_KBPS = 64
 PACK_NAME = re.compile(r'[a-z][a-z0-9_]*')
 PAGES_PACK = 'quran_pages'
+BOOK_PACK = 'quran_book'
+# Deflated in the zips: the book's fonts and page layouts halve. Recordings and scans are compressed
+# already and stay stored.
+COMPRESSED = ('.otf', '.bin', '.json')
 ARCHIVE_PREFIX = 'v1/packs/'
 DOWNLOAD_TRIES = 5
 # Where each reciter's recordings were originally published, for provenance and fetch-origin.
@@ -86,6 +97,51 @@ GENERATED_BUILD_FILE = (
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 # Cloudflare answers 403 to urllib's default "Python-urllib/3.x" user agent.
 USER_AGENT = 'TunisianPrayerTimes-quran-assets/1 (+https://github.com/bsafwen/TunisianPrayerTimes)'
+
+# A verse recited alone (repeated, followed by a silence to say it again, or ended by the sleep timer)
+# must stop before the next verse is heard. Its endMs is where the next verse starts, often less than
+# 0.1 s before that verse's first sound: the player checks its position only now and then, and the
+# audio already queued in the phone, or in Bluetooth headphones, plays on after it stops. `stops`
+# writes a stopMs inside the pause between the two verses, measured on the recording itself.
+STOP_SAMPLE_RATE = 16000  # keeps the hiss of the fricatives some verses start with
+STOP_FRAME_MS = 10
+# Rumble under the voice's lowest notes, e.g. from the recording room, is not sound of the recitation.
+STOP_HIGHPASS_HZ = 60
+# Zero samples, e.g. at a file's trimmed edges, say nothing about the noise of the recording.
+DIGITAL_SILENCE_DB = -90.0
+# A frame is silent below the recording's noise floor plus half the way to its speech level,
+# and never less than 6 or more than 12 dB above the floor.
+QUIET_OVER_FLOOR_DB = (6.0, 12.0)
+# A click or a lip noise this short, with this much silence on each side, does not end a pause. A
+# verse's last sound fading in and out around the threshold has shorter silences between: still sound.
+STOP_BLIP_MS = 50
+STOP_BLIP_QUIET_MS = 50
+# A silence this short between two sounds, e.g. a flicker as a sound starts or fades, is sound.
+STOP_FLICKER_MS = 20
+# Shorter silences are dips within joined words, not a pause between verses.
+MIN_PAUSE_MS = 150
+# How far a boundary may lie inside the next verse's first sound: aligners sometimes start a verse late.
+# As far the other way, the verse's own last sound may run past it, before a pause at least this long:
+# a shorter silence there may be the closure of a consonant in the next verse's first word.
+LATE_BOUNDARY_MS = 300
+EARLY_END_PAUSE_MS = 300
+# Farther, after a pause this long, which only ends verses: a timing source that started the next verse late.
+CLEAN_PAUSE_MS = 500
+VERY_LATE_BOUNDARY_MS = 600
+# A verse start this far inside a sound that follows such a pause and runs on into the verse cuts its first word.
+LATE_START_MS = 100
+# Least time from a stop to the next verse's first sound. On a phone's speaker, about 50 ms more of
+# the recording is heard after the stop point (Pixel 6, 2026-10-26): its mixer runs 60 ms ahead of
+# what is heard. The verse's own fading sound and its joining vowel give way to it.
+STOP_MIN_LEAD_MS = 120
+# Time wanted from a stop to the next verse's first sound, 200 ms of it at 1.5x speed, for Bluetooth
+# headphones. A long pause is cut in its middle, which keeps some of the reciter's silence before the
+# repetition starts.
+STOP_LEAD_MS = 300
+# The verse's own sound has died away this long before its stop, in a pause too short for the lead.
+STOP_TAIL_MS = 60
+# Pauses are looked for this far on either side of a boundary.
+PAUSE_SEARCH_MS = 4000
 
 
 class LayoutError(Exception):
@@ -230,18 +286,43 @@ def safe_member(name: str) -> str:
     return str(path)
 
 
+try:
+    # libdeflate's bindings (pip install deflate): its level 12 deflates the book's fonts about 4% smaller than zlib,
+    # and any inflater reads it. Without them, entries are deflated by zlib as before.
+    import deflate as libdeflate
+except ImportError:
+    libdeflate = None
+
+
+class LibDeflateEntry:
+    """A zip entry's compressor: the whole file deflated at once by libdeflate at level 12 (a raw deflate stream, as
+    zip wants it)."""
+    def __init__(self):
+        self.parts = []
+
+    def compress(self, data):
+        self.parts.append(bytes(data))
+        return b''
+
+    def flush(self):
+        return libdeflate.deflate_compress(b''.join(self.parts), 12)
+
+
 def build_archive(files: list[tuple[str, Path]], out: Path) -> str:
-    """Writes a stored (uncompressed) zip with sorted entries and fixed metadata; returns its sha256."""
+    """Writes a zip with sorted entries and fixed metadata, stored (uncompressed) but for the COMPRESSED kinds (by
+    libdeflate where its bindings are installed); returns its sha256."""
     out.parent.mkdir(parents=True, exist_ok=True)
     temporary = out.with_suffix(out.suffix + '.tmp')
     with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
         for name, source in sorted(files):
             info = zipfile.ZipInfo(safe_member(name), date_time=ZIP_EPOCH)
-            info.compress_type = zipfile.ZIP_STORED
+            info.compress_type = zipfile.ZIP_DEFLATED if PurePosixPath(name).suffix in COMPRESSED else zipfile.ZIP_STORED
             info.create_system = 3
             info.external_attr = 0o100644 << 16
             info.file_size = source.stat().st_size
             with source.open('rb') as src, archive.open(info, 'w') as dst:
+                if libdeflate is not None and info.compress_type == zipfile.ZIP_DEFLATED:
+                    dst._compressor = LibDeflateEntry()     # zipfile still computes the CRC and the sizes itself
                 shutil.copyfileobj(src, dst, 1 << 20)
     temporary.replace(out)
     return sha256_of(out)
@@ -332,10 +413,33 @@ def recitations() -> list[dict]:
 
 
 def page_paths() -> list[str]:
+    """The page scans' asset paths, in page order."""
     if not PAGES_JSON.exists():
         raise LayoutError(f'{PAGES_JSON.relative_to(REPO)} is missing; commit it first')
     pages = json.loads(PAGES_JSON.read_text(encoding='utf-8'))['pages']
-    return [f"quran/pages/{page['file']}" for page in pages]
+    return [f"quran/pages/{page['file']}" for page in sorted(pages, key=lambda page: page['n'])]
+
+
+def book_files(folder: Path) -> tuple[list[tuple[str, Path]], int]:
+    """The book in folder/quran/book, as the book build's book_pack.py writes it: plates.json, the fonts it names
+    (beside it, where the app reads them) and the page layouts pages/page_NNN.bin from page 1 with no gap. Returns
+    (asset path, file) for each, and the number of pages the book sets."""
+    root = folder / 'quran' / 'book'
+    plates = root / 'plates.json'
+    if not plates.is_file():
+        raise LayoutError(f'{plates} is missing: --book takes the folder book_pack.py wrote')
+    files = [('quran/book/plates.json', plates)]
+    for name in json.loads(plates.read_text(encoding='utf-8'))['fonts']:
+        font = root / name
+        if PurePosixPath(name).name != name or not font.is_file():
+            raise LayoutError(f'The book names a font {name!r} that is not beside its plates.json')
+        files.append((f'quran/book/{name}', font))
+    pages = sorted((root / 'pages').glob('page_*.bin'))
+    numbers = [int(page.stem.split('_')[1]) for page in pages]
+    if not numbers or numbers != list(range(1, len(numbers) + 1)):
+        raise LayoutError("The book's page layouts must run from pages/page_001.bin with no gap")
+    files += [(f'quran/book/pages/{page.name}', page) for page in pages]
+    return files, len(numbers)
 
 
 class LocalFiles:
@@ -394,18 +498,28 @@ def command_layout(args: argparse.Namespace) -> None:
         packs: list[dict] = []
         sources: dict[str, Path] = {}
 
-        def add_pack(name: str, kind: str, paths: list[str], extra: dict, origin_of) -> None:
+        def add_pack(name: str, kind: str, paths: list[str], extra: dict, origin_of, known: dict | None = None) -> None:
             entries = []
             for asset_path in paths:
-                source = files.find(asset_path)
+                source = (known or {}).get(asset_path) or files.find(asset_path)
                 sources[asset_path] = source
                 size = source.stat().st_size
                 assets.append(Asset(name, asset_path, size, sha256_of(source), origin_of(asset_path), extra['delivery']))
                 entries.append({'path': asset_path, 'bytes': size})
             packs.append({'name': name, 'kind': kind, **extra, 'bytes': sum(e['bytes'] for e in entries), 'files': entries})
 
+        previous = read_layout() if LAYOUT_JSON.exists() else None
         pages = page_paths()
-        add_pack(PAGES_PACK, 'pages', pages, {'delivery': PLAY}, lambda _: '-')
+        if args.book:
+            book, sets = book_files(Path(args.book))
+            if sets != len(pages):
+                raise LayoutError(f'The book sets {sets} pages; pages.json has {len(pages)}')
+            # The book takes the scans' place: the reader downloads it alone.
+            add_pack(BOOK_PACK, 'book', [path for path, _ in book], {'delivery': PLAY}, lambda _: '-', dict(book))
+        elif previous and any(pack['kind'] == 'book' for pack in previous['packs']):
+            raise LayoutError('The layout holds the book: give --book (the folder book_pack.py wrote), or the reader loses it')
+        else:
+            add_pack(PAGES_PACK, 'pages', pages, {'delivery': PLAY}, lambda _: '-')
         found = recitations()
         deliveries = assign_deliveries([r['reciterId'] for r in found], previous_deliveries())
         for recitation in found:
@@ -434,9 +548,30 @@ def command_layout(args: argparse.Namespace) -> None:
             raise LayoutError(f'{len(play_packs)} Play packs exceed the {MAX_PLAY_PACKS}-pack limit of an app bundle')
 
         BUILD.mkdir(parents=True, exist_ok=True)
+        # A pack whose files have not changed keeps the archive the CDN already serves (a deflated zip need not come
+        # out byte for byte the same from another zlib).
+        old_packs = {pack['name']: pack for pack in previous['packs']} if previous else {}
+        old_hashes = {(a.pack, a.path): a.sha256 for a in read_manifest()} if previous and MANIFEST.exists() else {}
+        new_hashes = {(a.pack, a.path): a.sha256 for a in assets}
         for pack in packs:
             if pack['delivery'] == PLAY and pack['bytes'] >= MAX_PACK_BYTES:
                 print(f"! {pack['name']} is {pack['bytes'] / MB:.0f} MB: Play asks before using mobile data", file=sys.stderr)
+            old = old_packs.get(pack['name'])
+            if old and old['files'] == pack['files'] and all(
+                    old_hashes.get((pack['name'], f['path'])) == new_hashes[(pack['name'], f['path'])] for f in pack['files']):
+                kept = BUILD / PurePosixPath(old['archive']['key']).name
+                if not kept.is_file() and any(PurePosixPath(f['path']).suffix in COMPRESSED for f in pack['files']):
+                    # Not built here: the copy stage keeps, or the one the CDN serves (a stored zip comes out the same
+                    # anywhere; a deflated one only from the same zlib).
+                    try:
+                        shutil.copyfile(cached_archive(previous, old, DEFAULT_CACHE), kept)
+                    except (LayoutError, OSError, urllib.error.URLError) as missing:
+                        print(f"! {pack['name']}: the published archive could not be fetched ({missing}); building it again "
+                              f"may give it a new key", file=sys.stderr)
+                if kept.is_file() and kept.stat().st_size == old['archive']['bytes'] and sha256_of(kept) == old['archive']['sha256']:
+                    pack['archive'] = old['archive']
+                    print(f"  {pack['name']}: unchanged, {len(pack['files'])} files, {pack['bytes'] / MB:.1f} MB")
+                    continue
             archive = BUILD / f"{pack['name']}.zip"
             digest = build_archive([(e['path'], sources[e['path']]) for e in pack['files']], archive)
             key = f"{ARCHIVE_PREFIX}{pack['name']}-{digest[:12]}.zip"
@@ -759,6 +894,241 @@ def command_convert(args: argparse.Namespace) -> None:
         files.close()
 
 
+def frame_levels(ffmpeg: str, path: Path) -> list[float]:
+    """The loudness of every STOP_FRAME_MS of [path], in dB of full scale, decoded to mono by ffmpeg."""
+    result = subprocess.run([ffmpeg, '-nostdin', '-hide_banner', '-loglevel', 'error', '-i', str(path), '-map', '0:a:0',
+                             '-af', f'highpass=f={STOP_HIGHPASS_HZ}', '-ac', '1', '-ar', str(STOP_SAMPLE_RATE),
+                             '-f', 's16le', '-acodec', 'pcm_s16le', '-'],
+                            capture_output=True)
+    if result.returncode != 0:
+        raise LayoutError(f'ffmpeg could not decode {path}: {result.stderr.decode(errors="replace").strip()[-500:]}')
+    samples = array('h')
+    samples.frombytes(result.stdout[:len(result.stdout) // 2 * 2])
+    if sys.byteorder == 'big':
+        samples.byteswap()
+    size = STOP_SAMPLE_RATE * STOP_FRAME_MS // 1000
+    levels = []
+    for start in range(0, len(samples) - size + 1, size):
+        frame = samples[start:start + size]
+        power = sum(map(operator.mul, frame, frame)) / (size * 32768.0 * 32768.0)
+        levels.append(10 * math.log10(power) if power > 1e-12 else -120.0)
+    return levels
+
+
+def quiet_frames(levels: list[float]) -> list[bool]:
+    """Which frames are silent, by a threshold set from the recording's own noise floor and speech level."""
+    heard = sorted(level for level in levels if level > DIGITAL_SILENCE_DB)
+    if not heard:
+        return [True] * len(levels)
+    floor, speech = heard[len(heard) * 5 // 100], heard[len(heard) // 2]
+    low, high = QUIET_OVER_FLOOR_DB
+    threshold = floor + min(high, max(low, (speech - floor) / 2))
+    raw = [level < threshold for level in levels]
+    quiet = list(raw)
+    blip, around = STOP_BLIP_MS // STOP_FRAME_MS, STOP_BLIP_QUIET_MS // STOP_FRAME_MS
+    index = 0
+    while index < len(raw):
+        if raw[index]:
+            index += 1
+            continue
+        end = index
+        while end < len(raw) and not raw[end]:
+            end += 1
+        if end - index <= blip and index >= around and all(raw[index - around:index]) and all(raw[end:end + around]) \
+                and end + around <= len(raw):
+            quiet[index:end] = [True] * (end - index)
+        index = end
+    flicker = STOP_FLICKER_MS // STOP_FRAME_MS
+    index = 0
+    while index < len(quiet):
+        if not quiet[index]:
+            index += 1
+            continue
+        end = index
+        while end < len(quiet) and quiet[end]:
+            end += 1
+        if 0 < index and end < len(quiet) and end - index <= flicker:
+            quiet[index:end] = [False] * (end - index)
+        index = end
+    return quiet
+
+
+def pause_at(quiet: list[bool], boundary: int, low_ms: int, high_ms: int) -> tuple[int, int] | None:
+    """The pause at [boundary] between two verses, as (where the sound before it ends, where the next one starts) in ms.
+
+    Only a silence within [low_ms, high_ms) counts. A boundary inside a sound that falls silent at most
+    LATE_BOUNDARY_MS after it, for a pause of EARLY_END_PAUSE_MS or more, lies in the verse's own last
+    sound: that pause follows the verse. A sound that runs on into the next verse counts when it starts at
+    most LATE_BOUNDARY_MS before the boundary, or at most VERY_LATE_BOUNDARY_MS after a CLEAN_PAUSE_MS
+    pause: the pause before it.
+    """
+    low, high = max(0, low_ms // STOP_FRAME_MS), min(len(quiet), high_ms // STOP_FRAME_MS)
+    index = boundary // STOP_FRAME_MS
+    if not low <= index < high:
+        return None
+    late = 0
+    if not quiet[index]:
+        end = index
+        while end < high and not quiet[end]:
+            end += 1
+        after = end
+        while after < high and quiet[after]:
+            after += 1
+        if end < high and end * STOP_FRAME_MS - boundary <= LATE_BOUNDARY_MS and (after - end) * STOP_FRAME_MS >= EARLY_END_PAUSE_MS:
+            return end * STOP_FRAME_MS, after * STOP_FRAME_MS
+        start = index
+        while start > low and not quiet[start - 1]:
+            start -= 1
+        late = boundary - start * STOP_FRAME_MS
+        if start == low or late > VERY_LATE_BOUNDARY_MS:
+            return None
+        index = start - 1
+    off = on = index
+    while off > low and quiet[off - 1]:
+        off -= 1
+    while on < high and quiet[on]:
+        on += 1
+    # A silence reaching the edge of [low_ms, high_ms) is a pause longer than the search, measured up to it.
+    pause = (on - off) * STOP_FRAME_MS
+    if pause < MIN_PAUSE_MS or (late > LATE_BOUNDARY_MS and pause < CLEAN_PAUSE_MS):
+        return None
+    return off * STOP_FRAME_MS, on * STOP_FRAME_MS
+
+
+def next_sound(quiet: list[bool], row: dict, following: dict) -> tuple[tuple[int, int] | None, int]:
+    """The pause between [row]'s verse and the [following] one (see pause_at), and where the following one's sound starts.
+
+    With no pause, the verses are joined: the next one's sound starts at the boundary, or where a dip around it ends.
+    """
+    boundary = row['endMs']
+    pause = pause_at(quiet, boundary, max(row['startMs'], boundary - PAUSE_SEARCH_MS),
+                     min(following['endMs'], boundary + PAUSE_SEARCH_MS))
+    if pause:
+        return pause, pause[1]
+    index = boundary // STOP_FRAME_MS
+    while index < len(quiet) and quiet[index] and index * STOP_FRAME_MS < following['endMs']:
+        index += 1
+    return None, max(boundary, index * STOP_FRAME_MS)
+
+
+def late_starts(quiet: list[bool], rows: list[dict]) -> list[int]:
+    """The verses whose start lies LATE_START_MS or more inside their first sound, after a CLEAN_PAUSE_MS pause.
+
+    Starting or repeating such a verse cuts its first word. Only a sound running on LATE_BOUNDARY_MS past the
+    start counts: a click in a pause, or a breath, is no verse. A start more than VERY_LATE_BOUNDARY_MS in
+    is a verse joined to the one before, not a late one.
+    """
+    late = []
+    for row in rows:
+        index = row['startMs'] // STOP_FRAME_MS
+        if index >= len(quiet) or quiet[index]:
+            continue
+        start = end = index
+        while start > 0 and not quiet[start - 1]:
+            start -= 1
+        while end < len(quiet) and not quiet[end]:
+            end += 1
+        off = start
+        while off > 0 and quiet[off - 1]:
+            off -= 1
+        if (LATE_START_MS <= row['startMs'] - start * STOP_FRAME_MS <= VERY_LATE_BOUNDARY_MS
+                and (start - off) * STOP_FRAME_MS >= CLEAN_PAUSE_MS and end * STOP_FRAME_MS - row['startMs'] >= LATE_BOUNDARY_MS):
+            late.append(row['ayah'])
+    return late
+
+
+def verse_stops(quiet: list[bool], rows: list[dict]) -> list[int]:
+    """Where each of a surah's verses stops when recited alone; the last one, followed by no verse, at its end.
+
+    Within the pause before the next verse: STOP_LEAD_MS or more before its first sound, or the pause's
+    middle when that is earlier, but STOP_TAIL_MS or more after the verse's own sound. Always
+    STOP_MIN_LEAD_MS or more before the next verse's sound, even when the pause is short or there is
+    none (a verse joined to the next, whose joining vowel is then cut). Never later than the verse's end.
+    """
+    stops = []
+    for row, following in zip(rows, rows[1:]):
+        boundary = row['endMs']
+        pause, sound = next_sound(quiet, row, following)
+        stop = min(boundary, sound - STOP_MIN_LEAD_MS)
+        if pause:
+            off, on = pause
+            stop = min(stop, max(off + STOP_TAIL_MS, on - max(STOP_LEAD_MS, (on - off) // 2)))
+        stops.append(stop if stop > row['startMs'] else boundary)
+    stops.append(rows[-1]['endMs'])
+    return stops
+
+
+def command_stops(args: argparse.Namespace) -> None:
+    ffmpeg = shutil.which('ffmpeg')
+    if not ffmpeg:
+        raise LayoutError('stops needs ffmpeg on the PATH. On Windows: winget install Gyan.FFmpeg, then open a new terminal')
+    folders = sorted(path.parent.name for path in TIMINGS_DIR.glob('*/timings.json'))
+    chosen = args.reciter or folders
+    unknown = [folder for folder in chosen if folder not in folders]
+    if unknown:
+        raise LayoutError(f'No timings.json for {", ".join(unknown)} under {TIMINGS_DIR.relative_to(REPO)}')
+    files = LocalFiles([Path(p) for p in args.from_dir])
+    try:
+        for folder in chosen:
+            path = TIMINGS_DIR / folder / 'timings.json'
+            raw = path.read_bytes()
+            body = raw.rstrip(b'\r\n')
+            data = json.loads(body.decode('utf-8'))
+            surahs = data['surahs']
+
+            def stops_of(surah: dict) -> tuple[list[int], list[str], list[str], list[str]]:
+                recording = files.find(surah['assetPath'])
+                levels = frame_levels(ffmpeg, recording)
+                # The app refuses a recording 2 s off its timings, too.
+                if abs(len(levels) * STOP_FRAME_MS - surah['durationMs']) > 2000:
+                    raise LayoutError(f'{recording} lasts {len(levels) * STOP_FRAME_MS} ms, but its timings say '
+                                      f'{surah["durationMs"]} ms: give stops the recordings the timings were made on')
+                quiet, rows = quiet_frames(levels), surah['timings']
+                stops = verse_stops(quiet, rows)
+                joined, short = [], []
+                for row, following, stop in zip(rows, rows[1:], stops):
+                    pause, sound = next_sound(quiet, row, following)
+                    if pause is None:
+                        joined.append(f'{surah["number"]}:{row["ayah"]}')
+                    elif sound - stop < STOP_LEAD_MS:
+                        short.append(f'{surah["number"]}:{row["ayah"]}')
+                return stops, joined, short, [f'{surah["number"]}:{ayah}' for ayah in late_starts(quiet, rows)]
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+                found = list(pool.map(stops_of, surahs))
+            moved = 0
+            joined = [verse for _, verses, _, _ in found for verse in verses]
+            short = [verse for _, _, verses, _ in found for verse in verses]
+            late = [verse for _, _, _, verses in found for verse in verses]
+            for surah, (stops, _, _, _) in zip(surahs, found):
+                rows = []
+                for row, stop in zip(surah['timings'], stops):
+                    kept = {}
+                    for key, value in row.items():
+                        if key == 'stopMs':
+                            continue
+                        kept[key] = value
+                        # Written only where it differs: the app reads a missing stopMs as endMs.
+                        if key == 'endMs' and stop < value:
+                            kept['stopMs'] = stop
+                    moved += stop < row['endMs']
+                    rows.append(kept)
+                surah['timings'] = rows
+            # One line, as the app ships it, keeping the file's own line ending.
+            path.write_bytes(json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + raw[len(body):])
+            verses = sum(len(surah['timings']) for surah in surahs)
+            print(f'  {folder}: {moved} of {verses} verses stop before their end')
+            # Worth a listen: the next verse's first sound is closest to these stops.
+            for ids, what in ((joined, f'joined to the next verse, stopped {STOP_MIN_LEAD_MS} ms before it'),
+                              (short, f'with a pause too short to stop {STOP_LEAD_MS} ms before the next verse'),
+                              (late, 'starting inside their first word: correct their startMs if so')):
+                if ids:
+                    print(f'    {len(ids)} {what}: {" ".join(ids[:12])}{" …" if len(ids) > 12 else ""}')
+        print('✓ Verse stops written. Commit the timings.json files.')
+    finally:
+        files.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -775,6 +1145,8 @@ def main(argv: list[str] | None = None) -> int:
     layout.add_argument('--cdn', required=True, help='base URL of the quran-cdn Worker')
     layout.add_argument('--target-mb', type=float, default=TARGET_PACK_BYTES / MB,
                         help='pack size for reciters only the Worker serves')
+    layout.add_argument('--book', help="the folder the book build's book_pack.py wrote (holding quran/book): the reader "
+                                       'downloads the book instead of the page scans')
     layout.set_defaults(run=command_layout)
 
     publish = commands.add_parser('publish', help='upload pack zips the CDN does not serve yet')
@@ -797,6 +1169,13 @@ def main(argv: list[str] | None = None) -> int:
     fetch = commands.add_parser('fetch-origin', help='download the recordings the recitations were converted from')
     fetch.add_argument('--to', required=True)
     fetch.set_defaults(run=command_fetch_origin)
+
+    stops = commands.add_parser('stops', help='write where each verse can stop without the next being heard (needs ffmpeg)')
+    stops.add_argument('--from-dir', action='append', required=True,
+                       help='folder or zip holding the converted MP3s, one subfolder per reciter (repeatable)')
+    stops.add_argument('--reciter', action='append', help='only this reciter folder, e.g. hosary (repeatable)')
+    stops.add_argument('--jobs', type=int, default=os.cpu_count() or 1, help='recordings measured at once')
+    stops.set_defaults(run=command_stops)
 
     # Windows consoles may not encode ✓ and ✗; print a substitute rather than fail after the work is done.
     for stream in (sys.stdout, sys.stderr):

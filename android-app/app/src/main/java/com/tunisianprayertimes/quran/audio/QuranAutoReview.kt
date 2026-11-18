@@ -65,7 +65,8 @@ internal class QuranAutoReview(
                     selected = true
                     val ready = when (mediaId) {
                         DAILY_ID -> sessions.startDaily()
-                        NOTEBOOK_ID -> sessions.startNotebook()
+                        // The whole notebook, in the phone's order; an unfinished list review goes on.
+                        NOTEBOOK_ID -> sessions.startList()
                         else -> {
                             if (!sessions.hasSession) sessions.inform(context.getString(R.string.quran_auto_review_no_session))
                             sessions.resume(); sessions.hasSession
@@ -92,10 +93,11 @@ internal class QuranAutoReview(
             else prepare(saved.first, sessions.savedClipReciter(), saved.second, saved.third,
                 sessions.savedClipPosition(), sessions.savedClipSurah())
         } else when (sessions.view().phase) {
-            HifzSessionPhase.Question -> if (sessions.list("cue") == null) player.idle() else sessions.cue()
+            // Never the verse of another question still waiting.
+            HifzSessionPhase.Question -> if (!sessions.view().cue || sessions.list("cue") == null) player.idle() else sessions.cue()
             HifzSessionPhase.Assessment -> sessions.answerAudio()
             HifzSessionPhase.Training -> sessions.drill()
-            HifzSessionPhase.Finished -> player.idle()
+            HifzSessionPhase.Answered, HifzSessionPhase.Finished -> player.idle()
         }
         player.refresh()
     }
@@ -216,8 +218,9 @@ internal class QuranAutoReview(
         var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_STOP or
             PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH
         if (audio) actions = actions or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_REWIND
-        if (view.phase == HifzSessionPhase.Training || view.mode == HifzSessionMode.Notebook && view.index < view.total) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
-        if (view.mode == HifzSessionMode.Notebook && view.index > 0) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+        // As on the phone: on past a card before «أظهر» or once answered, and back to one; never between «أظهر» and the answer.
+        if (view.phase == HifzSessionPhase.Training || view.canForward) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
+        if (view.canBack) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
         val state = PlaybackState.Builder().setActions(actions)
             .setState(status, if (audio) current.positionMs else 0L, if (audio && current.playing) 1f else 0f)
         fun add(command: String, label: Int, icon: Int) {
@@ -229,7 +232,7 @@ internal class QuranAutoReview(
         else when (view.phase) {
             HifzSessionPhase.Question -> {
                 add("reveal", R.string.quran_auto_review_reveal, R.drawable.ic_quran_auto_reveal)
-                if (view.point?.verse?.ayah?.let { it > 1 } == true) add("cue", R.string.quran_auto_review_cue, R.drawable.ic_quran_headphones)
+                if (view.cue) add("cue", R.string.quran_auto_review_cue, R.drawable.ic_quran_headphones)
             }
             HifzSessionPhase.Assessment -> {
                 if (!view.assisted) add("held", R.string.quran_auto_review_held, R.drawable.ic_quran_auto_held)
@@ -237,6 +240,8 @@ internal class QuranAutoReview(
                 add("again", R.string.quran_auto_review_again, R.drawable.ic_quran_auto_again)
             }
             HifzSessionPhase.Training -> add("drill", R.string.quran_auto_review_drill, R.drawable.ic_quran_repeat)
+            // Answered earlier in this review: nothing to grade again; skip on or back.
+            HifzSessionPhase.Answered -> Unit
             HifzSessionPhase.Finished -> {
                 if (sessions.reviewState.stopping) add("continue", R.string.quran_auto_review_continue, R.drawable.ic_play_arrow)
                 // Only with something due since the review began, or due again: never an action with nothing to ask.
@@ -261,16 +266,21 @@ internal class QuranAutoReview(
             HifzSessionPhase.Question -> context.getString(R.string.quran_auto_review_question_hint)
             HifzSessionPhase.Assessment -> context.getString(if (view.assisted) R.string.quran_auto_review_assisted_hint else R.string.quran_auto_review_assessment_hint)
             HifzSessionPhase.Training -> context.getString(R.string.quran_auto_review_training_hint)
+            // What the answer given did, as said when it was given.
+            HifzSessionPhase.Answered -> sessions.reviewState.outcome(view.point).orEmpty()
             HifzSessionPhase.Finished -> "دون مساعدة ${view.tally.held} · بتردّد ${view.tally.hesitated} · نسيت ${view.tally.again}" +
                 if (view.deferred > 0) " · مؤجّلة ${view.deferred}" else ""
         }
         val progress = if (view.point != null) "السؤال ${view.index + 1} من ${view.total}" else ""
-        val mode = context.getString(if (view.mode == HifzSessionMode.Notebook) R.string.quran_auto_review_notebook else R.string.quran_auto_review_daily)
+        // «مراجعة اليوم» names the due questions; a list review needs no name (D5).
+        val about = if (view.origin == HifzReviewOrigin.Daily) listOf(context.getString(R.string.quran_auto_review_daily), progress)
+            else listOf(progress)
+        val description = about.filter { it.isNotEmpty() }.joinToString(" · ")
         return MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_MEDIA_ID, CONTINUE_ID)
             .putString(MediaMetadata.METADATA_KEY_TITLE, title).putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, subtitle).putString(MediaMetadata.METADATA_KEY_ARTIST, subtitle)
-            .putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, "$mode · $progress")
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, "$mode · $progress")
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, description)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, description)
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI, QuranAutoBrowse.iconUri(context).toString())
             .putLong(MediaMetadata.METADATA_KEY_DURATION, if (owns(current.playlist?.requestId)) current.durationMs else 0L).build()
     }

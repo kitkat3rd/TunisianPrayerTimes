@@ -1118,8 +1118,9 @@
       "rows": 15,
       "textRows": 15,
       "banners": 0,
-      "minimumMarkerScore": 0.9138,
-      "sourceSha256": "d0d3735910598a7f5b69d1db05c9de090db2d7f58f3d960416c0e627a624d689"
+      "minimumMarkerScore": 0.918,
+      "sourceSha256": "14343b7e73bc10a575af823815044ce1415260dee8b35cb51d207ec14de6b1df",
+      "source": "edited book (relaid)"
     },
     {
       "page": 121,
@@ -2882,8 +2883,9 @@
       "rows": 15,
       "textRows": 15,
       "banners": 0,
-      "minimumMarkerScore": 0.8934,
-      "sourceSha256": "321781ded53ba49d28588a5e0c7a1c01cb1a8be39c7d4e28c683dfa6d3b9263c"
+      "minimumMarkerScore": 0.8899,
+      "sourceSha256": "b379187a188a6715ef918bbe2a754f67832b255f120eb16f92667787af687bdc",
+      "source": "edited book (relaid)"
     },
     {
       "page": 317,
@@ -3211,30 +3213,33 @@
     },
     {
       "page": 353,
-      "markers": 5,
-      "rows": 17,
-      "textRows": 17,
+      "markers": 4,
+      "rows": 15,
+      "textRows": 15,
       "banners": 0,
-      "minimumMarkerScore": 0.9067,
-      "sourceSha256": "9822a46a9f2bb9c0e182e6b5e1dec6c5f24abf63fe605612733cfd74a0360071"
+      "minimumMarkerScore": 0.8998,
+      "sourceSha256": "91e8c79119a32f320021a00a5aa626566413ca6cab48f9194abe508ae8c7eb63",
+      "source": "edited book (relaid)"
     },
     {
       "page": 354,
       "markers": 6,
-      "rows": 14,
-      "textRows": 14,
+      "rows": 15,
+      "textRows": 15,
       "banners": 0,
-      "minimumMarkerScore": 0.9236,
-      "sourceSha256": "a4835bce1b56ac5733294b8b77e780c6359ce62179283a05b50184e37e7dfe00"
+      "minimumMarkerScore": 0.9246,
+      "sourceSha256": "b73f72ea2409d5afbbd4183da1425c81a3de13df6c8ab8b3c12ca1abbf696651",
+      "source": "edited book (relaid)"
     },
     {
       "page": 355,
-      "markers": 9,
-      "rows": 14,
-      "textRows": 14,
+      "markers": 10,
+      "rows": 15,
+      "textRows": 15,
       "banners": 0,
-      "minimumMarkerScore": 0.9029,
-      "sourceSha256": "057320cd657121db3dc5568a0ff6a1139eeac65927bf71118e73881bcc4456fc"
+      "minimumMarkerScore": 0.9101,
+      "sourceSha256": "0bacad7c865cd38d7422d3748fd3b60c48491982d94ebdb9f90622916d55b4be",
+      "source": "edited book (relaid)"
     },
     {
       "page": 356,

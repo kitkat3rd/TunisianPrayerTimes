@@ -25,9 +25,9 @@ class HifzRetentionPlanTest {
     )
 
     @Test
-    fun defaultPath_requiresFourteenSuccessesAndAllNineActualWaitingGaps() {
+    fun defaultPath_requiresThreeDaysAndAllNineActualWaitingGaps() {
         var p = point()
-        listOf(100L to 8, 100L to 16, 101L to 8, 101L to 16, 102L to 8).forEach { (day, hour) ->
+        listOf(100L to 8, 101L to 8, 102L to 8).forEach { (day, hour) ->
             assertTrue(p.isDue(day, at(day, hour)))
             p = p.graded(HifzGrade.Held, day, at(day, hour))
             assertFalse(p.mastered)
@@ -46,7 +46,7 @@ class HifzRetentionPlanTest {
             assertEquals(index == gaps.lastIndex, p.mastered)
         }
         assertEquals(106L, previous - reinforcedOn)
-        assertEquals(14, p.checks.size)
+        assertEquals(12, p.checks.size)
         assertEquals(at(previous), p.masteredAt)
         repeat(3) {
             assertEquals(previous + 60, p.dueDay)
@@ -57,14 +57,16 @@ class HifzRetentionPlanTest {
     }
 
     @Test
-    fun secondDailySuccess_movesEligibilityAndRemindersToTomorrowEvenAfterRestartOrPlanEdit() {
+    fun aDaysRightAnswer_movesEligibilityAndRemindersToTomorrowEvenAfterRestartOrPlanEdit() {
+        assertEquals(1, point().daysAfter(HifzGrade.Held, firstDay))
         val first = point().graded(HifzGrade.Held, firstDay, at(firstDay, 8))
-        assertEquals(1, first.daysAfter(HifzGrade.Held, firstDay))
+        assertEquals(HifzFreshRecalls - 1, first.fresh)
+        assertEquals(firstDay + 1, first.dueDay)
+        assertFalse(first.isDue(firstDay, at(firstDay, 23)))
+        // Another right answer that day is saved, and moves nothing.
         val second = first.graded(HifzGrade.Held, firstDay, at(firstDay, 10))
-        assertEquals(3, second.fresh)
-        assertEquals(firstDay + 1, second.dueDay)
-        assertFalse(second.isDue(firstDay, at(firstDay, 23)))
-        assertEquals(second, second.graded(HifzGrade.Held, firstDay, at(firstDay, 12)))
+        assertEquals(first.fresh, second.fresh)
+        assertEquals(first.dueDay, second.dueDay)
         val restored = decodeHifzPoints(encodeHifzPoints(listOf(second))).single()
         assertEquals(second, restored)
         val edited = restored.withPlan(HifzPlan(HifzPace.Auto, null, oncePerDay = false), firstDay)
@@ -93,25 +95,25 @@ class HifzRetentionPlanTest {
     }
 
     @Test
-    fun aPreviouslyMasteredVerse_neverRestartsWithOnlyTwoRecalls() {
+    fun aPreviouslyMasteredVerse_restartsWithTheWholePlan() {
         val old = point().copy(fresh = 0, step = 9, lastSlipAt = at(firstDay - 40), createdAt = at(firstDay - 40))
         val failed = old.graded(HifzGrade.Again, firstDay, at(firstDay))
-        assertEquals(5, failed.fresh)
+        assertEquals(HifzFreshRecalls, failed.fresh)
         assertFalse(failed.mastered)
         assertNull(failed.masteredAt)
     }
 
     @Test
-    fun adoptingTheNewPlan_preservesHistoryAndDoesNotCreditMoreThanTwoSuccessesOnAnOldDay() {
+    fun adoptingTheNewPlan_preservesHistoryAndCreditsOneSuccessOnAnOldDay() {
         val old = point().copy(
             autoRecalls = 3, fresh = 1,
             checks = listOf(8, 10, 12).map { HifzCheck(firstDay, HifzGrade.Held, at(firstDay, it)) },
         )
         val json = JSONObject(encodeHifzPoints(listOf(old))).apply { remove("learningPlan") }
         val changed = decodeHifzPoints(json.toString()).single()
-        assertEquals(5, changed.autoRecalls)
-        assertEquals(3, changed.fresh)
-        assertEquals(2, changed.rightSinceSlip)
+        assertEquals(HifzFreshRecalls, changed.autoRecalls)
+        assertEquals(HifzFreshRecalls - 1, changed.fresh)
+        assertEquals(1, changed.rightSinceSlip)
         assertEquals(firstDay + 1, changed.dueDay)
         assertEquals(old.checks, changed.checks)
         assertEquals(old.mistakes, changed.mistakes)

@@ -47,6 +47,12 @@ python3 scripts/quran_assets.py layout --from-dir path/to/hosary --from-dir path
 CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… python3 scripts/quran_assets.py publish
 ```
 
+With `--book <folder>` (the folder the mushaf book build's `book_pack.py` wrote), the reader's
+pages are the book: the mushaf set in the print's own type, in one pack `quran_book` in place of
+the page scans pack. Either way the reader holds the Quran's 603 pages alone, without the PDF's
+appendix. Its archive deflates the fonts and page
+layouts; a later `layout` with the same files keeps the archive already published.
+
 `layout` rewrites `android-app/quran-assets/manifest.tsv`, `quran/packs.json` and the pack
 modules; commit them. `publish` uploads only the archives the CDN does not serve yet, through
 Cloudflare's R2 API: it needs Python alone, not Node or wrangler.

@@ -108,7 +108,7 @@ class HifzTest {
     }
 
     @Test
-    fun aSlip_needsFiveSuccessesAcrossThreeDays_thenItsChecksSpaceOut() {
+    fun aSlip_needsThreeDifferentDays_everyOtherAnswerSaved_thenItsChecksSpaceOut() {
         val gap = HifzFreshGapMs
         var p = point(HifzKind.Ending, verse(2, 17)).copy(fresh = HifzFreshRecalls, dueDay = 100L, lastSlipAt = 1_000L)
         // Not right after the slip, which is still in mind: once its gap has passed.
@@ -119,17 +119,22 @@ class HifzTest {
         assertEquals(HifzFreshRecalls, p.fresh)
         assertEquals(100L, p.dueDay)
         assertFalse(p.isDue(100L, 10_000_000L + gap - 1))
-        // Two successes end today's counted reinforcement; the remaining three need two more days.
-        p = p.graded(HifzGrade.Held, 100L, now = 20_000_000L).graded(HifzGrade.Held, 100L, now = 30_000_000L)
-        assertEquals(3, p.fresh)
+        // One right answer counts the day; the next ones that day are saved, counted nowhere, and move nothing.
+        p = p.graded(HifzGrade.Held, 100L, now = 20_000_000L)
+        assertEquals(2, p.fresh)
         assertEquals(101L, p.dueDay)
         assertFalse(p.spacesNext)
-        assertFalse(p.holdsNext)
         assertEquals(1, p.daysAfter(HifzGrade.Held, 100L))
-        assertEquals(p, p.graded(HifzGrade.Held, 100L, now = 40_000_000L))
-        p = p.graded(HifzGrade.Held, 101L, now = 41_000_000L).graded(HifzGrade.Held, 101L, now = 42_000_000L)
+        val again = p.graded(HifzGrade.Held, 100L, now = 30_000_000L)
+        assertEquals(p.fresh, again.fresh)
+        assertEquals(p.dueDay, again.dueDay)
+        assertEquals(p.freshDueAt, again.freshDueAt)
+        assertFalse(again.checks.last().counted)
+        assertEquals(2, again.rightAnswers)
+        assertEquals(1, again.rightDays)
+        p = again.graded(HifzGrade.Held, 101L, now = 41_000_000L)
         assertTrue(p.spacesNext)
-        // The fifth success on the third day starts spaced checks from tomorrow.
+        // The third day's right answer starts spaced checks from tomorrow.
         p = p.graded(HifzGrade.Held, 102L, now = 43_000_000L)
         assertEquals(0, p.fresh)
         assertEquals(0, p.step)
@@ -137,10 +142,19 @@ class HifzTest {
         assertFalse(p.isDue(102L, Long.MAX_VALUE))
         assertEquals(3, p.daysAfter(HifzGrade.Held))
         assertEquals(106L, p.graded(HifzGrade.Held, 103L, 50_000_000L).dueDay)
+        // An answer whose question could not count is saved and moves nothing, even on its check's day.
+        val early = p.graded(HifzGrade.Held, 102L, 44_000_000L, counted = false)
+        assertEquals(p.step, early.step)
+        assertEquals(p.dueDay, early.dueDay)
+        assertFalse(early.checks.last().counted)
+        // A miss counts whoever asked.
+        assertEquals(0, p.graded(HifzGrade.Again, 102L, 45_000_000L, counted = false).step)
+        assertTrue(p.graded(HifzGrade.Again, 102L, 45_000_000L, counted = false).fresh > 0)
         // A failed check, later on, makes it fresh again, a slip counted.
         val failed = p.copy(step = HifzMasteredStep, masteredAt = 7L).graded(HifzGrade.Again, 130L, now = 60_000_000L)
-        // Previous mastery no longer reduces reinforcement after a recurring mistake.
-        assertEquals(9, failed.fresh)
+        // Previous mastery never reduces reinforcement; this miss falls on the slip's own calendar day, and slips on one
+        // day count once for the next plan (D3).
+        assertEquals(HifzFreshRecalls, failed.fresh)
         assertEquals(0, failed.step)
         assertNull(failed.masteredAt)
         assertEquals(130L, failed.dueDay)
@@ -315,7 +329,8 @@ class HifzTest {
         val again = p.graded(HifzGrade.Again, 100L, 1_000L)
         assertEquals(0, again.step)
         assertEquals(100L, again.dueDay)
-        assertEquals(7, again.fresh)
+        // Its first slip and this miss fall on one calendar day: one difficult day (D3).
+        assertEquals(HifzFreshRecalls, again.fresh)
         assertEquals(10, p.daysAfter(HifzGrade.Held))
         assertFalse(p.holdsNext)
         // A held point that is hesitated on leaves «ثبتت» until it is held again; one held longer stays.
@@ -331,22 +346,20 @@ class HifzTest {
     fun reviewEnd_saysWhereEachAnsweredPointStands_andTheLastRightAnswerAsAStep() {
         val catalog = catalog()
         val today = 100L
-        val asked = point(HifzKind.Word, verse(2, 3)).copy(fresh = 4, checks = listOf(HifzCheck(today, HifzGrade.Held, 1L)))
-        // Right answers given toward the plan, for the notebook's dots: one of five.
+        val asked = point(HifzKind.Word, verse(2, 3)).copy(fresh = 2, checks = listOf(HifzCheck(today, HifzGrade.Held, 1L)))
+        // Days given toward the plan, for the notebook's dots: one of three.
         assertEquals(1, asked.freshDone)
         assertEquals(
-            "البقرة · الآية 3: بقي أن تتذكّرها 4\u00A0مرات، ونسألك عنها اليوم بعد المغرب.",
+            "البقرة · الآية 3: بقي أن تتذكّرها في يومين آخرين، ونسألك عنها اليوم بعد المغرب.",
             com.tunisianprayertimes.ui.hifzRoundLine(catalog, asked, today, "اليوم بعد المغرب", "غدًا بعد الفجر").text,
-        )
-        // Asked once a day: tomorrow's first reminder.
-        assertEquals(
-            "البقرة · الآية 3: بقي أن تتذكّرها 4\u00A0مرات، ونسألك عنها غدًا بعد الفجر.",
-            com.tunisianprayertimes.ui.hifzRoundLine(catalog, asked.copy(times = HifzTimes(setOf(Prayer.FAJR))), today, "اليوم بعد المغرب", "غدًا بعد الفجر").text,
         )
         // Completing reinforcement ends the daily questions: said as the step it is.
         val done = asked.copy(fresh = 0, step = 0, dueDay = today + 1)
         val step = com.tunisianprayertimes.ui.hifzRoundLine(catalog, done, today, "اليوم بعد المغرب", "غدًا بعد الفجر")
-        assertEquals("البقرة · الآية 3: تذكّرتها 5\u00A0مرات دون مساعدة. نسألك عنها غدًا بعد الفجر، ثم تتباعد مواعيد مراجعتها.", step.text)
+        assertEquals("البقرة · الآية 3: تذكّرتها دون مساعدة في 3 أيام مختلفة. نسألك عنها غدًا بعد الفجر، ثم تتباعد مواعيد مراجعتها.", step.text)
+        // An answer that did not count is never said as a milestone.
+        val uncounted = done.copy(checks = listOf(HifzCheck(today, HifzGrade.Held, 1L, counted = false)))
+        assertFalse(com.tunisianprayertimes.ui.hifzRoundLine(catalog, uncounted, today, "اليوم بعد المغرب", "غدًا بعد الفجر").milestone)
         assertTrue(step.milestone)
         assertEquals("غدًا بعد الفجر", step.next)
         // A spaced check passed: its next one, no step of its own.
@@ -394,9 +407,11 @@ class HifzTest {
         val fresh = point(HifzKind.Ending, verse(2, 17))
         val slip = point(HifzKind.Ending, verse(2, 17)).copy(fresh = 2)
         val new = slip.copy(fresh = HifzFreshRecalls)
-        // The same time on every answer is said once: each answer then says only what it does.
-        val backs = HifzGrade.entries.map { com.tunisianprayertimes.ui.hifzGradeOutcome(new, it, "اليوم بعد المغرب", short = true) }
-        assertEquals(setOf("اليوم بعد المغرب"), backs.map { it.back }.toSet())
+        // A fresh right answer counts its day: the verse comes back tomorrow. A hesitation or a miss: at its next reminder.
+        val backs = HifzGrade.entries.associateWith { com.tunisianprayertimes.ui.hifzGradeOutcome(new, it, "اليوم بعد المغرب", short = true).back }
+        assertEquals("غدًا", backs[HifzGrade.Held])
+        assertEquals("اليوم بعد المغرب", backs[HifzGrade.Hesitated])
+        assertEquals("اليوم بعد المغرب", backs[HifzGrade.Again])
         // The last right answer, at Isha, comes back at tomorrow's first reminder, as the others do.
         val atIsha = HifzGrade.entries.map { com.tunisianprayertimes.ui.hifzGradeOutcome(slip.copy(fresh = 1), it, "غدًا بعد الفجر", "غدًا بعد الفجر") }
         assertEquals(setOf("غدًا بعد الفجر"), atIsha.map { it.back }.toSet())
@@ -408,16 +423,20 @@ class HifzTest {
     }
 
     @Test
-    fun theSmartPlan_asksFiveSevenThenNineAndPreservesExplicitPace() {
-        assertEquals(5, hifzAutoRecalls(slips = 1))
-        assertEquals(7, hifzAutoRecalls(slips = 2))
-        assertEquals(9, hifzAutoRecalls(slips = 3))
-        assertEquals(9, hifzAutoRecalls(slips = 4))
-        var p = point(HifzKind.Word, verse(2, 18)).copy(fresh = 3)
-        p = p.graded(HifzGrade.Again, 100L, 1_000L)
-        assertEquals(7, p.fresh)
-        p = p.graded(HifzGrade.Again, 100L, 2_000L)
-        assertEquals(9, p.fresh)
+    fun theSmartPlan_asksThreeFourThenFiveDaysAndPreservesExplicitPace() {
+        assertEquals(3, hifzAutoRecalls(slips = 1))
+        assertEquals(4, hifzAutoRecalls(slips = 2))
+        assertEquals(5, hifzAutoRecalls(slips = 3))
+        assertEquals(5, hifzAutoRecalls(slips = 4))
+        // Slips counted by calendar day, at noon, far from any time zone's midnight.
+        val dayMs = 86_400_000L
+        var p = point(HifzKind.Word, verse(2, 18)).copy(fresh = 3, createdAt = dayMs / 2, lastSlipAt = dayMs / 2)
+        p = p.graded(HifzGrade.Again, 101L, dayMs + dayMs / 2)
+        assertEquals(4, p.fresh)
+        // A second miss on the same day is the same difficult day (D3).
+        assertEquals(4, p.graded(HifzGrade.Again, 101L, dayMs + dayMs / 2 + 3_600_000L).fresh)
+        p = p.graded(HifzGrade.Again, 102L, 2 * dayMs + dayMs / 2)
+        assertEquals(5, p.fresh)
         // The reader's choice wins: one right answer for a passing slip, the most for a hard one.
         assertEquals(1, p.copy(pace = HifzPace.Light).recalls)
         assertEquals(HifzMaxRecalls, point(HifzKind.Word, verse(2, 18)).copy(pace = HifzPace.Intense).recalls)
@@ -432,30 +451,28 @@ class HifzTest {
 
     @Test
     fun aChangedPlan_keepsTheRightAnswersGiven() {
-        // 3 asked, 1 given right since the slip: 2 left.
+        // 3 days asked, 1 given right since the slip: 2 left.
         val p = point(HifzKind.Word, verse(2, 18)).copy(fresh = 2, dueDay = 100L, lastSlipAt = 0L, checks = listOf(HifzCheck(99L, HifzGrade.Held, 5_000L)))
         assertEquals(1, p.rightSinceSlip)
-        assertEquals(8, p.withPlan(HifzPlan(HifzPace.Intense, null), today = 100L).fresh)
-        assertEquals(4, p.withPlan(HifzPlan(HifzPace.Auto, null), today = 100L).fresh)
+        assertEquals(HifzMaxRecalls - 1, p.withPlan(HifzPlan(HifzPace.Intense, null), today = 100L).fresh)
+        assertEquals(HifzFreshRecalls - 1, p.withPlan(HifzPlan(HifzPace.Auto, null), today = 100L).fresh)
         // One right answer is already enough: its questions end, its checks space out from tomorrow.
         val light = p.withPlan(HifzPlan(HifzPace.Light, null), today = 100L)
         assertEquals(0, light.fresh)
         assertEquals(101L, light.dueDay)
         // Trying the choices loses nothing: there and back keeps the right answer.
-        assertEquals(8, p.withPlan(HifzPlan(HifzPace.Auto, null), today = 100L).withPlan(HifzPlan(HifzPace.Intense, null), today = 100L).fresh)
-        // Once a day, asked today: tomorrow; back to every reminder: the next one; kept once a day, never sooner.
+        assertEquals(HifzMaxRecalls - 1, p.withPlan(HifzPlan(HifzPace.Auto, null), today = 100L).withPlan(HifzPlan(HifzPace.Intense, null), today = 100L).fresh)
+        // Answered right today: tomorrow, whatever its times.
         val answered = p.copy(checks = listOf(HifzCheck(100L, HifzGrade.Held, 5_000L)))
         val once = HifzTimes(setOf(Prayer.FAJR))
-        val daily = answered.withPlan(HifzPlan(HifzPace.Auto, once), today = 100L)
-        assertEquals(101L, daily.dueDay)
-        assertEquals(101L, daily.withPlan(HifzPlan(HifzPace.Intense, once), today = 100L).dueDay)
-        assertEquals(100L, daily.withPlan(HifzPlan(HifzPace.Auto, null), today = 100L).dueDay)
+        assertEquals(101L, answered.withPlan(HifzPlan(HifzPace.Auto, once), today = 100L).dueDay)
+        assertEquals(101L, answered.withPlan(HifzPlan(HifzPace.Auto, null), today = 100L).dueDay)
         // On the ladder nothing is asked anew.
         assertEquals(0, point(HifzKind.Word, verse(2, 18), step = 2).withPlan(HifzPlan(HifzPace.Intense, once), today = 100L).fresh)
     }
 
     @Test
-    fun aPointAskedAtOneTimeOfDay_isAskedOnceADay_atThatTime() {
+    fun aPointAskedAtOneTimeOfDay_isAskedAtThatTime_andAfterARightAnswerTomorrow() {
         val min = 60_000L
         val minutes = mapOf(Prayer.FAJR to 300L, Prayer.DHUHR to 780L, Prayer.ASR to 960L, Prayer.MAGHRIB to 1140L, Prayer.ISHA to 1230L)
         val slotAt = { day: Long, time: HifzWhen -> (day * 1440 + minutes.getValue((time as HifzWhen.After).prayer)) * min }
@@ -463,7 +480,6 @@ class HifzTest {
         val day = 100L
         // Recorded at 12:50, to be reminded after Asr only: the first question still comes today, after Asr.
         val slip = point(HifzKind.Word, verse(2, 18)).copy(fresh = 3, times = HifzTimes(setOf(Prayer.ASR)), dueDay = day, lastSlipAt = (day * 1440 + 770) * min)
-        assertTrue(slip.daily)
         assertEquals(HifzWhen.After(Prayer.ASR), listOf(slip).nextReminder(HifzTimesPreset.Prayers.times, day, (day * 1440 + 771) * min, remindedDay = day, zone = utc, slotAt = slotAt)?.time)
         // Answered right at Asr: not again today, though the settings remind at Maghrib and Isha, but tomorrow after Asr.
         val answered = slip.graded(HifzGrade.Held, day, (day * 1440 + 970) * min)
@@ -475,17 +491,6 @@ class HifzTest {
             HifzSlot(day + 1, HifzWhen.After(Prayer.ASR), slotAt(day + 1, HifzWhen.After(Prayer.ASR))),
             listOf(answered).nextReminder(HifzTimesPreset.Prayers.times, day, (day * 1440 + 971) * min, remindedDay = day, zone = utc, slotAt = slotAt),
         )
-        assertEquals(1, answered.daysAfter(HifzGrade.Hesitated))
-        // Asked at Asr and left unanswered: not again after Maghrib or Isha, but tomorrow after Asr.
-        assertEquals(
-            HifzSlot(day + 1, HifzWhen.After(Prayer.ASR), slotAt(day + 1, HifzWhen.After(Prayer.ASR))),
-            listOf(slip).nextReminder(
-                HifzTimesPreset.Prayers.times, day, (day * 1440 + 971) * min, remindedDay = day, zone = utc,
-                dailyAsked = mapOf(slip.id to day), slotAt = slotAt,
-            ),
-        )
-        // A failed answer, too, waits for tomorrow.
-        assertEquals(day + 1, slip.graded(HifzGrade.Again, day, (day * 1440 + 970) * min).dueDay)
     }
 
     @Test
@@ -705,7 +710,7 @@ class HifzTest {
     }
 
     @Test
-    fun nextAsk_isTheReminderThatWillAsk_andOnceADayWaitsForTheNextDayAskedNot() {
+    fun nextAsk_isTheReminderThatWillAsk() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val prefs = context.getSharedPreferences("quran_hifz", android.content.Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
@@ -719,11 +724,7 @@ class HifzTest {
         assertEquals(at(day, 600), HifzReminder.nextAsk(context, slip, null, now)!!.at)
         // Its verse seen at 09:30 is asked no sooner than 10:15: at 21:00.
         assertEquals(at(day, 1260), HifzReminder.nextAsk(context, slip, now + 30 * 60_000L, now)!!.at)
-        // Asked once a day, and already asked by a reminder today: tomorrow's first.
-        prefs.edit().putString("daily_asked", "${slip.id}:$day").commit()
-        assertEquals(at(day + 1, 600), HifzReminder.nextAsk(context, slip.copy(times = HifzTimes(minutes = setOf(600))), null, now)!!.at)
         // Its own times, not the settings': at 21:00 only, it is asked at 21:00.
-        prefs.edit().remove("daily_asked").commit()
         assertEquals(at(day, 1260), HifzReminder.nextAsk(context, slip.copy(times = HifzTimes(minutes = setOf(1260, 1320))), null, now)!!.at)
         // A point no longer fresh, or the reminder off: none.
         assertNull(HifzReminder.nextAsk(context, slip.copy(fresh = 0), null, now))
@@ -1203,8 +1204,9 @@ class HifzTest {
         val app = org.robolectric.RuntimeEnvironment.getApplication()
         val verse = verse(2, 255)
         try {
-            val first = HifzRepository.record(app, verse, HifzKind.Word, slipWords = setOf(3), now = 1_000L)
-            val second = HifzRepository.record(app, verse, HifzKind.Skip, now = 2_000L)
+            val first = HifzRepository.record(app, verse, HifzKind.Word, slipWords = setOf(3), now = 43_200_000L)
+            // On another calendar day: two slips on one day would count once (D3).
+            val second = HifzRepository.record(app, verse, HifzKind.Skip, now = 43_200_000L + 86_400_000L)
             assertEquals(first.id, second.id)
             assertEquals(listOf(second), HifzRepository.points.value.filter { it.verse == verse })
             // Another way it went wrong is the verse going wrong again: more right answers before its checks space out.

@@ -45,6 +45,8 @@ import com.tunisianprayertimes.quran.hifz.HifzListenSettings
 import com.tunisianprayertimes.quran.hifz.HifzSettings
 import com.tunisianprayertimes.quran.hifz.dueToday
 import com.tunisianprayertimes.quran.hifz.answerVerses
+import com.tunisianprayertimes.quran.hifz.hifzListPlan
+import com.tunisianprayertimes.quran.hifz.notebookOrder
 import com.tunisianprayertimes.ui.theme.*
 
 /** What «المراجعة» can ask of the reader. */
@@ -62,8 +64,10 @@ internal interface HifzHomeActions {
      * points as listed, goes on from it to the next.
      */
     fun open(point: HifzPoint, order: List<Long>)
-    /** «مراجعة الدفتر»: [order], the notebook's points as listed, asked one after another; see [HifzPracticeSheet]. */
-    fun practise(order: List<Long>) {}
+    /** «راجع هذه المواضع»: [order], the notebook's points as listed, asked one after another, in the one review. */
+    fun reviewList(order: List<Long>) {}
+    /** A row tapped whose question does not wait: its test first, then the rows after it ([order] starts with it). */
+    fun reviewListFrom(order: List<Long>) = reviewList(order)
     fun record(verse: QuranVerseReference)
     fun settings()
     fun dismiss()
@@ -128,7 +132,8 @@ internal fun HifzHomeSheet(
      * a new one would; see [com.tunisianprayertimes.quran.hifz.HifzSessionCoordinator.dailyCanContinue].
      */
     continueDailyReview: Boolean = false,
-    continueNotebookReview: Boolean = false,
+    /** The cards a list review left unfinished still asks, any day: «تابع المراجعة» goes on with it. */
+    continueListLeft: Int = 0,
     sessionFeedback: @Composable () -> Unit = {},
 ) {
     /** Every point due now, by the priority the review takes them in. */
@@ -170,30 +175,36 @@ internal fun HifzHomeSheet(
     }
     val care = shown.filter { it.needsCare }
     val bySurah = shown.filterNot { it in care }.groupBy { it.verse.surah }.toSortedMap()
-    val order = care.map { it.id } + bySurah.values.flatten().map { it.id }
-    // The footer always reviews the entire notebook, regardless of its visible tab, search or surah filter.
-    val allCare = points.filter { it.needsCare }
-    val allOrder = allCare.map { it.id } + points.filterNot { it.needsCare }.groupBy { it.verse.surah }.toSortedMap().values.flatten().map { it.id }
-    val practiceDueIds = eligibleDueIds ?: dueAll.map { it.id }.toSet()
+    val order = shown.notebookOrder()
+    // The footer always reviews the entire notebook, regardless of its visible tab, search or surah filter: the order
+    // the car's «مراجعة الدفتر» asks in too.
+    val allOrder = points.notebookOrder()
+    val listDueIds = eligibleDueIds ?: dueAll.map { it.id }.toSet()
     // The footer's lines about reviewing every point. With large text they would leave the notebook's list a sliver:
     // they go at the list's end then, and the footer keeps its button.
-    val allPlan = if (notebook) hifzPracticePlan(points, allOrder, practiceDueIds) else null
+    val allPlan = if (notebook) hifzListPlan(points, allOrder, listDueIds) else null
     val allCountLine = allPlan?.let { "كل مواضع الدفتر: ${it.selectedCount}، بما فيها ما أخفته التصفية." }
-    val allRuleLine = "الأسئلة المستحقة تُحسب. التذكّر في التدريب الاختياري لا يغيّر الموعد، والنسيان أو الخطأ يُسجّل في الحالتين."
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val window = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize
     val density = LocalDensity.current
     val allLinesInList = allPlan != null && allPlan.points.isNotEmpty() && remember(allCountLine, window, density) {
         val lines = androidx.compose.ui.unit.Constraints(maxWidth = (window.width - with(density) { 32.dp.roundToPx() }).coerceAtLeast(1))
-        val height = measurer.measure(allCountLine.orEmpty(), androidx.compose.ui.text.TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp), constraints = lines).size.height +
-            measurer.measure(allRuleLine, androidx.compose.ui.text.TextStyle(fontFamily = AppFontFamily, fontSize = 12.sp), constraints = lines).size.height
+        val height = measurer.measure(allCountLine.orEmpty(), androidx.compose.ui.text.TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp), constraints = lines).size.height
         height > window.height * 0.2f
     }
+    /**
+     * A tap on a row gives that point's test, never its answer (owner, 16 November). Its own question waiting: the
+     * day's review from it, as before (owner, 23 October). Otherwise its test first, then the rows after it.
+     */
     fun openRow(point: HifzPoint) {
         focus.clearFocus()
-        // Its own question waiting: the tap asks it, as nothing else could be wanted of it now (owner, 23 October). Its
-        // correction otherwise, behind another point's question when it would answer that one.
-        if (points.spoiledBy(point, today, now, eligibleDueIds)?.id == point.id) actions.reviewFrom(point) else actions.open(point, order)
+        if (points.spoiledBy(point, today, now, eligibleDueIds)?.id == point.id) actions.reviewFrom(point)
+        else actions.reviewListFrom(order.dropWhile { it != point.id }.ifEmpty { listOf(point.id) })
+    }
+    /** The row's own control: the point's correction, behind the question it would answer when another one's waits. */
+    fun openCorrection(point: HifzPoint) {
+        focus.clearFocus()
+        actions.open(point, order)
     }
     fun returnHome() {
         focus.clearFocus()
@@ -254,13 +265,17 @@ internal fun HifzHomeSheet(
                 if (!notebook) item(key = "today") {
                     // A saved session alone never makes deferred or future questions available now.
                     val reviewAvailable = dueAll.isNotEmpty()
-                    val resume = continueDailyReview && reviewAvailable
+                    // Any review left unfinished goes on: a list review on any day, whatever is due.
+                    val listResume = continueListLeft > 0
+                    val resume = listResume || (continueDailyReview && reviewAvailable)
                     Surface(
-                        shape = RoundedCornerShape(16.dp), color = if (reviewAvailable) GoldLight else Color.White,
-                        border = if (reviewAvailable) null else BorderStroke(1.dp, CardBorder),
+                        shape = RoundedCornerShape(16.dp), color = if (reviewAvailable || resume) GoldLight else Color.White,
+                        border = if (reviewAvailable || resume) null else BorderStroke(1.dp, CardBorder),
                     ) {
                         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (resume) {
+                            if (listResume) {
+                                Text("بقي أن نسألك عن ${HifzReminder.pointsAbout(continueListLeft)}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                            } else if (resume) {
                                 // Counted as for a new review: going on asks everything due now.
                                 Text("بقي أن نسألك عن ${HifzReminder.pointsAbout(dueAll.size)}", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                             } else if (dueAll.isNotEmpty()) {
@@ -283,7 +298,7 @@ internal fun HifzHomeSheet(
                                 Text(if (reviewedToday) "أكملت المراجعة" else "لا توجد أسئلة للمراجعة الآن", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                                 if (reviewedToday) Text("لا توجد أسئلة للمراجعة الآن.", fontSize = 13.sp, color = TextMuted)
                             }
-                            if (reviewAvailable) {
+                            if (reviewAvailable || resume) {
                                 Button(
                                     onClick = if (resume) actions::continueReview else actions::review,
                                     colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
@@ -292,12 +307,11 @@ internal fun HifzHomeSheet(
                                     Text(if (resume) "تابع المراجعة" else "ابدأ مراجعة اليوم")
                                 }
                             }
+                            // The list review goes on above; the questions due now are a review of their own.
+                            if (listResume && reviewAvailable) OutlinedButton(
+                                onClick = actions::review, modifier = Modifier.testTag("hifz_start_review"),
+                            ) { Text("ابدأ مراجعة اليوم") }
                         }
-                    }
-                }
-                if (continueNotebookReview) item(key = "notebook_review_continue") {
-                    OutlinedButton(onClick = actions::continueReview, modifier = Modifier.fillMaxWidth().testTag("hifz_continue_shared")) {
-                        Text("تابع مراجعة الدفتر")
                     }
                 }
                 // Empty too: a mistake made away from the mushaf is recorded there.
@@ -369,14 +383,8 @@ internal fun HifzHomeSheet(
                     }
                     // Only a genuinely smaller selection needs its own action; the footer already reviews all points.
                     if (order.isNotEmpty() && order.toSet() != allOrder.toSet()) {
-                        val plan = hifzPracticePlan(points, order, practiceDueIds)
-                        Text(
-                            "ستراجع ${HifzReminder.pointsObject(plan.selectedCount)} من هذه القائمة." +
-                                if (plan.addedDueCount > 0) " ونضيف ${plan.addedDueCount} من الأسئلة المرتبطة التي حان وقتها خارج هذه القائمة، قبل عرض إجاباتها. المجموع: ${plan.points.size}." else "",
-                            fontSize = 13.sp, color = GreenPrimaryDark, modifier = Modifier.testTag("hifz_notebook_practice_count"),
-                        )
                         OutlinedButton(
-                            onClick = { focus.clearFocus(); actions.practise(order) },
+                            onClick = { focus.clearFocus(); actions.reviewList(order) },
                             modifier = Modifier.fillMaxWidth().testTag("hifz_notebook_practice"),
                         ) { Text("راجع هذه المواضع") }
                     }
@@ -385,17 +393,16 @@ internal fun HifzHomeSheet(
                     item {
                         Column(Modifier.padding(top = 4.dp)) {
                             Text("يحتاج عناية", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = QuranHifzViolet)
-                            Text("أخطأت فيها أو تردّدت أكثر من مرة، فنقدّمها على غيرها في الأسئلة إلى أن تتذكّرها دون مساعدة في يومين مختلفين.", fontSize = 12.sp, color = TextMuted)
                         }
                     }
-                    items(care, key = { "care${it.id}" }) { HifzPointRow(catalog, it, today, eligibleDueIds?.contains(it.id) ?: it.isDue(today, now), later.rows[it.id]) { openRow(it) } }
+                    items(care, key = { "care${it.id}" }) { HifzPointRow(catalog, it, today, eligibleDueIds?.contains(it.id) ?: it.isDue(today, now), later.rows[it.id], { openCorrection(it) }) { openRow(it) } }
                 }
                 bySurah.forEach { (surah, rows) ->
                     item(key = "surah$surah") {
                         Text("${catalog.surahs.getOrNull(surah - 1)?.name.orEmpty()} (${rows.size})", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextMuted,
                             modifier = Modifier.padding(top = 4.dp))
                     }
-                    items(rows, key = { it.id }) { HifzPointRow(catalog, it, today, eligibleDueIds?.contains(it.id) ?: it.isDue(today, now), later.rows[it.id]) { openRow(it) } }
+                    items(rows, key = { it.id }) { HifzPointRow(catalog, it, today, eligibleDueIds?.contains(it.id) ?: it.isDue(today, now), later.rows[it.id], { openCorrection(it) }) { openRow(it) } }
                 }
                 if (notebook && shown.isEmpty()) item(key = "empty_notebook") {
                     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -414,7 +421,6 @@ internal fun HifzHomeSheet(
                 if (allLinesInList) item(key = "practice_all_lines") {
                     Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(allCountLine.orEmpty(), fontSize = 13.sp, color = GreenPrimaryDark, modifier = Modifier.testTag("hifz_notebook_practice_all_count"))
-                        Text(allRuleLine, fontSize = 12.sp, color = TextMuted)
                     }
                 }
             }
@@ -432,10 +438,9 @@ internal fun HifzHomeSheet(
                             allCountLine.orEmpty(),
                             fontSize = 13.sp, color = GreenPrimaryDark, modifier = Modifier.fillMaxWidth().testTag("hifz_notebook_practice_all_count"),
                         )
-                        Text(allRuleLine, fontSize = 12.sp, color = TextMuted, modifier = Modifier.fillMaxWidth())
                     }
                     Button(
-                        onClick = { focus.clearFocus(); actions.practise(allOrder) }, enabled = plan.points.isNotEmpty(),
+                        onClick = { focus.clearFocus(); actions.reviewList(allOrder) }, enabled = plan.points.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                         modifier = Modifier.fillMaxWidth().testTag("hifz_notebook_practice_all"),
                     ) { Text("راجع كل المواضع") }
@@ -511,8 +516,14 @@ private fun HifzFilterMenu(label: String, options: List<Pair<String?, String>>, 
     }
 }
 
+/**
+ * A notebook row: a tap gives the point's test ([onClick]); its own small control opens its correction ([onCorrection]),
+ * for its note, plan, answers and edits (owner's plan, 16 November).
+ */
 @Composable
-private fun HifzPointRow(catalog: QuranCatalog, point: HifzPoint, today: Long, due: Boolean, next: String?, onClick: () -> Unit) {
+private fun HifzPointRow(
+    catalog: QuranCatalog, point: HifzPoint, today: Long, due: Boolean, next: String?, onCorrection: () -> Unit, onClick: () -> Unit,
+) {
     // With large text the ladder goes under the words, which would otherwise be a word or two wide.
     BesideOrBelow(
         gap = 8.dp,
@@ -526,7 +537,12 @@ private fun HifzPointRow(catalog: QuranCatalog, point: HifzPoint, today: Long, d
             }
         },
     ) {
-        HifzLadder(point)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HifzLadder(point)
+            IconButton(onClick = onCorrection, modifier = Modifier.testTag("hifz_point_correction_${point.id}")) {
+                Icon(painterResource(R.drawable.ic_adhkar_info), "التصحيح", Modifier.size(20.dp), tint = GreenPrimaryDark)
+            }
+        }
     }
 }
 
