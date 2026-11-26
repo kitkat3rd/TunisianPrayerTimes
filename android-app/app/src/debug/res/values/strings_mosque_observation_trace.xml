@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="trace_prayer_observe_alarm">تلقّى التطبيق تنبيه بدء التحقّق من الوصول إلى المسجد لصلاة %1$s.</string>
     <string name="trace_prayer_start_alarm">تلقّى التطبيق تنبيه بدء فترة الإسكات · %1$s</string>
-    <string name="trace_prayer_end_alarm">تلقّى التطبيق تنبيه نهاية فترة الإسكات · %1$s</string>
+    <string name="trace_prayer_end_alarm">تلقّى التطبيق تنبيه نهاية فترة الإسكات المجدولة · %1$s</string>
     <string name="trace_mosque_disabled">الإسكات التلقائي متوقف.</string>
     <string name="trace_mosque_time_only">الإسكات حسب الوقت فقط. التحقق من وصولك إلى المسجد متوقف.</string>
     <string name="trace_mosque_silence_window">فترة الإسكات حسب الوقت والموقع: %1$s</string>
     <string name="trace_mosque_observe_window">فترة التحقق من الوصول قبل الإسكات: %1$s</string>
-    <string name="trace_mosque_inside">توقّف داخل الحدود</string>
+    <string name="trace_mosque_nominal_end">انتهت فترة الإسكات المجدولة لصلاة %1$s عند %2$s.</string>
+    <string name="trace_mosque_continued">%1$s يستمرّ إسكات الزيارة المؤكّدة حتى رصد المغادرة أو حتى %2$s على أقصى تقدير.</string>
+    <string name="trace_mosque_inside">قراءات متتالية تؤكّد الوجود داخل الحدود</string>
     <string name="trace_mosque_walked_in">دخول من خارج الحدود أكّدته قراءات متتالية داخل المسجد</string>
     <string name="trace_mosque_edge">اقتراب وتوقّف عند الحدود</string>
     <string name="trace_mosque_earlier_precise">توقّف قرب الحدود بعد قراءة سابقة دقيقة</string>

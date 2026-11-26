@@ -4,11 +4,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.tunisianprayertimes.mosque.MosqueAlarm
 import com.tunisianprayertimes.mosque.MosquePeriods
 import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.mosque.SilenceCoordinator
-import com.tunisianprayertimes.mosque.activeMosqueDiagnostics
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +33,9 @@ class SilenceReceiver : BroadcastReceiver() {
                 if (SilenceScheduler.isDismissed(context, prayer, day) || now >= w.start ||
                     now.toEpochMilli() < MosquePeriods.earlyStart(w)) return
                 val scope = MosquePeriods.from(listOf(w), now.toEpochMilli())
-                if (scope.observation != null) MosqueSilenceMonitor.reconcile(context, canStart = true)
+                if (scope.observation != null) MosqueSilenceMonitor.reconcile(context, canStart = true) {
+                    prayerAlarm(prayer.name, MosqueAlarm.OBSERVE)
+                }
             }
             "com.tunisianprayertimes.ACTION_SILENCE" -> {
                 if (!PrefsManager.isEnabled(context)) return
@@ -63,11 +65,12 @@ class SilenceReceiver : BroadcastReceiver() {
                     return
                 }
                 Log.d(TAG, "Handling the silence window for $prayerName")
-                activeMosqueDiagnostics(context)?.prayerAlarm(prayerName, start = true)
                 PrefsManager.clearAutoSilenceDismissed(context)
                 if (MosqueSilenceSettings.combined(context)) {
                     // Exact, user-requested existing window callback: legal bounded FGS start route.
-                    MosqueSilenceMonitor.reconcile(context, canStart = true, burst = true)
+                    MosqueSilenceMonitor.reconcile(context, canStart = true, burst = true) {
+                        prayerAlarm(prayerName, MosqueAlarm.START)
+                    }
                 } else {
                     SilenceModeController.enableAutoSilence(context, prayer)
                 }
@@ -92,13 +95,12 @@ class SilenceReceiver : BroadcastReceiver() {
             }
             "com.tunisianprayertimes.ACTION_UNSILENCE" -> {
                 val prayerName = intent.getStringExtra("extra_prayer") ?: "UNKNOWN"
-                activeMosqueDiagnostics(context)?.prayerAlarm(prayerName, start = false)
-                Log.d(TAG, "Restoring normal mode after $prayerName")
                 if (MosqueSilenceSettings.combined(context)) {
-                    // Recompute current prayer coverage, including any overlapping observation period.
-                    MosqueSilenceMonitor.reconcile(context)
+                    Log.d(TAG, "Checking the current mosque visit at the scheduled end of $prayerName")
+                    MosqueSilenceMonitor.reconcile(context) { prayerAlarm(prayerName, MosqueAlarm.END) }
                     return
                 }
+                Log.d(TAG, "Restoring normal mode after $prayerName")
                 if (MosqueSilenceSettings.usesOwnedRules(context)) {
                     if (!SilenceScheduler.isOtherSilenceWindowActive(context,
                             runCatching { Prayer.valueOf(prayerName) }.getOrNull(), SilenceScheduler.prayerDayOf(intent))) {

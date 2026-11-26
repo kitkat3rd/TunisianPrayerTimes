@@ -35,8 +35,9 @@ class MosqueControlReceiver : BroadcastReceiver() {
                     return
                 }
                 // ENTER, EXIT and DWELL all request fresh, window-gated evidence. EXIT never clears DND.
-                activeMosqueDiagnostics(context)?.geofence(event)
-                MosqueSilenceMonitor.reconcile(context, canStart = true, transition = event.geofenceTransition)
+                MosqueSilenceMonitor.reconcile(context, canStart = true, transition = event.geofenceTransition) {
+                    geofence(event)
+                }
             }
         }
     }

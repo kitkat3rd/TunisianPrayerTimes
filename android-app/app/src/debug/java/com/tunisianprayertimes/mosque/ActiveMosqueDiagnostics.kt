@@ -1,7 +1,6 @@
 package com.tunisianprayertimes.mosque
 
 import android.content.Context
-import android.os.SystemClock
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingEvent
 import com.tunisianprayertimes.Prayer
@@ -10,6 +9,17 @@ import com.tunisianprayertimes.mosque.presence.AdaptiveObservation
 import com.tunisianprayertimes.mosque.presence.PresenceFix
 import com.tunisianprayertimes.mosque.trace.SilenceTraceStore
 import com.tunisianprayertimes.wake.displayName
+
+/** A trigger may open a new report or be the last event received in the current one. */
+internal inline fun <T> traceObservationTrigger(context: Context, noinline trigger: (MosqueObservationDiagnostics.() -> Unit)?,
+    reconcile: () -> T): T {
+    if (trigger == null) return reconcile()
+    val before = activeMosqueDiagnostics(context)
+    before?.trigger()
+    val result = reconcile()
+    activeMosqueDiagnostics(context)?.takeIf { it.sessionId != before?.sessionId }?.trigger()
+    return result
+}
 
 internal fun activeMosqueDiagnostics(context: Context): MosqueObservationDiagnostics? =
     SilenceTraceStore.activeId(context)?.let { ActiveMosqueDiagnostics(context, it) }
@@ -29,8 +39,8 @@ private class ActiveMosqueDiagnostics(
         SilenceTraceStore.append(context, "mosque_skipped", context.getString(R.string.mosque_adaptive_skip, names), sessionId = sessionId)
     }
 
-    override fun period(periods: MosquePeriods, seed: Boolean) =
-        MosqueObservationTrace.window(context, periods, sessionId, seed)
+    override fun period(periods: MosquePeriods) =
+        MosqueObservationTrace.window(context, periods, sessionId)
 
     override fun failedStart() {
         SilenceTraceStore.append(context, "mosque_observation_failed", context.getString(R.string.trace_mosque_failed), sessionId = sessionId)
@@ -59,17 +69,20 @@ private class ActiveMosqueDiagnostics(
             else -> R.string.trace_mosque_geofence_check
         }
         val location = event.triggeringLocation
+        // A delivered transition can open this report. Its cached location may predate detection.
         SilenceTraceStore.append(context, "mosque_geofence", context.getString(reason),
-            at = location?.time?.takeIf { it > 0 } ?: System.currentTimeMillis(),
             latitude = location?.latitude, longitude = location?.longitude,
-            accuracyMeters = location?.takeIf { it.hasAccuracy() }?.accuracy?.toDouble(), sessionId = sessionId,
-            elapsedMillis = (location?.elapsedRealtimeNanos ?: SystemClock.elapsedRealtimeNanos()) / 1_000_000)
+            accuracyMeters = location?.takeIf { it.hasAccuracy() }?.accuracy?.toDouble(), sessionId = sessionId)
     }
 
-    override fun prayerAlarm(prayerName: String, start: Boolean) {
+    override fun prayerAlarm(prayerName: String, alarm: MosqueAlarm) {
         val prayer = runCatching { Prayer.valueOf(prayerName) }.getOrNull()
         val name = prayer?.displayName(context) ?: context.getString(R.string.mosque_rule_prayer)
-        val message = if (start) R.string.trace_prayer_start_alarm else R.string.trace_prayer_end_alarm
+        val message = when (alarm) {
+            MosqueAlarm.OBSERVE -> R.string.trace_prayer_observe_alarm
+            MosqueAlarm.START -> R.string.trace_prayer_start_alarm
+            MosqueAlarm.END -> R.string.trace_prayer_end_alarm
+        }
         SilenceTraceStore.append(context, "prayer_alarm", context.getString(message, name), sessionId = sessionId)
     }
 }

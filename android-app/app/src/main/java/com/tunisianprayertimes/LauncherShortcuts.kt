@@ -15,50 +15,46 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 
+private class LauncherShortcutAction(
+    val id: String,
+    val label: Int,
+    val icon: Int,
+    val intent: Intent,
+    val longLabel: Int = label,
+)
+
 /** Dynamic shortcuts follow both the installed package (including .dev) and the live silence state. */
 internal object LauncherShortcuts {
     fun refresh(context: Context) {
         runCatching {
             val manager = context.getSystemService(ShortcutManager::class.java) ?: return
+            retirePinnedDevelopmentShortcuts(manager)
             val launcher = ComponentName(context, MainActivity::class.java)
             val silenced = SilenceStatus.isAppControlledSilenceActive(context)
-            fun shortcut(id: String, label: Int, icon: Int, intent: Intent, rank: Int, longLabel: Int = label) =
-                ShortcutInfo.Builder(context, id)
-                    .setActivity(launcher)
-                    .setShortLabel(context.getString(label))
-                    .setLongLabel(context.getString(longLabel))
-                    .setIcon(Icon.createWithResource(context, icon))
-                    .setIntent(intent)
-                    .setRank(rank)
-                    .build()
-
-            val desired = listOf(
-                shortcut(
+            val actions = listOf(
+                LauncherShortcutAction(
                     "wake_before_adhan", R.string.shortcut_before_adhan, R.drawable.ic_tab_alarms,
                     Intent(context, WakeShortcutActivity::class.java).setAction(WakeShortcutActions.BEFORE_ADHAN),
-                    0, R.string.shortcut_before_adhan_long,
+                    R.string.shortcut_before_adhan_long,
                 ),
-                shortcut(
+                LauncherShortcutAction(
                     "wake_nap", R.string.shortcut_nap, R.drawable.ic_adhkar_sleep,
                     Intent(context, WakeShortcutActivity::class.java).setAction(WakeShortcutActions.NAP),
-                    1,
                 ),
-                shortcut(
+                LauncherShortcutAction(
                     "silence_toggle",
                     if (silenced) R.string.shortcut_unsilence else R.string.shortcut_silence,
                     if (silenced) R.drawable.ic_volume_on else R.drawable.ic_volume_off,
                     Intent(context, SilenceShortcutActivity::class.java)
                         .setAction(if (silenced) SilenceShortcutActions.UNSILENCE else SilenceShortcutActions.SILENCE),
-                    2,
                 ),
-                shortcut(
+                LauncherShortcutAction(
                     "silence_30_minutes",
                     if (silenced) R.string.shortcut_silence_reset_30 else R.string.shortcut_silence_30,
                     R.drawable.ic_adhkar_clock,
                     Intent(context, SilenceShortcutActivity::class.java).setAction(SilenceShortcutActions.SILENCE_30_MINUTES),
-                    3,
                 ),
-                shortcut(
+                LauncherShortcutAction(
                     "hifz_review", R.string.shortcut_review, R.drawable.ic_tab_quran,
                     Intent(Intent.ACTION_MAIN)
                         .addCategory(Intent.CATEGORY_LAUNCHER)
@@ -66,9 +62,19 @@ internal object LauncherShortcuts {
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         .putExtra(MainTabNavigation.EXTRA_DESTINATION, MainTabNavigation.DESTINATION_QURAN)
                         .putExtra(MainTabNavigation.EXTRA_QURAN_ACTION, MainTabNavigation.QURAN_ACTION_HIFZ_REVIEW),
-                    4, R.string.shortcut_review_long,
+                    R.string.shortcut_review_long,
                 ),
-            ).take(manager.maxShortcutCountPerActivity)
+            )
+            val desired = actions.take(manager.maxShortcutCountPerActivity).mapIndexed { rank, action ->
+                ShortcutInfo.Builder(context, action.id)
+                    .setActivity(launcher)
+                    .setShortLabel(context.getString(action.label))
+                    .setLongLabel(context.getString(action.longLabel))
+                    .setIcon(Icon.createWithResource(context, action.icon))
+                    .setIntent(action.intent)
+                    .setRank(rank)
+                    .build()
+            }
             val current = manager.dynamicShortcuts.associateBy { it.id }
             if (current.keys != desired.map { it.id }.toSet()) {
                 manager.dynamicShortcuts = desired

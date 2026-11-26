@@ -1,12 +1,8 @@
 package com.tunisianprayertimes.mosque
 
-import android.Manifest
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,18 +25,16 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.trace.SilenceTraceStore
-import com.tunisianprayertimes.mosque.trace.SilenceWalkRecorderService
 import com.tunisianprayertimes.mosque.trace.TraceEntry
 import com.tunisianprayertimes.mosque.trace.TraceSession
 import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.PrayerSilencePalette
-import com.tunisianprayertimes.ui.rememberNotificationAccessAction
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -80,7 +74,6 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
     var exportId by rememberSaveable { mutableStateOf<Long?>(null) }
     var confirmDelete by rememberSaveable { mutableStateOf<Long?>(null) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
-    var showPermissionHelp by rememberSaveable { mutableStateOf(false) }
     var revision by remember { mutableIntStateOf(0) }
     var readFailed by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf<WalkView?>(null) }
@@ -100,14 +93,6 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
         }
     }
 
-    fun startRecording() {
-        showPermissionHelp = false
-        selectedId = null
-        if (!SilenceWalkRecorderService.start(context)) context.walkMessage(R.string.silence_walk_start_failed)
-    }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        if (SilenceWalkRecorderService.hasLocationPermission(context)) startRecording() else showPermissionHelp = true
-    }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
         val id = exportId
         exportId = null
@@ -133,7 +118,6 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
     val dates = remember { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM).withLocale(Locale.forLanguageTag("ar-TN")) }
     fun startedAt(session: TraceSession): String =
         dates.format(Instant.ofEpochMilli(session.startedAt).atZone(ZoneId.of(session.timeZoneId)))
-    val allowNotifications = rememberNotificationAccessAction { revision++ }
     fun mark(sessionId: Long, kind: String, detail: Int) {
         val at = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtime()
@@ -169,28 +153,10 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             } else if (active == null) {
                 Text(stringResource(R.string.silence_walk_intro))
-                Button(onClick = {
-                    if (SilenceWalkRecorderService.hasLocationPermission(context)) startRecording()
-                    else permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.silence_walk_start)) }
-                if (showPermissionHelp) {
-                    Text(stringResource(R.string.silence_walk_permission))
-                    TextButton(onClick = {
-                        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
-                    }) { Text(stringResource(R.string.silence_walk_settings)) }
-                }
             } else {
                 Text(stringResource(R.string.silence_walk_active_since, startedAt(active)),
                     style = MaterialTheme.typography.titleMedium, color = PrayerSilencePalette.PrimaryText)
                 Text(stringResource(R.string.silence_walk_active_help), style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = { SilenceWalkRecorderService.stop(context, active.id) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.silence_walk_stop))
-                }
-                if (NotificationAccess.issue(context, SilenceWalkRecorderService.CHANNEL) != null) {
-                    TextButton(onClick = { allowNotifications(SilenceWalkRecorderService.CHANNEL) }) {
-                        Text(stringResource(R.string.silence_walk_show_notification))
-                    }
-                }
                 Text(stringResource(R.string.silence_walk_mark_hint), style = MaterialTheme.typography.bodyMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { mark(active.id, "test_arrived", R.string.silence_walk_arrived_event) }, modifier = Modifier.weight(1f)) {
@@ -255,4 +221,8 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
     )
 }
 
-private fun Context.walkMessage(message: Int) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+private fun Context.walkMessage(message: Int) {
+    ContextCompat.getMainExecutor(this).execute {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+}

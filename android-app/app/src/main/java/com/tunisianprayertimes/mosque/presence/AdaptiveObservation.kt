@@ -10,6 +10,8 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         private set
     var fallback = false
         private set
+    var approachingOnLastFix = false
+        private set
     private var unavailable = false
     private var eligiblePeriod = false
     private var requested = false
@@ -26,13 +28,16 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
     private var lastGeofence: Pair<Int, Long>? = null
     private var supportingBurst: Long? = null
     private data class ApproachFix(val at: Long, val distance: Double, val accuracy: Double)
-    private val balancedApproach = ArrayDeque<ApproachFix>()
+    private val recentApproach = ArrayDeque<ApproachFix>()
+    private var recentExterior: PresenceFix? = null
+    private var checkedInterior = false
+    private var lastEntryCheck: Long? = null
 
     private fun change(next: Sampling, force: Boolean = false) {
         if (next != sampling || force) {
             generation++
             acceptedAt = null
-            balancedApproach.clear()
+            recentApproach.clear()
             sampling = next
         }
     }
@@ -43,21 +48,23 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         else if (sampling == Sampling.PARKED) change(Sampling.BALANCED)
     }
 
-    fun geofence(now: Long, transition: Int) {
+    fun geofence(now: Long, transition: Int): Boolean {
         val previous = lastGeofence
-        if (previous?.first == transition && now - previous.second < 120_000) return
+        if (previous?.first == transition && now - previous.second < 120_000) return false
         lastGeofence = transition to now
         start(now, forceBurst = true)
+        return true
     }
 
-    private fun burst(now: Long) {
-        burstEnd = now + 120_000
+    private fun burst(now: Long, duration: Long = 120_000) {
+        burstEnd = now + duration
         change(Sampling.PRECISE, force = sampling == Sampling.PRECISE)
     }
 
     private fun park() {
         change(Sampling.PARKED)
         burstEnd = null; diagnosticStart = null; lastValid = null; retried = false
+        recentExterior = null; checkedInterior = false
         detector.clearEvidence()
     }
 
@@ -94,9 +101,10 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         if (diagnosticStart == null && lastValid == null) diagnosticStart = now
     }
 
-    fun observe(fix: PresenceFix, now: Long): Boolean {
+    fun observe(fix: PresenceFix, now: Long, watchForReturn: Boolean = false): Boolean {
         tick(now)
         if (sampling == Sampling.PARKED || unavailable || !detector.observe(fix, now, openedAt)) return false
+        approachingOnLastFix = false
         lastValid = now; diagnosticStart = null; retried = false
         val radius = requireNotNull(fix.accuracyMeters)
         val distance = detector.distance
@@ -114,37 +122,68 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
             }
         } else if (!fallback) {
             if (!near) park()
-            else if (sampling == Sampling.BALANCED) {
-                val gradual = cumulativeApproach(fix.elapsedRealtimeMillis, distance, radius)
-                val singleStep = lastDistance?.let { it - distance > maxOf(6.0, radius + lastRadius) } == true
-                if (lastDistance == null || (singleStep || gradual) &&
-                    (lastMovementBurst == null || now - lastMovementBurst!! >= 300_000)) {
-                    lastMovementBurst = now; burst(now)
-                }
-            }
+            else sampleApproach(fix, distance, radius, now, watchForReturn)
         }
         lastDistance = distance; lastRadius = radius
         tick(now)
         return true
     }
 
+    private fun sampleApproach(fix: PresenceFix, distance: Double, accuracy: Double, now: Long,
+        watchForReturn: Boolean) {
+        val entry = needsEntryCheck(fix, distance, accuracy)
+        if (sampling != Sampling.BALANCED && !watchForReturn) return
+        val singleStep = lastDistance?.let { it - distance > maxOf(6.0, accuracy + lastRadius) } == true
+        val gradual = cumulativeApproach(fix.elapsedRealtimeMillis, distance, accuracy)
+        approachingOnLastFix = singleStep || gradual
+        if (sampling != Sampling.BALANCED) return
+        if (lastDistance == null || approachingOnLastFix &&
+            (lastMovementBurst == null || now - lastMovementBurst!! >= 300_000)) {
+            if (entry) checkedInterior = true
+            lastMovementBurst = now
+            burst(now)
+        } else if (entry && (lastEntryCheck == null || now - lastEntryCheck!! >= 300_000)) {
+            // Balanced GPS may only report every minute. Give the detector several fresh fixes now.
+            checkedInterior = true
+            lastEntryCheck = now
+            burst(now, duration = 30_000)
+        }
+    }
+
+    private fun needsEntryCheck(fix: PresenceFix, distance: Double, accuracy: Double): Boolean {
+        if (accuracy > 10.0) recentExterior = null
+        if (distance > accuracy + 8 && accuracy <= 30.0) {
+            checkedInterior = false
+            recentExterior = fix.takeIf { accuracy <= 10.0 }
+        }
+        if (checkedInterior || distance >= 0 || accuracy > 30.0) return false
+        if (distance < -(accuracy + 2)) return true
+        // An imprecise edge alone cannot justify an extra burst. Check an actual recent crossing.
+        val outside = recentExterior ?: return false
+        val elapsed = fix.elapsedRealtimeMillis - outside.elapsedRealtimeMillis
+        if (elapsed !in 1..60_000L) return false
+        val reachable = fix.point.reachableOnFootFrom(outside.point, elapsed, requireNotNull(outside.accuracyMeters) + accuracy)
+        if (!reachable) recentExterior = null
+        return reachable
+    }
+
     /** A gradual approach can cross the error margin over several balanced updates without crossing it in one.
      * Use it only near a boundary, where the existing two-minute burst can cover the final approach. */
     private fun cumulativeApproach(at: Long, distance: Double, accuracy: Double): Boolean {
         if (accuracy > 30.0) {
-            balancedApproach.clear()
+            recentApproach.clear()
             return false
         }
-        while (balancedApproach.isNotEmpty() && at - balancedApproach.first().at > 120_000L) {
-            balancedApproach.removeFirst()
+        while (recentApproach.isNotEmpty() && at - recentApproach.first().at > 120_000L) {
+            recentApproach.removeFirst()
         }
-        val previous = balancedApproach.lastOrNull()
+        val previous = recentApproach.lastOrNull()
         val approaching = distance <= 30.0 && previous != null && previous.distance > distance &&
-            balancedApproach.any { anchor ->
+            recentApproach.any { anchor ->
                 anchor.distance > previous.distance && anchor.distance - distance > maxOf(6.0, anchor.accuracy + accuracy)
             }
-        if (balancedApproach.size >= 6) balancedApproach.removeFirst()
-        balancedApproach.addLast(ApproachFix(at, distance, accuracy))
+        if (recentApproach.size >= 6) recentApproach.removeFirst()
+        recentApproach.addLast(ApproachFix(at, distance, accuracy))
         return approaching
     }
 
@@ -157,7 +196,7 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         if (unavailable) { fallback = eligiblePeriod; requested = fallback; return }
         if (burstEnd?.let { now >= it } == true) {
             burstEnd = null
-            detector.clearEvidence()
+            detector.endBurst()
             change(Sampling.BALANCED)
         }
         if (recoveryStart?.let { now >= it + 120_000 } == true) endFallback()

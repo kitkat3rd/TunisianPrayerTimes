@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.mosque.MosquePeriods
 import com.tunisianprayertimes.silence.EndResolution
 import com.tunisianprayertimes.silence.SilenceWindow
 import org.junit.Assert.assertFalse
@@ -34,12 +35,24 @@ class SilenceWalkBaselineTest {
         val lines = SilenceWalkBaseline.schedule(context, listOf(lateWindow), adhan, zone, combined = true)
         assertTrue(context.getString(R.string.walk_schedule_no_watch) in lines)
         assertTrue(context.getString(R.string.walk_schedule_no_silence) in lines)
-        assertTrue(lines.any { it.contains("13:20 +01:00") && it.contains("13:40 +01:00") })
+        assertTrue(lines.any { it.contains("13:20 +01:00") && it.contains("13:40 +01:00") && it.contains("13:55 +01:00") })
     }
 
     @Test fun timeOnlyWalkDoesNotSuggestMosqueObservationIsRunning() {
         val lines = SilenceWalkBaseline.schedule(context, listOf(lateWindow), lateWindow.start, zone, combined = false)
         assertTrue(lines.single().contains(context.getString(R.string.prayer_dhuhr)))
+        assertFalse(context.getString(R.string.walk_schedule_no_silence) in lines)
+    }
+
+    @Test fun recordingStartedDuringAConfirmedContinuationShowsTheNominalEndAndTheLatestRelease() {
+        val now = lateWindow.end.plusSeconds(90)
+        // A clock correction can make the elapsed-time ceiling arrive before the scheduled cap.
+        val cap = lateWindow.end.plusSeconds(600).toEpochMilli()
+        val windows = listOf(lateWindow)
+        val observed = MosquePeriods.from(windows, now.toEpochMilli()).copy(targets = windows, continuationEnd = cap)
+        val lines = SilenceWalkBaseline.schedule(context, windows, now, zone, combined = true, observedPeriods = observed)
+        assertTrue(lines.any { it.contains("13:40 +01:00") && it.contains("13:50 +01:00") && it.contains(context.getString(R.string.prayer_dhuhr)) })
+        assertFalse(context.getString(R.string.walk_schedule_no_watch) in lines)
         assertFalse(context.getString(R.string.walk_schedule_no_silence) in lines)
     }
 

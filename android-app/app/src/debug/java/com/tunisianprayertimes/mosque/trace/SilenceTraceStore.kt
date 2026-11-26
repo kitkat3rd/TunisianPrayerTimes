@@ -51,7 +51,11 @@ object SilenceTraceStore {
     @Suppress("UNUSED_PARAMETER")
     fun activeId(context: Context): Long? = database?.active?.id
 
-    fun start(context: Context): Long = store(context).start(System.currentTimeMillis())
+    fun start(context: Context, elapsedMillis: Long = SystemClock.elapsedRealtime()): Long {
+        // A delivered fix can be the first evidence of a return. Preserve its acquisition time.
+        val at = System.currentTimeMillis() - (SystemClock.elapsedRealtime() - elapsedMillis)
+        return store(context).start(at, elapsedMillis)
+    }
 
     fun stop(context: Context, sessionId: Long) {
         val db = store(context)
@@ -70,7 +74,7 @@ object SilenceTraceStore {
         latitude: Double? = null, longitude: Double? = null, accuracyMeters: Double? = null,
         sessionId: Long? = null, elapsedMillis: Long? = null,
     ): Boolean {
-        // Production callbacks never open storage when the user hasn't started a test.
+        // Passive events only append to an open detection report.
         val db = database ?: return false
         val expected = sessionId ?: db.active?.id ?: return false
         return try {

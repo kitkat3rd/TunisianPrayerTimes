@@ -46,16 +46,17 @@ internal fun MosqueSilenceStatus(
     val watchingMosques = enabled && mode == AutomaticSilenceMode.TIME_AND_MOSQUE
     val observationStatus = when {
         !watchingMosques -> null
-        state == PresenceState.SCHEDULE_FALLBACK -> R.string.mosque_adaptive_fallback
+        periods.continuationEnd != null -> MosquePrayerActions.continuationLabel(context, periods.continuationEnd)
+        state == PresenceState.SCHEDULE_FALLBACK -> stringResource(R.string.mosque_adaptive_fallback)
         issues == null -> null
-        issues.isNotEmpty() || state == PresenceState.INACTIVE_NEEDS_SETUP -> R.string.mosque_status_setup
-        state == PresenceState.INACTIVE_NEEDS_REARM -> R.string.mosque_status_rearm
-        !inWindow && periods.observation != null -> R.string.mosque_adaptive_early
-        !inWindow -> R.string.mosque_status_waiting
-        state == PresenceState.VISIT_CONFIRMED -> R.string.mosque_adaptive_hold
-        state == PresenceState.EXITING -> R.string.mosque_status_uncertain
-        state == PresenceState.ACQUIRING -> R.string.mosque_status_checking
-        else -> R.string.mosque_status_no_match
+        issues.isNotEmpty() || state == PresenceState.INACTIVE_NEEDS_SETUP -> stringResource(R.string.mosque_status_setup)
+        state == PresenceState.INACTIVE_NEEDS_REARM -> stringResource(R.string.mosque_status_rearm)
+        !inWindow && periods.observation != null -> stringResource(R.string.mosque_adaptive_early)
+        !inWindow -> stringResource(R.string.mosque_status_waiting)
+        state == PresenceState.VISIT_CONFIRMED -> stringResource(R.string.mosque_adaptive_hold)
+        state == PresenceState.EXITING -> stringResource(R.string.mosque_status_uncertain)
+        state == PresenceState.ACQUIRING -> stringResource(R.string.mosque_status_checking)
+        else -> stringResource(R.string.mosque_status_no_match)
     }
 
     PrayerSettingsGroup(title = stringResource(R.string.mosque_phone_status_title)) {
@@ -90,7 +91,7 @@ internal fun MosqueSilenceStatus(
                 Text(stringResource(R.string.mosque_release_pending), color = MaterialTheme.colorScheme.error)
             }
             if (observationStatus != null) {
-                Text(stringResource(observationStatus), color = PrayerSilencePalette.SecondaryText)
+                Text(observationStatus, color = PrayerSilencePalette.SecondaryText)
             }
             if (phoneSilent == true) {
                 Text(
@@ -99,7 +100,8 @@ internal fun MosqueSilenceStatus(
                     color = PrayerSilencePalette.SecondaryText,
                 )
             }
-            if (watchingMosques && issues?.isEmpty() == true && (inWindow || periods.observation != null)) {
+            if (watchingMosques && periods.continuationEnd == null &&
+                issues?.isEmpty() == true && (inWindow || periods.observation != null)) {
                 OutlinedButton(onClick = onRecheck) { Text(stringResource(R.string.mosque_recheck)) }
             }
             if (watchingMosques) {

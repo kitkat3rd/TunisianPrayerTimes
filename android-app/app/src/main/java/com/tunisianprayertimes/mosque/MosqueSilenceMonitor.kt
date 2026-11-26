@@ -63,17 +63,21 @@ object MosqueSilenceMonitor {
     }
 
     /** May start only from a visible user action, exact user-requested prayer start, or GMS geofence. */
-    fun reconcile(context: Context, canStart: Boolean = false, deliberate: Boolean = false, burst: Boolean = false, transition: Int? = null) {
+    internal fun reconcile(context: Context, canStart: Boolean = false, deliberate: Boolean = false,
+        burst: Boolean = false, transition: Int? = null, trigger: (MosqueObservationDiagnostics.() -> Unit)? = null) {
         val app = context.applicationContext
         val plan = synchronized(SilenceCoordinator.serial) {
             recoverLocked(app)
-            AdaptiveMosqueMonitor.reconcile(app, canStart, deliberate, burst, transition)
+            traceObservationTrigger(app, trigger) {
+                AdaptiveMosqueMonitor.reconcile(app, canStart, deliberate, burst, transition)
+            }
         }
         if (plan != null && canStart) MosqueObservationService.start(app, plan.token)
         else if (plan == null) MosqueObservationService.stop(app)
     }
 
-    internal fun canActivateLocked(context: Context) = AdaptiveMosqueMonitor.canActivate(context)
+    internal fun canActivateLocked(context: Context, alreadyRequested: Boolean = false) =
+        AdaptiveMosqueMonitor.canActivate(context, alreadyRequested)
 
     fun onLocation(context: Context, token: String, location: Location, generation: Long = 0) = synchronized(SilenceCoordinator.serial) {
         AdaptiveMosqueMonitor.observe(context, token, generation, location.toMosqueFix(), location.time)
@@ -89,6 +93,7 @@ object MosqueSilenceMonitor {
         deadlineManager(context).cancel(deadlineIntent(context))
         MosqueObservationService.cancelNative(context)
         SilenceCoordinator.set(context, SilenceOwner.MOSQUE, false)
+        DetectionRecording.stopped(context)
     }
 
     internal fun recoverLocked(context: Context) {
@@ -132,7 +137,7 @@ object MosqueSilenceMonitor {
         AdaptiveMosqueMonitor.status(context)
     }
     fun endWall(context: Context): Long? = synchronized(SilenceCoordinator.serial) {
-        AdaptiveMosqueMonitor.periods(context).silence?.activeEnd
+        AdaptiveMosqueMonitor.periods(context).let { it.silence?.activeEnd ?: it.continuationEnd }
     }
 
     private fun deadlineManager(context: Context) = context.getSystemService(AlarmManager::class.java)

@@ -1,9 +1,11 @@
 package com.tunisianprayertimes.ui
 
 import android.content.Context
+import android.text.format.DateFormat
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.ManualSilenceMode
 import com.tunisianprayertimes.Prayer
+import com.tunisianprayertimes.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -12,6 +14,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.Calendar
+import java.util.Date
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [26])
@@ -229,6 +232,39 @@ class PhoneSilenceHeroStateTest {
     }
 
     @Test
+    fun mosqueVisitAfterPrayerWindow_showsDepartureAndLocalEndTime() {
+        val reason = resolveReason(
+            autoSilenceActive = true,
+            combinedMode = true,
+            mosqueContinuationEnd = futureEndMillis,
+        )
+
+        val clock = DateFormat.getTimeFormat(context).format(Date(futureEndMillis))
+        assertEquals(
+            context.getString(R.string.mosque_continuation_until, clock),
+            phoneStatusNoticeText(context, isPhoneSilenced = true, hasDnd = true, silenceReason = reason),
+        )
+    }
+
+    @Test
+    fun mosqueContinuation_needsAnActiveDeadlineAndYieldsToManualSilence() {
+        val regularMosqueReason = PhoneSilenceReason(PhoneSilenceReasonSource.MOSQUE_WINDOW)
+        assertEquals(regularMosqueReason, resolveReason(autoSilenceActive = true, combinedMode = true))
+        assertEquals(
+            regularMosqueReason,
+            resolveReason(autoSilenceActive = true, combinedMode = true, mosqueContinuationEnd = nowMillis),
+        )
+        assertEquals(
+            PhoneSilenceReason(PhoneSilenceReasonSource.AUTO_PRAYER, Prayer.FAJR),
+            resolveReason(autoSilenceActive = true, activeAutoSilencePrayer = Prayer.FAJR, mosqueContinuationEnd = futureEndMillis),
+        )
+        assertEquals(
+            PhoneSilenceReason(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED),
+            resolveReason(autoSilenceActive = true, manualSilenceActive = true, combinedMode = true, mosqueContinuationEnd = futureEndMillis),
+        )
+    }
+
+    @Test
     fun resolver_autoSilence_takesPriorityOverWakeReason() {
         val reason = resolveReason(
             autoSilenceActive = true,
@@ -318,6 +354,8 @@ class PhoneSilenceHeroStateTest {
         manualTargetPrayer: Prayer = Prayer.FAJR,
         manualSilenceEndsAtMillis: Long = -1L,
         wakeSilenceUntilAlarmActive: Boolean = false,
+        combinedMode: Boolean = false,
+        mosqueContinuationEnd: Long? = null,
     ): PhoneSilenceReason? = resolvePhoneSilenceReason(
         isPhoneSilenced = isPhoneSilenced,
         autoSilenceActive = autoSilenceActive,
@@ -328,6 +366,8 @@ class PhoneSilenceHeroStateTest {
         manualSilenceEndsAtMillis = manualSilenceEndsAtMillis,
         wakeSilenceUntilAlarmActive = wakeSilenceUntilAlarmActive,
         currentTimeMillis = nowMillis,
+        combinedMode = combinedMode,
+        mosqueContinuationEnd = mosqueContinuationEnd,
     )
 
     private fun millisAt(hour: Int, minute: Int): Long = Calendar.getInstance().apply {

@@ -2,12 +2,14 @@ package com.tunisianprayertimes.mosque
 
 import android.content.Context
 import com.tunisianprayertimes.PrefsManager
+import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.presence.AdaptiveObservation
 import com.tunisianprayertimes.mosque.presence.AdaptiveVisitDetector
 import com.tunisianprayertimes.mosque.presence.PresenceFix
 import com.tunisianprayertimes.mosque.presence.PresenceState
 import com.tunisianprayertimes.mosque.trace.SilenceTraceStore
+import com.tunisianprayertimes.mosque.trace.SilenceWalkBaseline
 import kotlin.math.roundToInt
 
 /** All callers hold SilenceCoordinator.serial. Capture reflects the monitor and never drives it. */
@@ -16,29 +18,31 @@ internal object MosqueObservationTrace {
     private val previous = mutableMapOf<String, String>()
     private var confirmedArea: String? = null
 
-    private fun state(c: Context, id: Long, kind: String, detail: String, fix: PresenceFix? = null, seed: Boolean = false) {
+    private fun state(c: Context, id: Long, kind: String, detail: String, fix: PresenceFix? = null) {
         if (session != id) {
             previous.clear()
             confirmedArea = null
             session = id
         }
         if (previous[kind] == detail) return
-        if (seed || SilenceTraceStore.append(c, kind, detail, latitude = fix?.point?.latitude,
+        if (SilenceTraceStore.append(c, kind, detail, latitude = fix?.point?.latitude,
                 longitude = fix?.point?.longitude, accuracyMeters = fix?.accuracyMeters, sessionId = id)) {
             previous[kind] = detail
         }
     }
 
-    fun window(c: Context, periods: MosquePeriods, id: Long, seed: Boolean = false) {
+    fun window(c: Context, periods: MosquePeriods, id: Long) {
         val prayers = periods.targets.joinToString("، ") { MosquePrayerActions.name(c, it) }
         val detail = when {
             !PrefsManager.isEnabled(c) -> c.getString(R.string.trace_mosque_disabled)
             !MosqueSilenceSettings.combined(c) -> c.getString(R.string.trace_mosque_time_only)
+            periods.continuationEnd != null -> SilenceWalkBaseline.continuationDetail(c, periods.targets,
+                periods.continuationEnd, PrayerTimesRepository.place(c).zone)
             periods.silence != null -> c.getString(R.string.trace_mosque_silence_window, prayers)
             periods.observation != null -> c.getString(R.string.trace_mosque_observe_window, prayers)
             else -> c.getString(R.string.mosque_status_waiting)
         }
-        state(c, id, "mosque_window", detail, seed = seed)
+        state(c, id, "mosque_window", detail)
     }
 
     fun inactive(c: Context, id: Long, detail: String) {

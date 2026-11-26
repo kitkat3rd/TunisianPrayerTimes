@@ -199,6 +199,7 @@ import com.tunisianprayertimes.SilenceAccessSettings
 import com.tunisianprayertimes.mosque.MosqueReadiness
 import com.tunisianprayertimes.mosque.MosqueSettingsActivity
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
+import com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor
 import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
 import com.tunisianprayertimes.mosque.SilenceOwner
 import com.tunisianprayertimes.SilenceAlarmComputer
@@ -2228,14 +2229,19 @@ private fun TodayNextPrayerCard(
     val countdown = remember(timesKey, currentTimeMillis) {
         runCatching { resolveNextPrayerCountdown(context, currentTimeMillis) }.getOrNull()
     }
-    val activeAutoSilencePrayer = remember(autoSilenceActive, currentTimeMillis) {
-        if (autoSilenceActive) SilenceScheduler.currentSilenceWindowPrayer(context) else null
-    }
+    val combined = configuredMode == AutomaticSilenceMode.TIME_AND_MOSQUE
+    val showAutomaticReason = isPhoneSilenced && autoSilenceActive && !manualSilenceActive
+    val mosqueContinuationEnd = if (showAutomaticReason && combined) {
+        produceState<Long?>(null, context, currentTimeMillis) {
+            value = withContext(ScheduleRefreshCoordinator.scheduling) {
+                AdaptiveMosqueMonitor.periods(context).continuationEnd
+            }
+        }.value
+    } else null
     val silenceReason = remember(
         isPhoneSilenced,
         doNotDisturbActive,
         autoSilenceActive,
-        activeAutoSilencePrayer,
         manualSilenceActive,
         manualSilenceMode,
         manualTargetPrayer,
@@ -2243,18 +2249,22 @@ private fun TodayNextPrayerCard(
         wakeSilenceUntilAlarmActive,
         currentTimeMillis,
         configuredMode,
+        mosqueContinuationEnd,
     ) {
         resolvePhoneSilenceReason(
             isPhoneSilenced = isPhoneSilenced,
             autoSilenceActive = autoSilenceActive,
-            activeAutoSilencePrayer = activeAutoSilencePrayer,
+            activeAutoSilencePrayer = if (showAutomaticReason && !combined) {
+                SilenceScheduler.currentSilenceWindowPrayer(context)
+            } else null,
             manualSilenceActive = manualSilenceActive,
             manualSilenceMode = manualSilenceMode,
             manualTargetPrayer = manualTargetPrayer,
             manualSilenceEndsAtMillis = manualSilenceEndsAtMillis,
             wakeSilenceUntilAlarmActive = wakeSilenceUntilAlarmActive,
             currentTimeMillis = currentTimeMillis,
-            combinedMode = configuredMode == AutomaticSilenceMode.TIME_AND_MOSQUE,
+            combinedMode = combined,
+            mosqueContinuationEnd = mosqueContinuationEnd,
             doNotDisturbActive = doNotDisturbActive,
         )
     }

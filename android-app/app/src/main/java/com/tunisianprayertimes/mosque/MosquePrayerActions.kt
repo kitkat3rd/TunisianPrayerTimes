@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.format.DateFormat
 import com.tunisianprayertimes.ManualSilenceScheduler
 import com.tunisianprayertimes.PrefsManager
+import com.tunisianprayertimes.R
 import com.tunisianprayertimes.SilenceModeController
 import com.tunisianprayertimes.SilenceScheduler
 import com.tunisianprayertimes.silence.SilenceWindow
@@ -15,6 +16,9 @@ internal object MosquePrayerActions {
     fun name(c: Context, w: SilenceWindow) = "${w.prayer.displayName(c)} · ${w.prayerDay}"
     fun label(c: Context, w: SilenceWindow) = w.prayer.displayName(c) + " · " +
         DateFormat.getTimeFormat(c).format(Date(w.end.toEpochMilli()))
+    fun continuationLabel(c: Context, endMillis: Long): String = c.getString(
+        R.string.mosque_continuation_until, DateFormat.getTimeFormat(c).format(Date(endMillis)),
+    )
     private fun prefs(c: Context) = c.getSharedPreferences("mosque_prayer_manual", Context.MODE_PRIVATE)
 
     fun manual(c: Context, occurrence: String) = synchronized(SilenceModeController) {

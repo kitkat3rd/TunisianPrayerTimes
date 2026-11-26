@@ -107,6 +107,7 @@ class MosqueObservationService : Service() {
                 stopSelf()
                 return
             }
+            DetectionRecording.foreground(this@MosqueObservationService, current)
             updateProvider(plan)
             registerGeofences(plan)
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(plan.state))
@@ -148,6 +149,7 @@ class MosqueObservationService : Service() {
         if (instance === this) {
             instance = null
             AdaptiveMosqueMonitor.serviceGone(this, token)
+            DetectionRecording.serviceGone(this, token)
         }
         super.onDestroy()
     }
@@ -244,19 +246,24 @@ class MosqueObservationService : Service() {
         val periods = AdaptiveMosqueMonitor.periods(this)
         val target = periods.targets.firstOrNull()
         val actionState = when {
-            state == PresenceState.SCHEDULE_FALLBACK -> R.string.mosque_adaptive_fallback
-            periods.observation != null && periods.silence == null -> R.string.mosque_adaptive_early
-            state == PresenceState.VISIT_CONFIRMED -> R.string.mosque_adaptive_hold
-            else -> R.string.mosque_status_checking
+            periods.continuationEnd != null -> MosquePrayerActions.continuationLabel(this, periods.continuationEnd)
+            state == PresenceState.SCHEDULE_FALLBACK -> getString(R.string.mosque_adaptive_fallback)
+            periods.observation != null && periods.silence == null -> getString(R.string.mosque_adaptive_early)
+            state == PresenceState.VISIT_CONFIRMED -> getString(R.string.mosque_adaptive_hold)
+            state == PresenceState.EXITING -> getString(R.string.mosque_status_uncertain)
+            else -> getString(R.string.mosque_status_checking)
         }
         val builder = NotificationCompat.Builder(this, CHANNEL)
         .setSmallIcon(R.drawable.mosque_silhouette).setContentTitle(getString(R.string.mosque_observing_title))
-        .setContentText(getString(actionState))
+        .setContentText(actionState)
         .setContentIntent(PendingIntent.getActivity(this, 81_203, Intent(this, MosqueSettingsActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
 
         .setOngoing(true).setSilent(true).setOnlyAlertOnce(true)
         .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        if (periods.continuationEnd != null) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(actionState))
+        }
         fun action(code: Int, name: String, title: String, key: String? = null) {
             val intent = Intent(this, MosqueControlReceiver::class.java).setAction(name)
             if (key != null) {

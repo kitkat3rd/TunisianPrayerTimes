@@ -9,6 +9,8 @@ import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.SilenceScheduler
 import com.tunisianprayertimes.SilenceStatus
+import com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor
+import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.nap.NapPrefs
 import com.tunisianprayertimes.ui.PhoneSilenceReason
 import com.tunisianprayertimes.ui.PhoneSilenceReasonSource
@@ -60,19 +62,26 @@ internal fun quranSilenceNotice(context: Context, nowMillis: Long = System.curre
     val manualActive = PrefsManager.isManualSilenceActive(context)
     val autoActive = PrefsManager.isAutoSilenceActive(context)
     val wakeActive = WakeAlarmScheduler.isSilenceUntilAlarmActive(context)
+    val combined = MosqueSilenceSettings.combined(context)
+    val showAutomaticReason = autoActive && !manualActive
     val reason = resolvePhoneSilenceReason(
         isPhoneSilenced = true,
         autoSilenceActive = autoActive,
-        activeAutoSilencePrayer = if (autoActive) SilenceScheduler.currentSilenceWindowPrayer(context) else null,
+        activeAutoSilencePrayer = if (showAutomaticReason && !combined) {
+            SilenceScheduler.currentSilenceWindowPrayer(context)
+        } else null,
         manualSilenceActive = manualActive,
         manualSilenceMode = PrefsManager.getManualSilenceMode(context),
         manualTargetPrayer = PrefsManager.activeManualSilencePrayer(context),
         manualSilenceEndsAtMillis = PrefsManager.getManualSilenceEndsAtMillis(context),
         wakeSilenceUntilAlarmActive = wakeActive,
         currentTimeMillis = nowMillis,
-        combinedMode = com.tunisianprayertimes.mosque.MosqueSilenceSettings.combined(context),
+        combinedMode = combined,
+        mosqueContinuationEnd = if (showAutomaticReason && combined) {
+            AdaptiveMosqueMonitor.periods(context).continuationEnd
+        } else null,
     ) ?: return@runCatching QuranSilenceNotice.DoNotDisturb
-    if (com.tunisianprayertimes.mosque.MosqueSilenceSettings.usesOwnedRules(context)) {
+    if (MosqueSilenceSettings.usesOwnedRules(context)) {
         return@runCatching QuranSilenceNotice(
             com.tunisianprayertimes.ui.phoneSilenceReasonText(context, reason),
             context.getString(com.tunisianprayertimes.R.string.mosque_quran_action),

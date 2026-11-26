@@ -5,6 +5,7 @@ import com.tunisianprayertimes.ManualSilenceMode
 import com.tunisianprayertimes.ManualSilenceScheduler
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.mosque.MosquePrayerActions
 import java.util.Calendar
 import java.util.Locale
 
@@ -44,12 +45,16 @@ internal fun phoneStatusNoticeText(
 
 internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason): String {
     if (reason.source in setOf(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED, PhoneSilenceReasonSource.MANUAL_UNTIL_PRAYER, PhoneSilenceReasonSource.MANUAL_UNTIL_TIME) &&
-        com.tunisianprayertimes.mosque.MosquePrayerActions.canUndo(context)) return context.getString(
+        MosquePrayerActions.canUndo(context)) return context.getString(
         if (ManualSilenceScheduler.canScheduleExact(context)) R.string.phone_status_silent_manual_until_time else R.string.manual_approximate_time,
         formatTimeOfDay(com.tunisianprayertimes.PrefsManager.getManualSilenceEndsAtMillis(context)))
     return when (reason.source) {
-        PhoneSilenceReasonSource.MOSQUE_WINDOW -> context.getString(if (com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor.fallbackRequested(context))
-            R.string.mosque_adaptive_fallback else R.string.mosque_phone_reason)
+        PhoneSilenceReasonSource.MOSQUE_WINDOW -> when {
+            reason.endsAtMillis > 0L -> MosquePrayerActions.continuationLabel(context, reason.endsAtMillis)
+            com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor.fallbackRequested(context) ->
+                context.getString(R.string.mosque_adaptive_fallback)
+            else -> context.getString(R.string.mosque_phone_reason)
+        }
         PhoneSilenceReasonSource.AUTO_PRAYER -> context.getString(
             R.string.phone_status_silent_auto_prayer,
             prayerName(context, requireNotNull(reason.prayer)),
@@ -84,6 +89,7 @@ internal fun resolvePhoneSilenceReason(
     currentTimeMillis: Long,
     combinedMode: Boolean = false,
     doNotDisturbActive: Boolean = false,
+    mosqueContinuationEnd: Long? = null,
 ): PhoneSilenceReason? {
     if (!isPhoneSilenced) return null
 
@@ -106,7 +112,10 @@ internal fun resolvePhoneSilenceReason(
     }
 
     if (autoSilenceActive) {
-        if (combinedMode) return PhoneSilenceReason(PhoneSilenceReasonSource.MOSQUE_WINDOW)
+        if (combinedMode) {
+            val cap = mosqueContinuationEnd?.takeIf { it > currentTimeMillis } ?: -1L
+            return PhoneSilenceReason(PhoneSilenceReasonSource.MOSQUE_WINDOW, endsAtMillis = cap)
+        }
         return if (activeAutoSilencePrayer != null) {
             PhoneSilenceReason(
                 source = PhoneSilenceReasonSource.AUTO_PRAYER,

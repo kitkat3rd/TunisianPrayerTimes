@@ -44,6 +44,31 @@ class SilenceWalkUiTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
 
+    @Test fun openReportScreenFollowsAutomaticRecordingStartAndEnd() {
+        val walk = Robolectric.buildActivity(SilenceWalkActivity::class.java).setup()
+        try {
+            val idle = context.getString(R.string.silence_walk_intro)
+            compose.waitUntil(10_000) { compose.onAllNodesWithText(idle).fetchSemanticsNodes().isNotEmpty() }
+            assertNull(SilenceTraceStore.activeId(context))
+
+            val id = SilenceTraceStore.start(context)
+            val arrived = context.getString(R.string.silence_walk_arrived)
+            compose.waitUntil(10_000) { compose.onAllNodesWithText(arrived).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText(arrived).performScrollTo().performClick()
+            compose.waitUntil(10_000) { SilenceTraceStore.entries(context, id).any { it.kind == "test_arrived" } }
+            assertEquals(id, SilenceTraceStore.activeId(context))
+
+            SilenceTraceStore.stop(context, id)
+            val save = context.getString(R.string.silence_walk_save)
+            compose.waitUntil(10_000) { compose.onAllNodesWithText(save).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText(save).performScrollTo().assertIsDisplayed()
+            assertTrue(compose.onAllNodesWithText(arrived).fetchSemanticsNodes().isEmpty())
+            assertEquals(listOf(id), SilenceTraceStore.sessions(context).map { it.id })
+        } finally {
+            walk.pause().stop().destroy()
+        }
+    }
+
     @Test fun settingsOpenAStoppedWalkWithSelectableEventsExportAndDeletion() {
         val store = SilenceTraceStore
         val id = store.start(context)
@@ -92,7 +117,7 @@ class SilenceWalkUiTest {
             compose.onNode(hasAnyAncestor(isDialog()) and hasClickAction() and hasText(delete)).performClick()
             compose.waitUntil(10_000) { compose.onAllNodesWithText(save).fetchSemanticsNodes().isEmpty() }
             assertTrue(store.sessions(context).isEmpty())
-            compose.onNodeWithText(context.getString(R.string.silence_walk_start)).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(context.getString(R.string.silence_walk_intro)).performScrollTo().assertIsDisplayed()
             assertNull(store.activeId(context))
         } finally {
             walk.pause().stop().destroy()

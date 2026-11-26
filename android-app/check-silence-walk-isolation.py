@@ -15,9 +15,12 @@ def find_markers(data, markers):
 
 
 def inspect(artifact):
-    components = ("SilenceWalkActivity", "SilenceWalkRecorderService", "DebugTunisianPrayerTimesApplication")
-    implementations = components + ("SilenceTraceStore", "SilenceWalkExport", "silence-walks.db",
-                                    "silence-walk://recordings", "silence_walk_recorder", "debug_silence_walk")
+    components = ("SilenceWalkActivity", "SilenceWalkShortcutActivity", "SilenceWalkRecorderService",
+                  "DebugTunisianPrayerTimesApplication")
+    implementations = components + ("SilenceTraceStore", "SilenceWalkExport", "SilenceWalkSensors", "silence-walks.db",
+                                    "silence-walk://recordings", "silence_walk_recorder", "debug_silence_walk",
+                                    "START_SILENCE_WALK", "STOP_SILENCE_WALK",
+                                    "silence_walk_start", "silence_walk_stop")
     failures = []
     with ZipFile(artifact) as archive:
         names = archive.namelist()
@@ -29,7 +32,8 @@ def inspect(artifact):
         if not dex:
             raise ValueError("No Android classes.dex in " + str(artifact))
         failures.extend(name for name in names if name == asset or name.endswith("/" + asset))
-        resource_markers = ("silence_walk_title", "silence_walk_notification", "trace_mosque_sampling_precise")
+        resource_markers = ("silence_walk_title", "silence_walk_notification", "trace_mosque_sampling_precise",
+                            "trace_prayer_observe_alarm", "shortcut_stop_walk_recording")
         checks = {
             manifest: components,
             resources: resource_markers,

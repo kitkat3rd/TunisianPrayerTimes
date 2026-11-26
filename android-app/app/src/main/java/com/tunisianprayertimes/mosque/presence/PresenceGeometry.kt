@@ -137,6 +137,12 @@ internal fun project(point: GeoPoint, origin: GeoPoint): Pair<Double, Double> {
     return (point.longitude - origin.longitude) * lonScale to (point.latitude - origin.latitude) * latScale
 }
 
+/** Allow for a brisk walking pace plus the reported horizontal errors of both fixes. */
+internal fun GeoPoint.reachableOnFootFrom(previous: GeoPoint, elapsedMillis: Long, combinedAccuracyMeters: Double): Boolean {
+    val (east, north) = project(this, previous)
+    return hypot(east, north) <= combinedAccuracyMeters + 4.0 * elapsedMillis / 1_000.0
+}
+
 private fun distanceToSegment(ax: Double, ay: Double, bx: Double, by: Double): Double {
     val dx = bx - ax; val dy = by - ay
     val length2 = dx * dx + dy * dy

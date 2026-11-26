@@ -9,6 +9,7 @@
     <string name="walk_schedule_no_watch">لم تبدأ فترة التحقّق من الوصول إلى المسجد أو انتهت.</string>
     <string name="walk_schedule_watch">فترة التحقّق الحالية من %1$s إلى %2$s.</string>
     <string name="walk_schedule_no_silence">لا توجد فترة إسكات مجدولة جارية الآن.</string>
+    <string name="walk_schedule_latest_mosque_end">إذا امتدّ إسكات هذه الصلاة لزيارة مسجد مؤكّدة، فأقصى وقت لانتهائه %1$s.</string>
     <string name="walk_schedule_dismissed">سبق تخطّي الإسكات لصلاة %1$s.</string>
     <string name="walk_schedule_current">فترة الإسكات الجارية لصلاة %1$s\nموعد الصلاة %2$s\nالإسكات من %3$s إلى %4$s</string>
     <string name="walk_schedule_next">فترة الإسكات التالية لصلاة %1$s\nموعد الصلاة %2$s\nالإسكات من %3$s إلى %4$s</string>

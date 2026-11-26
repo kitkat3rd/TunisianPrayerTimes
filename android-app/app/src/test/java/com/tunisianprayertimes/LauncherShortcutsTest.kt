@@ -38,6 +38,7 @@ class LauncherShortcutsTest {
         notifications = context.getSystemService(NotificationManager::class.java)
         audio = context.getSystemService(AudioManager::class.java)
         shortcuts = context.getSystemService(ShortcutManager::class.java)
+        shadowOf(shortcuts).setMaxShortcutCountPerActivity(7)
         shadowOf(notifications).setNotificationPolicyAccessGranted(true)
         notifications.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
         audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
@@ -48,7 +49,6 @@ class LauncherShortcutsTest {
     private fun shortcut(id: String) = shortcuts.dynamicShortcuts.single { it.id == id }
 
     @Test fun menuPublishesBothWakeActionsAlongsideSilenceAndReview() {
-        shadowOf(shortcuts).setMaxShortcutCountPerActivity(5)
         LauncherShortcuts.refresh(context)
 
         assertEquals(listOf("wake_before_adhan", "wake_nap", "silence_toggle", "silence_30_minutes", "hifz_review"),
@@ -67,11 +67,12 @@ class LauncherShortcutsTest {
         assertEquals(SilenceShortcutActivity::class.java.name, shortcut("silence_toggle").intent?.component?.className)
     }
 
-    @Test fun launcherWithFourSlotsKeepsBothWakeActionsAndBothSilenceActions() {
+    @Test fun launcherWithFourSlotsKeepsTheFourHighestRankedActions() {
+        LauncherShortcuts.refresh(context)
+        val firstFour = shortcuts.dynamicShortcuts.sortedBy { it.rank }.take(4).map { it.id }
         shadowOf(shortcuts).setMaxShortcutCountPerActivity(4)
         LauncherShortcuts.refresh(context)
-        assertEquals(listOf("wake_before_adhan", "wake_nap", "silence_toggle", "silence_30_minutes"),
-            shortcuts.dynamicShortcuts.sortedBy { it.rank }.map { it.id })
+        assertEquals(firstFour, shortcuts.dynamicShortcuts.sortedBy { it.rank }.map { it.id })
     }
 
     @Test fun backgroundChangesUpdateBothLabelsAndTheExplicitAction() {

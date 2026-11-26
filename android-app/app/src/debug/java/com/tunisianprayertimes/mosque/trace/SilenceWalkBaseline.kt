@@ -8,7 +8,6 @@ import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.SilenceModeController
 import com.tunisianprayertimes.SilenceScheduler
-import com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor
 import com.tunisianprayertimes.mosque.MosquePeriods
 import com.tunisianprayertimes.mosque.MosquePrayerActions
 import com.tunisianprayertimes.mosque.MosqueReadiness
@@ -26,10 +25,11 @@ import java.util.Locale
 
 /** Describe what the feature could do when a walk starts, without asking it to reconcile or acquire GPS. */
 internal object SilenceWalkBaseline {
-    fun capture(context: Context, sessionId: Long) {
+    private val scheduleTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm xxx", Locale.ROOT)
+
+    fun capture(context: Context, sessionId: Long, observedPeriods: MosquePeriods? = null,
+        now: Instant = SilenceScheduler.now(), elapsedAt: Long = SystemClock.elapsedRealtime()) {
         if (SilenceTraceStore.activeId(context) != sessionId) return
-        val now = SilenceScheduler.now()
-        val elapsedAt = SystemClock.elapsedRealtime()
         fun record(kind: String, detail: String) {
             SilenceTraceStore.append(context, kind, detail, at = now.toEpochMilli(), sessionId = sessionId,
                 elapsedMillis = elapsedAt)
@@ -71,9 +71,7 @@ internal object SilenceWalkBaseline {
             }
             record("test_context", if (owners.isEmpty()) context.getString(R.string.walk_context_no_owners)
                 else context.getString(R.string.walk_context_owners, owners.joinToString("، ") { context.getString(it.title) }))
-            if (combined && enabled) AdaptiveMosqueMonitor.traceCurrentState(context, sessionId)
-
-            if (enabled && mode != null) {
+            if (enabled && mode != null && SilenceTraceStore.activeId(context) == sessionId) {
                 val place = PrayerTimesRepository.place(context)
                 val windows = SilenceScheduler.planner(context, place).windows(now)
                 val (dismissed, eligible) = windows.partition { SilenceScheduler.isDismissed(context, it.prayer, it.prayerDay) }
@@ -82,24 +80,35 @@ internal object SilenceWalkBaseline {
                 }.forEach { w ->
                     record("prayer_schedule", context.getString(R.string.walk_schedule_dismissed, MosquePrayerActions.name(context, w)))
                 }
-                schedule(context, eligible, now, place.zone, combined).forEach { record("prayer_schedule", it) }
+                schedule(context, eligible, now, place.zone, combined, observedPeriods).forEach { record("prayer_schedule", it) }
             }
         } catch (_: Exception) {
             record("test_context", context.getString(R.string.walk_context_incomplete))
         }
     }
 
+    fun continuationDetail(context: Context, targets: List<SilenceWindow>, end: Long, zone: ZoneId): String {
+        val format = scheduleTime.withZone(zone)
+        val scheduledEnds = targets.joinToString(" ") { window ->
+            context.getString(R.string.trace_mosque_nominal_end, MosquePrayerActions.name(context, window),
+                format.format(window.end))
+        }
+        return context.getString(R.string.trace_mosque_continued, scheduledEnds, format.format(Instant.ofEpochMilli(end)))
+    }
+
     internal fun schedule(context: Context, windows: List<SilenceWindow>, now: Instant, zone: ZoneId,
-        combined: Boolean): List<String> = buildList {
-        val format = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm xxx", Locale.ROOT).withZone(zone)
-        val periods = MosquePeriods.from(windows, now.toEpochMilli())
+        combined: Boolean, observedPeriods: MosquePeriods? = null): List<String> = buildList {
+        val format = scheduleTime.withZone(zone)
+        val periods = observedPeriods ?: MosquePeriods.from(windows, now.toEpochMilli())
         val observation = periods.observation.takeIf { combined }
-        if (combined) add(if (observation == null) context.getString(R.string.walk_schedule_no_watch)
+        val continuation = periods.continuationEnd.takeIf { combined }
+        if (continuation != null) add(continuationDetail(context, periods.targets, continuation, zone))
+        else if (combined) add(if (observation == null) context.getString(R.string.walk_schedule_no_watch)
             else context.getString(R.string.walk_schedule_watch, format.format(Instant.ofEpochMilli(observation.start)),
                 format.format(Instant.ofEpochMilli(observation.activeEnd))))
-        val observedKeys = observation?.occurrences.orEmpty().map { it.removeSuffix("/early") }.toSet()
+        val observedKeys = observation?.takeIf { continuation == null }?.occurrences.orEmpty().map { it.removeSuffix("/early") }.toSet()
         val current = windows.filter { now in it || MosquePrayerActions.key(it) in observedKeys }
-        if (periods.silence == null) add(context.getString(R.string.walk_schedule_no_silence))
+        if (periods.silence == null && continuation == null) add(context.getString(R.string.walk_schedule_no_silence))
         val next = windows.filter { it.start > now }.minByOrNull { it.start }
         for (w in (current + listOfNotNull(next)).distinct()) {
             val label = when {
@@ -107,8 +116,10 @@ internal object SilenceWalkBaseline {
                 w == next -> R.string.walk_schedule_next
                 else -> R.string.walk_schedule_observing
             }
-            add(context.getString(label, MosquePrayerActions.name(context, w), format.format(w.adhan),
-                format.format(w.start), format.format(w.end)))
+            val schedule = context.getString(label, MosquePrayerActions.name(context, w), format.format(w.adhan),
+                format.format(w.start), format.format(w.end))
+            add(if (combined) schedule + "\n" + context.getString(R.string.walk_schedule_latest_mosque_end,
+                format.format(w.end.plusMillis(MosquePeriods.CONTINUATION_MILLIS))) else schedule)
         }
         if (current.isEmpty() && next == null) add(context.getString(R.string.walk_schedule_none_upcoming))
     }

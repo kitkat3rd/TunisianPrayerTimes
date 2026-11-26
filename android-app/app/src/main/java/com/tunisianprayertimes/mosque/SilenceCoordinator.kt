@@ -144,7 +144,7 @@ object SilenceCoordinator {
         observeSilenceSound(context) { if (pauseReason == null) clearRulePause(owner) }
         if (desired && (state.getBoolean(key(owner, "blocked"), false) || !ruleReady(context, owner))) return@synchronized false
         if (desired && old) {
-            if (owner == SilenceOwner.MOSQUE && !MosqueSilenceMonitor.canActivateLocked(context)) {
+            if (owner == SilenceOwner.MOSQUE && !MosqueSilenceMonitor.canActivateLocked(context, alreadyRequested = true)) {
                 set(context, owner, false)
                 return@synchronized false
             }
@@ -164,8 +164,8 @@ object SilenceCoordinator {
             }
             val uri = state.getString(key(owner, "uri"), null)?.let(Uri::parse)
             if (rule.conditionId != uri || rule.configurationActivity != component(context)) return@synchronized false
-            // Recheck AND authority at the final serialized platform effect.
-            if (desired && owner == SilenceOwner.MOSQUE && !MosqueSilenceMonitor.canActivateLocked(context)) {
+            // The journal already says TRUE here. A first platform request still requires a scheduled window.
+            if (desired && owner == SilenceOwner.MOSQUE && !MosqueSilenceMonitor.canActivateLocked(context, alreadyRequested = false)) {
                 state.edit().putBoolean(key(owner, "desired"), false).commit()
                 return@synchronized false
             }
