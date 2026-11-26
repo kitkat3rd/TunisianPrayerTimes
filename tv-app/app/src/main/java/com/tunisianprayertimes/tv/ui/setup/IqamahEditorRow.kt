@@ -2,7 +2,6 @@ package com.tunisianprayertimes.tv.ui.setup
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,7 +16,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -26,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tunisianprayertimes.DayPrayerTimes
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.mosque.FlowTiming
 import com.tunisianprayertimes.mosque.IqamahRule
@@ -40,38 +43,35 @@ import com.tunisianprayertimes.tv.ui.common.FocusableSurface
 import com.tunisianprayertimes.tv.ui.common.Stepper
 import com.tunisianprayertimes.tv.ui.common.ToggleRow
 import com.tunisianprayertimes.tv.ui.common.initialFocus
+import com.tunisianprayertimes.tv.ui.common.onSurfaceMuted
 import com.tunisianprayertimes.tv.ui.common.onSurfaceText
 import com.tunisianprayertimes.tv.ui.common.rtl
 import com.tunisianprayertimes.tv.ui.theme.Midad
 import com.tunisianprayertimes.tv.ui.theme.midadStyle
 import java.time.LocalTime
 
-/** The table's columns, so the header sits over the keys: − value + for the iqamah, then for the duration. */
+/** The table's columns for the iqamah editor and the duration stepper. */
 private val KEY = 34.dp
 private val IQAMAH_VALUE = 140.dp
 private val DURATION_VALUE = 64.dp
 private val IQAMAH_COLUMN = KEY * 2 + IQAMAH_VALUE + 12.dp
 private val DURATION_COLUMN = KEY * 2 + DURATION_VALUE + 12.dp
-/** In the settings only: the key that switches the rule's kind, and the iqamah the wall uses today. */
-private val MODE_COLUMN = 92.dp
+/** In settings, the iqamah the wall uses today. */
 private val TODAY_COLUMN = 76.dp
 /** A toggle in the table starts its label 12 dp in, as the prayer rows do. */
 private val TABLE_TOGGLE_PADDING = PaddingValues(horizontal = 12.dp, vertical = 7.dp)
-
-/** Jumu'a and Dhuhr share the noon adhan: on the day of one, the other takes its time from it. */
-private val NOON_TWIN = mapOf(Prayer.JOMOAA to Prayer.DHUHR, Prayer.DHUHR to Prayer.JOMOAA)
 
 /**
  * The iqamah table shared by onboarding and settings: the daily prayers and Jumu'a, then the two
  * Eids, whose minutes count from sunrise. Under Jumu'a and under the Eids, whether the mosque holds
  * them at all (a neighbourhood masjid holds neither), and under a Jumu'a it holds, whether the dua
  * after the adhan comes before the khutba (on by default) and the khutba's length. The first row's
- * − takes the focus when the page opens. A plain scrolling column, not a lazy list: a row scrolled
+ * iqamah key takes the focus when the page opens. A plain scrolling column, not a lazy list: a row scrolled
  * away and back must not take the focus again.
  *
- * In the settings, [today] holds today's prayers as the wall runs them: each row then gets a key that
- * switches its rule between minutes and a fixed time, and the iqamah the wall uses today beside the
- * rule, marked when Ramadan's changes or a fixed time that does not fit today decided it. A prayer's
+ * Each row can switch between minutes and a fixed time. [prayerTimes] provides the adhan or sunrise
+ * to start from. In settings, [today] shows the iqamah the wall uses today, marked when Ramadan's
+ * changes or a fixed time that does not fit today decided it. A prayer's
  * Ramadan change from the USB file or the phone ([ramadan]) shows under its row, with a key that
  * removes it. With [adhanScreenMinutes] (the settings), a row over the table sets how long the adhan
  * screen lasts, and says that an iqamah set sooner waits for its end.
@@ -82,10 +82,12 @@ fun IqamahTable(
     onChanged: (Prayer, IqamahConfig) -> Unit,
     modifier: Modifier = Modifier,
     today: Map<Prayer, PrayerEvent>? = null,
+    prayerTimes: DayPrayerTimes? = null,
     ramadan: Map<Prayer, PrayerOverride> = emptyMap(),
     onRamadanCleared: (Prayer) -> Unit = {},
     adhanScreenMinutes: Int? = null,
     onAdhanScreenMinutesChanged: (Int) -> Unit = {},
+    onEditorInteraction: () -> Unit = {},
 ) {
     fun config(prayer: Prayer) = configs[prayer] ?: IqamahConfig.from(MosqueSchedule.DEFAULT.settings(prayer))
     Column(
@@ -108,7 +110,6 @@ fun IqamahTable(
                 )
             }
             val config = config(prayer)
-            val adhan = today?.let { it[prayer] ?: it[NOON_TWIN[prayer]] }?.adhanAt?.toLocalTime()
             IqamahEditorRow(
                 prayerName = TvStrings.editorLabel(prayer),
                 config = config,
@@ -117,7 +118,8 @@ fun IqamahTable(
                 afterSunrise = prayer in MosqueSchedule.EID,
                 withToday = today != null,
                 todayEvent = today?.get(prayer),
-                switched = config.switched(adhan),
+                anchor = prayerTimes?.iqamahAnchor(prayer),
+                onEditorInteraction = onEditorInteraction,
                 ramadan = ramadan[prayer]?.takeIf { today != null },
                 onRamadanCleared = { onRamadanCleared(prayer) },
             )
@@ -177,7 +179,6 @@ private fun KhutbaRow(config: IqamahConfig, withToday: Boolean, onConfigChanged:
             Text(TvStrings.KHUTBA_LENGTH_HINT, style = midadStyle(14.sp, color = Midad.Muted))
         }
         // Under the iqamah's column, by five minutes.
-        if (withToday) Spacer(Modifier.width(MODE_COLUMN))
         Stepper(
             value = TvStrings.khutbaLength(config.khutbaMinutes),
             onMinus = { onConfigChanged(config.copy(khutbaMinutes = (config.khutbaMinutes - 5).coerceIn(range))) },
@@ -210,7 +211,6 @@ private fun AdhanScreenRow(minutes: Int, withToday: Boolean, onChanged: (Int) ->
             Text(TvStrings.ADHAN_SCREEN_LENGTH, style = midadStyle(17.sp, FontWeight.Medium))
             Text(TvStrings.ADHAN_SCREEN_LENGTH_HINT, style = midadStyle(14.sp, color = Midad.Muted, lineHeight = 1.45f).rtl())
         }
-        if (withToday) Spacer(Modifier.width(MODE_COLUMN))
         Stepper(
             value = TvStrings.minutesShort(minutes),
             onMinus = { onChanged((minutes - 1).coerceIn(range)) },
@@ -229,7 +229,6 @@ private fun IqamahHeader(withToday: Boolean) {
     val style = midadStyle(14.sp, color = Midad.Muted)
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(TvStrings.PRAYER_COLUMN, style = style, modifier = Modifier.weight(1f))
-        if (withToday) Spacer(Modifier.width(MODE_COLUMN))
         Text(TvStrings.IQAMAH_LABEL, style = style, textAlign = TextAlign.Center, modifier = Modifier.width(IQAMAH_COLUMN))
         Text(TvStrings.DURATION_LABEL, style = style, textAlign = TextAlign.Center, modifier = Modifier.width(DURATION_COLUMN))
         if (withToday) Text(TvStrings.TODAY_COLUMN, style = style, textAlign = TextAlign.Center, modifier = Modifier.width(TODAY_COLUMN))
@@ -237,31 +236,27 @@ private fun IqamahHeader(withToday: Boolean) {
 }
 
 /**
- * One prayer's iqamah and prayer duration (the black screen), used by onboarding and settings.
- * − and + change the minutes after the adhan ([afterSunrise]: after sunrise, for an Eid), or move a
- * fixed time by a minute. [withToday] (the settings) adds the key that turns the rule into [switched],
- * and today's iqamah ([todayEvent], none when the prayer is not prayed today).
+ * One prayer's iqamah opens its editor. The duration stays adjustable on the row itself.
  */
 @Composable
-fun IqamahEditorRow(
+private fun IqamahEditorRow(
     prayerName: String,
     config: IqamahConfig,
     onConfigChanged: (IqamahConfig) -> Unit,
+    anchor: LocalTime?,
+    onEditorInteraction: () -> Unit,
     /** The first row of a table takes the remote's focus when the page opens. */
     focusFirst: Boolean = false,
     afterSunrise: Boolean = false,
     withToday: Boolean = false,
     todayEvent: PrayerEvent? = null,
-    switched: IqamahConfig? = null,
     /** Ramadan's change to this prayer, shown under the row with the key that removes it. */
     ramadan: PrayerOverride? = null,
     onRamadanCleared: () -> Unit = {},
 ) {
-    val iqamahRange = MosqueSchedule.IQAMAH_MINUTES
     val salahRange = MosqueSchedule.SALAH_MINUTES
-    val fixed = config.isFixed
-    // The Ramadan line's key goes away once pressed: the focus moves to the iqamah's − rather than into nowhere.
-    val minus = remember { FocusRequester() }
+    var editing by remember { mutableStateOf(false) }
+    val editKey = remember { FocusRequester() }
     Column(
         Modifier
             .fillMaxWidth()
@@ -275,30 +270,26 @@ fun IqamahEditorRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(prayerName, style = midadStyle(17.sp, FontWeight.Medium), modifier = Modifier.weight(1f))
-            if (withToday) {
-                // Always the same room, so the rows keep their columns whether the key is offered or not.
-                Box(Modifier.width(MODE_COLUMN)) {
-                    if (switched != null) {
-                        RowKey(
-                            text = when {
-                                !fixed -> TvStrings.SWITCH_TO_FIXED
-                                afterSunrise -> TvStrings.SWITCH_TO_SUNRISE
-                                else -> TvStrings.SWITCH_TO_ADHAN
-                            },
-                            onClick = { onConfigChanged(switched) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+            FocusableSurface(
+                onClick = { editing = true },
+                modifier = Modifier.width(IQAMAH_COLUMN).heightIn(min = KEY).focusRequester(editKey).initialFocus(focusFirst),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) { focused ->
+                if (config.isFixed) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(TvStrings.SWITCH_TO_FIXED, style = midadStyle(14.sp, color = onSurfaceMuted(focused)))
+                        val time = TvStrings.hm(LocalTime.of(config.fixedHour, config.fixedMinute))
+                        Text(time, style = midadStyle(20.sp, FontWeight.SemiBold, onSurfaceText(focused)))
                     }
+                } else {
+                    Text(iqamahText(config, afterSunrise), style = midadStyle(17.sp, FontWeight.Medium, onSurfaceText(focused)))
                 }
             }
-            Stepper(
-                value = iqamahText(config, afterSunrise),
-                onMinus = { onConfigChanged(if (fixed) config.shiftFixed(-1) else config.copy(delayMinutes = (config.delayMinutes - 1).coerceIn(iqamahRange))) },
-                onPlus = { onConfigChanged(if (fixed) config.shiftFixed(1) else config.copy(delayMinutes = (config.delayMinutes + 1).coerceIn(iqamahRange))) },
-                valueWidth = IQAMAH_VALUE,
-                keySize = KEY,
-                minusModifier = Modifier.focusRequester(minus).initialFocus(focusFirst),
-            )
             Stepper(
                 value = TvStrings.minutesShort(config.salahMinutes),
                 onMinus = { onConfigChanged(config.copy(salahMinutes = (config.salahMinutes - 1).coerceIn(salahRange))) },
@@ -319,13 +310,32 @@ fun IqamahEditorRow(
                     text = TvStrings.RAMADAN_CLEAR,
                     onClick = {
                         onRamadanCleared()
-                        runCatching { minus.requestFocus() }
+                        editKey.requestFocus()
                     },
                     // Under today's iqamah when the table shows it: a column of its own, clear of the + key.
-                    modifier = Modifier.width(if (withToday) TODAY_COLUMN else MODE_COLUMN),
+                    modifier = Modifier.width(TODAY_COLUMN),
                 )
             }
         }
+    }
+    if (editing) {
+        IqamahRuleDialog(
+            prayerName = prayerName,
+            config = config,
+            anchor = anchor,
+            afterSunrise = afterSunrise,
+            onInteraction = onEditorInteraction,
+            onDismiss = { editing = false },
+            onSave = { draft ->
+                onConfigChanged(config.copy(
+                    mode = draft.mode,
+                    delayMinutes = draft.delayMinutes,
+                    fixedHour = draft.fixedHour,
+                    fixedMinute = draft.fixedMinute,
+                ))
+                editing = false
+            },
+        )
     }
 }
 
@@ -378,13 +388,28 @@ internal fun IqamahConfig.shiftFixed(minutes: Int): IqamahConfig {
 /**
  * The rule turned into the other kind, keeping what the other kind had saved: a fixed time back to
  * minutes after the adhan, or minutes to the fixed time set before, else to where the minutes put it
- * after today's [adhan] (sunrise for an Eid). Null when no fixed time is known to start from.
+ * after today's [anchor] (sunrise for an Eid). Without prayer times, the clock starts at noon.
  */
-internal fun IqamahConfig.switched(adhan: LocalTime?): IqamahConfig? = when {
+internal fun IqamahConfig.switched(anchor: LocalTime?): IqamahConfig = when {
     isFixed -> copy(mode = IqamahMode.DELAY)
     fixedHour in 0..23 && fixedMinute in 0..59 -> copy(mode = IqamahMode.FIXED_TIME)
-    adhan != null -> adhan.plusMinutes(delayMinutes.toLong()).let { copy(mode = IqamahMode.FIXED_TIME, fixedHour = it.hour, fixedMinute = it.minute) }
-    else -> null
+    else -> {
+        val time = anchor?.plusMinutes(delayMinutes.toLong()) ?: LocalTime.NOON
+        copy(mode = IqamahMode.FIXED_TIME, fixedHour = time.hour, fixedMinute = time.minute)
+    }
+}
+
+/** The noon adhan is shared by Dhuhr and Jumu'a, and both Eid prayers are timed from sunrise. */
+internal fun DayPrayerTimes.iqamahAnchor(prayer: Prayer): LocalTime {
+    val adhan = when (prayer) {
+        Prayer.FAJR -> fajr
+        Prayer.DHUHR, Prayer.JOMOAA -> dhuhr
+        Prayer.ASR -> asr
+        Prayer.MAGHRIB -> maghrib
+        Prayer.ISHA -> isha
+        Prayer.AID_FITR, Prayer.AID_ADHA -> return LocalTime.of(shurukHour, shurukMinute)
+    }
+    return LocalTime.of(adhan.hour, adhan.minute)
 }
 
 /** Ramadan's change to a prayer, under its row: «في رمضان: الإقامة بعد الأذان 20 د · مدة الصلاة 75 د». */

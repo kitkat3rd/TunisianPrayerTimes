@@ -96,6 +96,7 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
     var savedReminderId by remember { mutableStateOf<String?>(null) }
     // Saved, so the prompts still follow one another when a settings screen re-creates the activity in between.
     var permissionPrompt by rememberSaveable { mutableStateOf(false) }
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
     var permissionPromptVibrate by rememberSaveable { mutableStateOf(true) }
     var exactAlarmPrompt by rememberSaveable { mutableStateOf(false) }
     var exactAlarmPromptAfterNotifications by rememberSaveable { mutableStateOf(false) }
@@ -268,10 +269,23 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
             }
         })
     }
-    fun saveWithReport(rule: DhikrReminder) {
+    fun placeRequiredFor(rule: DhikrReminder): Boolean {
+        if (!rule.usesPrayerTimes() || PrefsManager.hasConfirmedPlace(activity)) return false
+        placeRequired = true
+        return true
+    }
+    fun toggleRule(rule: DhikrReminder, enabled: Boolean) {
+        if (enabled && placeRequiredFor(rule)) return
+        mutate({ repo.setEnabled(rule.id, enabled) }) {
+            if (enabled) promptForReminderAccess(rule.copy(enabled = true))
+        }
+    }
+    fun saveWithReport(rule: DhikrReminder): Boolean {
+        if (rule.enabled && placeRequiredFor(rule)) return false
         mutate({ repo.save(rule) }, onFailure = {
             scope.launch { snackbar.showSnackbar(DhikrReminderScheduler.validate(activity, rule) ?: "تعذّر حفظ التذكير. حاول مرة أخرى.") }
         }) { promptForReminderAccess(rule) }
+        return true
     }
     fun deleteReminder(rule: DhikrReminder, afterDelete: () -> Unit = {}) {
         var index = -1
@@ -412,9 +426,7 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                         onShowReminders = { showReminders = true },
                         onOpenCollection = ::openCollection,
                         onOpenReminder = ::openReminder,
-                        onToggleRule = { rule, enabled -> mutate({ repo.setEnabled(rule.id, enabled) }) {
-                            if (enabled) promptForReminderAccess(rule.copy(enabled = true))
-                        } },
+                        onToggleRule = ::toggleRule,
                     )
                 } else {
                     AdhkarLibraryPage(
@@ -437,9 +449,7 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                         snackbar = snackbar, scrollToId = savedReminderId, onScrolled = { savedReminderId = null },
                         onClose = { showReminders = false },
                         onDraft = ::requestDraft,
-                        onToggle = { rule, enabled -> mutate({ repo.setEnabled(rule.id, enabled) }) {
-                            if (enabled) promptForReminderAccess(rule.copy(enabled = true))
-                        } },
+                        onToggle = ::toggleRule,
                         onRead = ::openReminder,
                         onSavePreset = { rule -> saveWithReport(rule) },
                         onSkip = { rule -> mutate({
@@ -490,6 +500,7 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                         reminder = readerReminder,
                         onCount = { delta -> mutate({ repo.count(id, delta) }) },
                         onMove = { direction -> mutate({ repo.move(id, direction) }) },
+                        onAdvance = { mutate({ repo.advanceAfterReading(id, session.itemId) }) },
                         onSkip = { mutate({ repo.skipItem(id) }) },
                         onRemove = { mutate({ repo.removeItem(id) }) },
                         onFavourite = { mutate({ repo.toggleFavourite(session.itemId) }) },
@@ -652,6 +663,7 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                         } },
                         dismissButton = { TextButton(onClick = { pendingDraft = null }) { Text("متابعة التعديل") } })
                 }
+                if (placeRequired) PrayerPlaceRequiredDialog(onDismiss = { placeRequired = false })
                 if (permissionPrompt) AlertDialog(onDismissRequest = { permissionPrompt = false; afterNotificationPrompt() },
                     title = { Text("السماح بتذكيرات الأذكار") },
                     text = { Text("يمكنك قراءة الأذكار والعدّ دون إشعارات. اسمح بالإشعارات ليصلك التذكير في الأوقات التي اخترتها.") },
@@ -1089,7 +1101,7 @@ private fun DhikrRemindersSheet(
     onDraft: (DhikrReminder) -> Unit,
     onToggle: (DhikrReminder, Boolean) -> Unit,
     onRead: (DhikrReminder) -> Unit,
-    onSavePreset: (DhikrReminder) -> Unit,
+    onSavePreset: (DhikrReminder) -> Boolean,
     onSkip: (DhikrReminder) -> Unit,
     onDone: (DhikrReminder) -> Unit,
     onDelete: (DhikrReminder) -> Unit,
@@ -1137,7 +1149,7 @@ private fun DhikrRemindersSheet(
                 ?.let { it.shouldVibrate() && it.importance >= android.app.NotificationManager.IMPORTANCE_DEFAULT } != false
     }
     val ringerNotice = ringerIsTheCause && !notificationNotice && state.reminders.any { it.enabled && it.vibrate }
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    AppModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = p.background) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(.9f)) {
             DhikrSheetHeader("تذكيراتي") { onClose() }
@@ -1229,10 +1241,9 @@ private fun DhikrRemindersSheet(
                                 // A second tap right behind the first is the same gesture, not a change of mind.
                                 if (saved != null) {
                                     if (SystemClock.elapsedRealtime() - switchedOnAt > 1_000) onToggle(saved, checked)
-                                } else if (checked && slot.key !in switchedOnHere) {
+                                } else if (checked && slot.key !in switchedOnHere && onSavePreset(slot.preset.copy(enabled = true))) {
                                     switchedOnHere = switchedOnHere + (slot.key to slot.preset.id)
                                     switchedOnAt = SystemClock.elapsedRealtime()
-                                    onSavePreset(slot.preset.copy(enabled = true))
                                 }
                             },
                             // Shown on, and not to be tapped again, until the save has landed.
@@ -1477,7 +1488,7 @@ internal fun reminderDefaultGoal(entry: DhikrEntry): Int =
 /** The 100-times-a-day tahlil (Bukhari 3293, Muslim 2691), not the single post-prayer one. */
 internal const val TAHLIL_DAILY_ID = DhikrCatalog.DAILY_TAHLIL_ID
 internal fun tahlilDhikrPreset() = DhikrReminder(dhikrId = TAHLIL_DAILY_ID, targetCount = 100, daysOfWeek = (1..7).toSet(),
-    start = DhikrTime(minuteOfDay = 480), end = DhikrTime(DhikrTimeKind.MAGHRIB), cadence = DhikrCadence.GENTLE)
+    start = DhikrTime(DhikrTimeKind.FAJR, offsetMinutes = 45), end = DhikrTime(DhikrTimeKind.MAGHRIB), cadence = DhikrCadence.GENTLE)
 // Fajr to Dhuhr: the morning adhkar are read until Dhuhr at the latest. The best time ends at sunrise, but after the
 // prayer silence only a short stretch of Fajr to Shuruk is left, too short for a second notification.
 internal fun morningCollectionPreset() = DhikrReminder(dhikrId = "morning_kingdom", collection = DhikrCategory.MORNING,
@@ -1494,6 +1505,15 @@ private val reminderCollections = setOf(DhikrCategory.MORNING, DhikrCategory.EVE
 /** [wholeCollection] is false for one dhikr read on its own: it keeps the collection's times but reminds of that dhikr. */
 internal fun defaultDhikrReminder(id: String, category: DhikrCategory?, entries: List<DhikrEntry> = DhikrCatalog.entries,
     wholeCollection: Boolean = true): DhikrReminder {
+    val collection = category?.takeIf { wholeCollection && it in reminderCollections }
+    if (id == TAHLIL_DAILY_ID && collection == null) {
+        val preset = tahlilDhikrPreset()
+        return when (category) {
+            DhikrCategory.MORNING -> preset.copy(end = DhikrTime(DhikrTimeKind.DHUHR))
+            DhikrCategory.EVENING -> preset.copy(start = preset.start.copy(kind = DhikrTimeKind.ASR))
+            else -> preset
+        }
+    }
     val times = when (category) {
         DhikrCategory.MORNING -> DhikrTime(DhikrTimeKind.FAJR) to DhikrTime(DhikrTimeKind.DHUHR)
         DhikrCategory.EVENING -> DhikrTime(DhikrTimeKind.ASR) to DhikrTime(DhikrTimeKind.MAGHRIB)
@@ -1502,7 +1522,6 @@ internal fun defaultDhikrReminder(id: String, category: DhikrCategory?, entries:
         DhikrCategory.SLEEP -> DhikrTime(minuteOfDay = 22 * 60) to DhikrTime(minuteOfDay = 23 * 60)
         else -> DhikrTime(minuteOfDay = 480) to DhikrTime(minuteOfDay = 1200)
     }
-    val collection = category?.takeIf { wholeCollection && it in reminderCollections }
     return DhikrReminder(
         // A whole collection is stood for by a catalog entry, never by one the user could delete from under it.
         dhikrId = if (collection != null) collectionRepresentative(collection) else id,

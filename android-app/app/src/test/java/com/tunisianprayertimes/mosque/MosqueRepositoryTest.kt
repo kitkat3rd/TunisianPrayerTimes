@@ -23,7 +23,25 @@ class MosqueRepositoryTest {
         assertTrue(catalog.mosques.isNotEmpty())
         assertTrue(catalog.eligiblePolygonCount > 0)
         assertTrue(catalog.eligiblePolygonCount < catalog.mosques.size)
+        val unusable = catalog.mosques.filter { it.automaticSilencingEligible && it.approvedPolygons().isEmpty() }
+        assertTrue("Enabled outlines rejected by the area editor: ${unusable.joinToString { it.id }}", unusable.isEmpty())
         assertEquals("ODbL-1.0", root.getJSONObject("source").getString("license"))
+    }
+
+    @Test
+    fun `catalogue map pins use GeoJSON order without changing automatic eligibility`() {
+        val point = feature("point-only", null, eligible = false).apply {
+            getJSONObject("properties").put("coordinate", JSONArray("[10.12,36.82]"))
+        }
+        val malformed = feature("malformed-pin", polygon(square())).apply {
+            getJSONObject("properties").put("coordinate", JSONArray("[10.12,99]"))
+        }
+        val catalog = catalog(point, malformed)
+
+        assertEquals(MosqueCoordinate(10.12, 36.82), catalog.mosques.first().coordinate)
+        assertEquals(null, catalog.mosques.last().coordinate)
+        assertEquals(1, catalog.eligiblePolygonCount)
+        assertMatches(catalog, fix(), "malformed-pin")
     }
 
     @Test

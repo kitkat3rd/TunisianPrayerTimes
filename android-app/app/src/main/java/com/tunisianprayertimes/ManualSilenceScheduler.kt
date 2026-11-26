@@ -22,6 +22,10 @@ object ManualSilenceScheduler {
 
     fun scheduleAt(context: Context, endsAtMillis: Long) {
         cancel(context)
+        armAt(context, endsAtMillis)
+    }
+
+    private fun armAt(context: Context, endsAtMillis: Long) {
         PrefsManager.setManualSilenceEndsAtMillis(context, endsAtMillis)
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -43,6 +47,7 @@ object ManualSilenceScheduler {
     }
 
     fun cancel(context: Context) {
+        com.tunisianprayertimes.mosque.MosquePrayerActions.invalidateUndo(context)
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         alarmManager.cancel(createPendingIntent(context))
         PrefsManager.clearManualSilenceEndsAt(context)
@@ -72,7 +77,7 @@ object ManualSilenceScheduler {
         }
         val endsAtMillis = PrefsManager.getManualSilenceEndsAtMillis(context)
         if (PrefsManager.isManualSilenceActive(context) && endsAtMillis > 0L) {
-            scheduleAt(context, endsAtMillis)
+            armAt(context, endsAtMillis)
         }
     }
 

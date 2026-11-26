@@ -109,7 +109,7 @@ internal fun DateNavigationRow(
         }
         if (!isToday) {
             TextButton(
-                onClick = { onDateSelected(calendarDateMillis(LocalDate.now())) },
+                onClick = { onDateSelected(calendarDateMillis(LocalDate.now(PrayerTimesRepository.place(context).zone))) },
                 modifier = Modifier.testTag(TestTags.DATE_TODAY_BUTTON).heightIn(min = 48.dp),
             ) {
                 Text(

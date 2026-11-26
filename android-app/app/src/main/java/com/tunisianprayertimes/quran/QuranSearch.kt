@@ -21,8 +21,12 @@ data class QuranSearchResult(
     val kind: QuranSearchKind = QuranSearchKind.Phrase,
     /** Source-token-aligned words converted with each verse's own scan signs before fragments are joined. */
     val mushafWords: List<String> = QuranMushafText.words(text.split(' ')),
+    private val alignedSpelling: String? = null,
 ) {
     val hit: QuranSearchHit get() = QuranSearchHit(page, verses)
+
+    fun matchRanges(query: String): List<IntRange> = if (kind == QuranSearchKind.Reference) emptyList()
+        else quranMatchRanges(text, query, kind == QuranSearchKind.Similar, alignedSpelling)
 }
 
 /** What a tapped search result leaves on the page it opens: the verses to colour there. */
@@ -43,14 +47,34 @@ data class QuranSearchHit(val page: Int, val verses: List<QuranVerseReference>) 
  * The words of [text] that a search for [query] matched, as character ranges to emphasise.
  * With [similar], words a keyboard slip away from the query count too.
  */
-fun quranMatchRanges(text: String, query: String, similar: Boolean = false): List<IntRange> {
-    val typed = normalizeQuranSearch(query).split(' ').filter { it.isNotEmpty() }
-    if (typed.isEmpty()) return emptyList()
+fun quranMatchRanges(text: String, query: String, similar: Boolean = false, alignedSpelling: String? = null): List<IntRange> {
+    val needle = normalizeQuranSearch(query)
+    if (needle.isEmpty()) return emptyList()
+    val typed = needle.split(' ')
+    val tokens = Regex("\\S+").findAll(text).map { it.range to normalizeQuranSearch(it.value) }
+        .filter { it.second.isNotEmpty() }.toList()
+    val spellings = listOfNotNull(
+        tokens.map { it.second },
+        alignedSpelling?.let { normalizeQuranSearch(it).split(' ') }?.takeIf { it.size == tokens.size },
+    )
+    if (similar && needle.count { it != ' ' } >= 4) {
+        for (spelling in spellings) {
+            val phrase = spelling.joinToString(" ").nearPhrases(needle).firstOrNull() ?: continue
+            var offset = 0
+            return spelling.mapIndexedNotNull { index, word ->
+                val start = offset
+                offset += word.length + 1
+                tokens[index].first.takeIf { start <= phrase.last && start + word.length > phrase.first }
+            }
+        }
+    }
     val words = if (similar) typed + typed.map { withoutArticle(it) } else typed
-    return Regex("\\S+").findAll(text).filter { token ->
-        val word = normalizeQuranSearch(token.value)
-        word.isNotEmpty() && words.any { it in word || (similar && withinEdits(word, it, allowedEdits(it.length)) != null) }
-    }.map { it.range }.toList()
+    return tokens.indices.filter { index ->
+        spellings.any { spelling ->
+            val word = spelling[index]
+            words.any { it in word || (similar && withinEdits(word, it, allowedEdits(it.length)) != null) }
+        }
+    }.map { tokens[it].first }
 }
 
 /** The word without its leading «ال», when enough of it is left to mean something. */
@@ -71,10 +95,43 @@ internal fun allowedEdits(length: Int): Int = when {
     else -> 0
 }
 
-/** The edit distance between the two words when it is at most [max], else null. */
+/** A single insertion, deletion, substitution or adjacent swap, without copying the candidate substring. */
+private fun isOneEdit(text: String, start: Int, length: Int, query: String): Boolean {
+    val common = minOf(length, query.length)
+    var i = 0
+    while (i < common && text[start + i] == query[i]) i++
+    if (i == common) return length != query.length
+    return when {
+        length > query.length -> text.regionMatches(start + i + 1, query, i, common - i)
+        length < query.length -> text.regionMatches(start + i, query, i + 1, common - i)
+        text.regionMatches(start + i + 1, query, i + 1, common - i - 1) -> true
+        else -> i + 1 < common && text[start + i] == query[i + 1] && text[start + i + 1] == query[i] &&
+            text.regionMatches(start + i + 2, query, i + 2, common - i - 2)
+    }
+}
+
+/** Whole-word spans one edit from the phrase. A space costs the same as a mistyped letter. */
+private fun String.nearPhrases(needle: String): Sequence<IntRange> = sequence {
+    var start = 0
+    while (length - start >= needle.length - 1) {
+        for (size in needle.length - 1..minOf(needle.length + 1, length - start)) {
+            val end = start + size
+            if ((end == length || this@nearPhrases[end] == ' ') && isOneEdit(this@nearPhrases, start, size, needle)) {
+                yield(start until end)
+            }
+        }
+        val space = indexOf(' ', start)
+        if (space < 0) break
+        start = space + 1
+    }
+}
+
+/** Bounded edit distance, counting adjacent swapped letters as one typing mistake. */
 internal fun withinEdits(a: String, b: String, max: Int): Int? {
     if (a == b) return 0
     if (max == 0 || kotlin.math.abs(a.length - b.length) > max) return null
+    if (max == 1) return if (isOneEdit(a, 0, a.length, b)) 1 else null
+    var twoBack = IntArray(b.length + 1)
     var previous = IntArray(b.length + 1) { it }
     var current = IntArray(b.length + 1)
     for (i in 1..a.length) {
@@ -83,10 +140,16 @@ internal fun withinEdits(a: String, b: String, max: Int): Int? {
         for (j in 1..b.length) {
             val cost = if (a[i - 1] == b[j - 1]) 0 else 1
             current[j] = minOf(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+            if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
+                current[j] = minOf(current[j], twoBack[j - 2] + 1)
+            }
             if (current[j] < rowBest) rowBest = current[j]
         }
         if (rowBest > max) return null
-        val swap = previous; previous = current; current = swap
+        val swap = twoBack
+        twoBack = previous
+        previous = current
+        current = swap
     }
     return previous[b.length].takeIf { it <= max }
 }
@@ -102,8 +165,8 @@ private class SearchForm(parts: List<String>) {
         parts.forEachIndexed { index, part -> starts[index] = offset; offset += part.length + 1 }
     }
     /** Each word with the fragment it belongs to. */
-    val words: List<Pair<String, Int>> = parts.flatMapIndexed { index, part ->
-        part.split(' ').filter { it.isNotEmpty() }.map { it to index }
+    val words: List<Pair<String, Int>> by lazy {
+        parts.flatMapIndexed { index, part -> part.split(' ').filter { it.isNotEmpty() }.map { it to index } }
     }
 
     fun partAt(offset: Int): Int {
@@ -128,41 +191,96 @@ private class SearchForm(parts: List<String>) {
     }
 }
 
+private fun searchForms(entries: List<QuranSearchEntry>): List<SearchForm> =
+    listOf(entries.map { it.normalized }, entries.map { it.spelling }).distinct().map(::SearchForm)
+
+/** Alternate spellings can split a printed word (e.g. «يا أيها»). Only use positional highlights when aligned. */
+private fun List<QuranSearchEntry>.alignedSpelling(): String? {
+    if (none { it.searchText != it.text }) return null
+    return joinToString(" ") {
+        if (it.spelling.count { c -> c == ' ' } == it.normalized.count { c -> c == ' ' }) it.spelling else it.normalized
+    }
+}
+
 private class SearchVerse(val surah: Int, val ayah: Int, val fragments: List<QuranSearchEntry>) {
     val reference = QuranVerseReference(surah, ayah)
-    val forms = listOf(SearchForm(fragments.map { it.normalized }), SearchForm(fragments.map { it.spelling }))
+    val forms = searchForms(fragments)
+}
+
+private class WordChoice(val position: Int, val cost: Int)
+private class WordMatch(val cost: Int, val parts: List<Int>)
+
+/** An unordered match needs a separate source word for each term, even when it is repeated or misspelled. */
+private inline fun SearchForm.matchWords(count: Int, cost: (Int, String) -> Int): WordMatch? {
+    if (count > words.size) return null
+    val choices = ArrayList<List<WordChoice>>(count)
+    for (term in 0 until count) {
+        val options = words.mapIndexedNotNull { position, (word, _) ->
+            val distance = cost(term, word)
+            if (distance == Int.MAX_VALUE) null else WordChoice(position, distance)
+        }
+        if (options.isEmpty()) return null
+        choices += options.sortedBy { it.cost }
+    }
+    val selected = distinctWordChoices(choices, words.size) ?: return null
+    return WordMatch(selected.sumOf { it.cost }, selected.map { words[it.position].second }.distinct().sorted())
+}
+
+private fun distinctWordChoices(choices: List<List<WordChoice>>, wordCount: Int): List<WordChoice>? {
+    val owners = IntArray(wordCount) { -1 }
+    val selected = arrayOfNulls<WordChoice>(choices.size)
+    // If a shared candidate is taken, try moving its owner to another matching word.
+    fun assign(term: Int, visited: BooleanArray): Boolean {
+        for (choice in choices[term]) {
+            val position = choice.position
+            if (visited[position]) continue
+            visited[position] = true
+            if (owners[position] == -1 || assign(owners[position], visited)) {
+                owners[position] = term
+                selected[term] = choice
+                return true
+            }
+        }
+        return false
+    }
+    for (term in choices.indices) if (!assign(term, BooleanArray(wordCount))) return null
+    return selected.requireNoNulls().asList()
 }
 
 /** Everything on one scan of one chapter, for phrases that run from one verse into the next. */
 private class SearchPage(private val entries: List<QuranSearchEntry>) {
     val number = entries.first().page
-    private val originals = entries.map { it.normalized }
-    private val spellings = entries.map { it.spelling }
+    private val forms = searchForms(entries)
 
-    fun acrossVerses(needle: String): List<List<QuranSearchEntry>> {
+    fun acrossVerses(needle: String, similar: Boolean = false): List<List<QuranSearchEntry>> {
         val found = mutableListOf<List<QuranSearchEntry>>()
-        for (parts in listOf(originals, spellings)) {
-            val text = parts.joinToString(" ")
-            var from = 0
-            while (true) {
-                val start = text.indexOf(needle, from)
-                if (start < 0) break
-                val end = start + needle.length
-                var offset = 0
-                val touched = entries.filterIndexed { index, _ ->
-                    val intersects = offset < end && offset + parts[index].length > start
-                    offset += parts[index].length + 1
-                    intersects
-                }
-                if (touched.map { it.surah to it.ayah }.distinct().size >= 2) found += touched
-                from = end
+        for (form in forms) {
+            val spans = if (similar) form.text.nearPhrases(needle) else {
+                generateSequence(form.text.indexOf(needle)) { form.text.indexOf(needle, it + needle.length) }
+                    .takeWhile { it >= 0 }.map { it until it + needle.length }
+            }
+            for (span in spans) {
+                val first = form.partAt(span.first)
+                val last = form.partAt(span.last)
+                if (entries[first].ayah != entries[last].ayah) found += entries.subList(first, last + 1)
             }
         }
         return found.distinctBy { group -> group.map { it.surah to it.ayah } }
     }
 }
 
-private class Ranked(val rank: Int, val distance: Int, val order: Int, val result: QuranSearchResult)
+private enum class MatchRank(val kind: QuranSearchKind) {
+    Reference(QuranSearchKind.Reference),
+    WholePhrase(QuranSearchKind.Phrase),
+    PartialPhrase(QuranSearchKind.Phrase),
+    AcrossVerses(QuranSearchKind.Phrase),
+    WholeWords(QuranSearchKind.Words),
+    NearPhrase(QuranSearchKind.Similar),
+    PartialWords(QuranSearchKind.Words),
+    NearWords(QuranSearchKind.Similar),
+}
+
+private class Ranked(val rank: MatchRank, val distance: Int, val order: Int, val result: QuranSearchResult)
 
 internal class QuranSearchIndex(entries: List<QuranSearchEntry>, private val surahs: List<QuranSurah>) {
     private val verses = entries.groupBy { it.surah to it.ayah }
@@ -189,7 +307,7 @@ internal class QuranSearchIndex(entries: List<QuranSearchEntry>, private val sur
             val verse = versesByReference.getValue(reference)
             listed += reference
             ranked += Ranked(
-                -1, 0, order(reference),
+                MatchRank.Reference, 0, order(reference),
                 QuranSearchResult(
                     surahs[reference.surah - 1].name, verse.fragments.joinToString(" ") { it.text },
                     verse.fragments.first().page, listOf(reference), QuranSearchKind.Reference,
@@ -200,31 +318,44 @@ internal class QuranSearchIndex(entries: List<QuranSearchEntry>, private val sur
         for (verse in verses) {
             if (verse.reference in listed) continue
             val match = bestMatch(verse, needle, words) ?: continue
-            listed += verse.reference
-            val kind = if (match.rank >= 3) QuranSearchKind.Words else QuranSearchKind.Phrase
-            ranked += Ranked(match.rank, 0, order(verse.reference), resultOf(verse, match.parts, kind))
+            if (match.rank < MatchRank.NearPhrase) listed += verse.reference
+            ranked += Ranked(match.rank, 0, order(verse.reference), resultOf(verse, match.parts, match.rank.kind))
         }
-        for (page in pages) for (group in page.acrossVerses(needle)) {
-            val references = group.map { QuranVerseReference(it.surah, it.ayah) }.distinct()
-            ranked += Ranked(
-                2, 0, order(references.first()),
-                QuranSearchResult(
-                    surahs[group.first().surah - 1].name, group.joinToString(" ") { it.text }, page.number, references,
-                    mushafWords = group.flatMap { it.mushafWords },
-                ),
-            )
-        }
+        ranked += acrossVerses(needle, similar = false)
         // A near miss is only worth listing when the exact words found little.
-        if (ranked.count { it.rank >= 0 } < SIMILAR_BELOW) ranked += similar(words, listed)
+        if (ranked.count { it.rank.kind == QuranSearchKind.Phrase } < SIMILAR_BELOW && needle.count { it != ' ' } >= 4) {
+            ranked += similar(needle, words, listed)
+            ranked += acrossVerses(needle, similar = true)
+        }
         if (ranked.isEmpty()) {
             // «الكرسي» is written «كرسيه» in the verse: try again without the article.
             val bare = words.joinToString(" ") { withoutArticle(it) }
             if (bare != needle) return search(bare).map { it.copy(kind = QuranSearchKind.Similar) }
         }
-        return ranked.sortedWith(compareBy({ it.rank }, { it.distance }, { it.order })).map { it.result }
+        var similarCount = 0
+        val seen = HashSet<List<QuranVerseReference>>()
+        return ranked.sortedWith(ranking).mapNotNull { candidate ->
+            val result = candidate.result
+            if (result.kind == QuranSearchKind.Similar && similarCount >= SIMILAR_LIMIT) return@mapNotNull null
+            if (!seen.add(result.verses)) return@mapNotNull null
+            if (result.kind == QuranSearchKind.Similar) similarCount++
+            result
+        }
     }
 
-    private class Match(val rank: Int, val parts: List<Int>)
+    private fun acrossVerses(needle: String, similar: Boolean): List<Ranked> = pages.flatMap { page ->
+        page.acrossVerses(needle, similar).map { group ->
+            val references = group.map { QuranVerseReference(it.surah, it.ayah) }.distinct()
+            val rank = if (similar) MatchRank.NearPhrase else MatchRank.AcrossVerses
+            val result = QuranSearchResult(
+                surahs[group.first().surah - 1].name, group.joinToString(" ") { it.text }, page.number, references,
+                rank.kind, group.flatMap { it.mushafWords }, group.alignedSpelling(),
+            )
+            Ranked(rank, if (similar) 1 else 0, order(references.first()), result)
+        }
+    }
+
+    private class Match(val rank: MatchRank, val parts: List<Int>)
 
     private fun bestMatch(verse: SearchVerse, needle: String, words: List<String>): Match? {
         var best: Match? = null
@@ -238,51 +369,54 @@ internal class QuranSearchIndex(entries: List<QuranSearchEntry>, private val sur
     private fun matchIn(form: SearchForm, needle: String, words: List<String>): Match? {
         form.find(needle)?.let { (at, whole) ->
             val parts = (form.partAt(at)..form.partAt(at + needle.length - 1)).toList()
-            return Match(if (whole) 0 else 1, parts)
+            return Match(if (whole) MatchRank.WholePhrase else MatchRank.PartialPhrase, parts)
         }
-        if (words.size < 2) return null
-        var allWhole = true
-        val offsets = words.map { word ->
-            val at = form.text.indexOf(word)
-            if (at < 0) return null
-            if (form.words.none { it.first == word }) allWhole = false
-            at
+        if (words.size < 2 || words.any { it !in form.text }) return null
+        val match = form.matchWords(words.size) { term, word ->
+            when {
+                word == words[term] -> 0
+                words[term] in word -> 1
+                else -> Int.MAX_VALUE
+            }
         }
-        return Match(if (allWhole) 3 else 4, offsets.map { form.partAt(it) }.distinct().sorted())
+        return match?.let { Match(if (it.cost == 0) MatchRank.WholeWords else MatchRank.PartialWords, it.parts) }
     }
 
     private fun resultOf(verse: SearchVerse, parts: List<Int>, kind: QuranSearchKind): QuranSearchResult {
         val shown = parts.map { verse.fragments[it] }
         return QuranSearchResult(
             surahs[verse.surah - 1].name, shown.joinToString(" ") { it.text }, shown.first().page, listOf(verse.reference), kind,
-            shown.flatMap { it.mushafWords },
+            shown.flatMap { it.mushafWords }, shown.alignedSpelling(),
         )
     }
 
-    private fun similar(words: List<String>, skip: Set<QuranVerseReference>): List<Ranked> {
+    private fun similar(needle: String, words: List<String>, skip: Set<QuranVerseReference>): List<Ranked> {
         val allowed = words.map { allowedEdits(it.length) }
-        if (allowed.all { it == 0 }) return emptyList()
+        val tryWords = if (words.size == 1) allowed.single() > 1 else allowed.any { it > 0 }
+        // Repeated words across the mushaf pay for edit distance once per query.
+        val distances = words.map { HashMap<String, Int>() }
         val found = ArrayList<Ranked>()
         for (verse in verses) {
             if (verse.reference in skip) continue
             var best: Ranked? = null
             for (form in verse.forms) {
-                var total = 0
-                val parts = sortedSetOf<Int>()
-                val everyWord = words.indices.all { index ->
-                    val near = form.words.mapNotNull { (word, part) -> withinEdits(word, words[index], allowed[index])?.let { it to part } }
-                        .minByOrNull { it.first } ?: return@all false
-                    total += near.first
-                    parts += near.second
-                    true
+                val phrase = form.text.nearPhrases(needle).firstOrNull()
+                if (phrase != null) {
+                    val parts = form.partAt(phrase.first)..form.partAt(phrase.last)
+                    best = Ranked(MatchRank.NearPhrase, 1, order(verse.reference), resultOf(verse, parts.toList(), QuranSearchKind.Similar))
+                    break
                 }
-                if (everyWord && (best == null || total < best.distance)) {
-                    best = Ranked(5, total, order(verse.reference), resultOf(verse, parts.toList(), QuranSearchKind.Similar))
+                if (!tryWords) continue
+                val match = form.matchWords(words.size) { index, word ->
+                    distances[index].getOrPut(word) { withinEdits(word, words[index], allowed[index]) ?: Int.MAX_VALUE }
+                } ?: continue
+                if (best == null || match.cost < best.distance) {
+                    best = Ranked(MatchRank.NearWords, match.cost, order(verse.reference), resultOf(verse, match.parts, QuranSearchKind.Similar))
                 }
             }
             best?.let { found += it }
         }
-        return found.sortedWith(compareBy({ it.distance }, { it.order })).take(SIMILAR_LIMIT)
+        return found
     }
 
     /** «2:25», «2 25», «البقرة 25» or «سورة البقرة 25»; digits typed in either script are read. */
@@ -305,6 +439,7 @@ internal class QuranSearchIndex(entries: List<QuranSearchEntry>, private val sur
         if (reference.ayah == 0) BASMALAH_ORDER + reference.surah else reference.surah * 1000 + reference.ayah
 
     private companion object {
+        val ranking = compareBy<Ranked>({ it.rank }, { it.distance }, { it.order })
         const val BASMALAH_ORDER = 1_000_000
         const val SIMILAR_BELOW = 3
         const val SIMILAR_LIMIT = 40

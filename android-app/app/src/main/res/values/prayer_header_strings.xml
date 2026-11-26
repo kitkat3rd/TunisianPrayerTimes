@@ -5,6 +5,10 @@
     <string name="location_change_action">تغيير الموقع</string>
     <!-- Prayer tab: settings sheet opened from the header -->
     <string name="prayer_tab_settings_title">الإعدادات</string>
+    <string name="prayer_settings_sound_group">الصوت والإسكات</string>
+    <string name="prayer_settings_location_group">الموقع ومواقيت الصلاة</string>
+    <string name="prayer_settings_calculation_title">حساب مواقيت الصلاة</string>
+    <string name="prayer_settings_back">العودة إلى الإعدادات</string>
     <!-- Prayer tab hero: immediate phone control and the upcoming prayer's auto-silence window -->
     <string name="hero_phone_silence_title">إسكات الهاتف</string>
     <string name="hero_phone_unsilence_title">إعادة الصوت</string>

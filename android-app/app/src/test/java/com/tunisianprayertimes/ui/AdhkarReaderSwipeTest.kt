@@ -61,7 +61,7 @@ class AdhkarReaderSwipeTest {
                     moves += direction
                     if (landMoves) session = session.copy(index = (session.index + direction).mod(ids.size))
                 },
-                onSkip = {}, onRemove = {}, onFavourite = {}, onCollections = {}, onEditCustom = {},
+                onAdvance = {}, onSkip = {}, onRemove = {}, onFavourite = {}, onCollections = {}, onEditCustom = {},
                 onDeleteCustom = {}, onAddToCollection = {}, onReorderCollection = {}, onTextSize = {},
                 onHaptics = {}, onVariant = {}, reminder = null, reminderActionLabel = "إنشاء تذكير لهذا الذكر",
                 onReminder = {}, onConfigureReminder = {}, onDeleteReminder = {}, skipReminderLabel = null,

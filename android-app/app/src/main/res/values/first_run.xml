@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="first_run_place_title">مواقيت الصلاة في منطقتك</string>
+    <string name="first_run_place_description">اختر مدينتك أو حيّك لمعرفة وقت الصلاة القادمة.</string>
+    <string name="first_run_use_location">استخدام موقعي مرة واحدة</string>
+    <string name="first_run_location_help">نستخدم موقعك هذه المرّة لاقتراح منطقة تؤكّدها بنفسك.</string>
+    <string name="first_run_browse">التصفّح الآن</string>
+    <string name="first_run_match_title">هل هذه منطقتك؟</string>
+    <string name="first_run_show_times">عرض مواقيت %1$s</string>
+    <string name="first_run_choose_another">اختيار مدينة أخرى</string>
+    <string name="first_run_denied_title">اختر مدينتك يدويًا</string>
+    <string name="first_run_unavailable_title">تعذّر تحديد الموقع</string>
+    <string name="first_run_manual_help">يمكنك عرض المواقيت باختيار مدينتك من القائمة.</string>
+    <string name="first_run_retry_location">محاولة تحديد الموقع مجددًا</string>
+    <string name="first_run_tunis">تونس</string>
+    <string name="first_run_preparing_city">جارٍ إعداد مواقيت %1$s…</string>
+    <string name="first_run_preparing">جارٍ إعداد المواقيت…</string>
+    <string name="first_run_source_error">تعذّر إعداد المواقيت. أعد المحاولة أو اختر مدينة أخرى.</string>
+    <string name="first_run_catalog_error">تعذّر تحميل بعض أسماء الأماكن.</string>
+    <string name="first_run_retry">إعادة المحاولة</string>
+</resources>

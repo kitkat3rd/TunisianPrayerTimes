@@ -40,6 +40,12 @@ class PhoneSilenceHeroStateTest {
     }
 
     @Test
+    fun timesOnlyWithoutDndHasNoPermissionWarningAndKeepsRealPhoneStatus() {
+        assertNull(phoneStatusNoticeText(context, false, false, null, showMissingDnd = false))
+        assertEquals("الهاتف صامت", phoneStatusNoticeText(context, true, false, null, showMissingDnd = false))
+    }
+
+    @Test
     fun noticeText_missingDndPermission_isShownEvenWhenPhoneIsNotSilent() {
         val text = phoneStatusNoticeText(
             context = context,
@@ -270,7 +276,7 @@ class PhoneSilenceHeroStateTest {
             phoneSilenceReasonText(context, PhoneSilenceReason(PhoneSilenceReasonSource.AUTO_PRAYER_UNKNOWN)),
         )
         assertEquals(
-            "الإسكات اليدوي مفعل",
+            context.getString(com.tunisianprayertimes.R.string.phone_status_silent_manual),
             phoneSilenceReasonText(context, PhoneSilenceReason(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED)),
         )
         assertEquals(
@@ -298,7 +304,7 @@ class PhoneSilenceHeroStateTest {
             phoneSilenceReasonText(context, PhoneSilenceReason(PhoneSilenceReasonSource.WAKE_ALARM)),
         )
         assertEquals(
-            "الهاتف صامت من إعدادات الهاتف",
+            context.getString(com.tunisianprayertimes.R.string.phone_status_silent_external),
             phoneSilenceReasonText(context, PhoneSilenceReason(PhoneSilenceReasonSource.EXTERNAL)),
         )
     }

@@ -7,6 +7,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.service.notification.Condition
+import com.tunisianprayertimes.AndroidAutoConnection
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.SilenceScheduler
@@ -116,8 +117,17 @@ object SilenceCoordinator {
             SilenceModeController.isAutoSilencePausedForAwakeCheck) return@synchronized true
         val state = prefs(context)
         val old = state.getBoolean(key(owner, "desired"), false)
+        // Keep the presence observation alive so it can revalidate after projection ends.
+        if (desired && !old && (owner == SilenceOwner.PRAYER || owner == SilenceOwner.MOSQUE) &&
+            AndroidAutoConnection.isProjected(context)) return@synchronized true
         if (desired && (state.getBoolean(key(owner, "blocked"), false) || !ruleReady(context, owner))) return@synchronized false
-        if (desired && old) return@synchronized true
+        if (desired && old) {
+            if (owner == SilenceOwner.MOSQUE && !MosqueSilenceMonitor.canActivateLocked(context)) {
+                set(context, owner, false)
+                return@synchronized false
+            }
+            return@synchronized true
+        }
         // A failed release remains pending, independently of the logical request.
         val pending = state.getBoolean(key(owner, "release_pending"), false)
         if (!desired && !old && !pending) return@synchronized true
@@ -167,8 +177,8 @@ object SilenceCoordinator {
         val mosque = set(context, SilenceOwner.MOSQUE, false)
         active && prayer && mosque
     }
-    internal fun pauseAutoForAwakeCheck(context: Context): Boolean = synchronized(serial) {
-        // Unlike a dismissal, this leaves the bounded visit alive for revalidation when playback ends.
+    internal fun releaseAutoRules(context: Context): Boolean = synchronized(serial) {
+        // Leave the bounded visit alive for revalidation when the interruption ends.
         val active = autoActive(context)
         val prayer = set(context, SilenceOwner.PRAYER, false)
         val mosque = set(context, SilenceOwner.MOSQUE, false)
@@ -191,7 +201,7 @@ object SilenceCoordinator {
         if (mode == AutomaticSilenceMode.TIME_AND_MOSQUE && !MosqueSilenceSettings.usesOwnedRules(context)) return@synchronized false
         if (MosqueSilenceSettings.mode(context) == mode) return@synchronized true
         releaseAuto(context)
-        MosqueSilenceSettings.saveMode(context, mode)
+        MosqueSilenceSettings.saveMode(context, mode, backgroundUseExplained = mode == AutomaticSilenceMode.TIME_AND_MOSQUE)
     }
 
     /** System-protected broadcast; IDs must be one of the exact pre-journaled app-owned rules. */
@@ -203,7 +213,13 @@ object SilenceCoordinator {
         // deactivated=5. Never turn a callback into an artificial FALSE/TRUE reset.
         if (status == 2 || status == 3 || status == 5 && requested) {
             state.edit().putBoolean(key(owner, "blocked"), true).commit()
-            if (owner == SilenceOwner.MOSQUE) MosqueSilenceMonitor.stopLocked(context, needsRearm = true)
+            if (owner == SilenceOwner.MOSQUE) {
+                if (requested && MosqueSilenceSettings.combined(context)) {
+                    val ids = AdaptiveMosqueMonitor.periods(context).targets.map(MosquePrayerActions::key)
+                    MosqueSilenceMonitor.recordDismissals(context, ids)
+                }
+                MosqueSilenceMonitor.stopLocked(context, needsRearm = true)
+            }
         }
     }
 

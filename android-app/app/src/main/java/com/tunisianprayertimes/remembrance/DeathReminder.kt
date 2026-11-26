@@ -38,7 +38,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * «ذكر الموت»: «أكثروا ذكر هادم اللذات» (Tirmidhi 2307), with hope, worship, repentance and people's rights. The
+ * «ذكر الموت»: «أكثروا ذكر هاذم اللذات» (Tirmidhi 2307), with hope, worship, repentance and people's rights. The
  * card in «عباداتي» gives one text a day; this reminder, off by default, brings it now and then at a moment of the
  * day nobody expects, as death comes, but only in daylight and outside prayer times, without a sound. The Prophet ﷺ
  * spaced his exhortations so as not to weary (Bukhari 68): twice a week unless the reader asks for more or less.
@@ -204,28 +204,25 @@ object DeathReminder {
         context.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
     }
 
-    /**
-     * The day's text in a line: the prophetic words as the title, the day's good deed as the text, no Qur'an text. A tap
-     * shows the day's whole text as a card over the screen, not the app.
-     */
+    /** A tap opens the reading that supplied this headline and deed, even if the rotation later changes. */
     private fun post(context: Context, moment: Moment, now: Instant) {
         val manager = channel(context) ?: return
         // Text ends on a word: a phone in another language lays it out left to right.
-        val deed = remembranceFor(moment.day).deed.trimEnd('.')
+        val item = remembranceFor(moment.day)
+        val deed = item.deed.trimEnd('.')
         val open = PendingIntent.getActivity(
             context, NOTIFICATION_ID,
             Intent(context, DeathRemembranceActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                .putExtra(DeathRemembranceActivity.EXTRA_EPOCH_DAY, moment.day.toEpochDay()),
+                .putExtra(DeathRemembranceActivity.EXTRA_READING_ID, item.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val endOfDay = moment.day.plusDays(1).atStartOfDay(zone(context)).toInstant()
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_hourglass)
-            .setContentTitle(DeathRemembranceTexts.anchorWords)
+            .setContentTitle(item.headline)
             .setContentText(deed)
             .setStyle(NotificationCompat.BigTextStyle().bigText(deed))
-            .setSubText("ذكر الموت")
             .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)

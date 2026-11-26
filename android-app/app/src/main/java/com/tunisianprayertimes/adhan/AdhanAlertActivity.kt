@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -28,11 +30,18 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +65,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
@@ -74,11 +85,11 @@ import kotlinx.coroutines.withContext
 
 /**
  * The full-screen countdown of the warning (owner's idea, 2026-11-15): the prayer, the seconds left and one large
- * «إلغاء هذا الأذان», over the lock screen. Once the adhan sounds, the same page offers «إيقاف»; if it stays quiet,
- * the page gives the reason and «إغلاق». Before the adhan, and on the quiet page, a volume key does what the button
- * does. While the adhan sounds (owner, 2026-11-16), volume down mutes it, the first volume up brings it back, and
- * then volume up raises it as usual. Only that last case moves the volume. Android opens the page only on a locked or
- * dark phone; a phone in use shows the notification's banner.
+ * «إلغاء هذا الأذان», over the lock screen. At prayer time the waveform follows the recording, with a silence
+ * reason and «إغلاق» when the phone is silenced. A volume key cancels the countdown or dismisses a brief reminder.
+ * While audio is available, volume down mutes it, the first volume up brings it back, and then volume up raises
+ * the ring volume as usual. The on-screen slider adjusts the current recording's gain.
+ * Android opens the page only on a locked or dark phone; a phone in use shows the notification's banner.
  */
 class AdhanAlertActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -169,7 +180,7 @@ class AdhanAlertActivity : ComponentActivity() {
                 keyCode == KeyEvent.KEYCODE_VOLUME_MUTE -> AdhanPlaybackService.muteFromPage(this, muted = !shown.muted)
                 !shown.muted -> AdhanPlaybackService.muteFromPage(this, muted = true)
             }
-        } else if (event.repeatCount == 0) {
+        } else if (shown.voice == null && event.repeatCount == 0) {
             AdhanPlaybackService.cancelFromPage(this)
         }
         swallowedKeys += keyCode
@@ -200,7 +211,7 @@ class AdhanAlertActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AdhanAlertScreen(alert: AdhanAlert, onCancel: () -> Unit) {
+internal fun AdhanAlertScreen(alert: AdhanAlert, onCancel: () -> Unit) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(alert.countingDown) {
         // Every frame during the countdown, so the ring empties smoothly over the seconds.
@@ -258,9 +269,10 @@ private fun AdhanAlertContent(alert: AdhanAlert, seconds: Long, share: Float, on
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        val voice = alert.voice
         Text(
             text = context.getString(
-                if (!alert.countingDown && !alert.sounding) R.string.adhan_quiet_title else R.string.adhan_notification_title,
+                if (alert.countingDown || voice != null) R.string.adhan_notification_title else R.string.adhan_quiet_title,
                 AdhanSettings.prayerName(context, alert.occurrence.prayer),
             ),
             fontSize = 26.sp,
@@ -269,9 +281,11 @@ private fun AdhanAlertContent(alert: AdhanAlert, seconds: Long, share: Float, on
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(28.dp))
-        Box(Modifier.size(RING_SIZE), contentAlignment = Alignment.Center) {
+        // On short screens let the waveform give the controls and silence reason their space.
+        val waveSpace = if (voice != null) Modifier.weight(1f, fill = false) else Modifier
+        Box(waveSpace.size(RING_SIZE), contentAlignment = Alignment.Center) {
             when {
-                alert.sounding -> VoiceWave(alert)
+                voice != null -> VoiceWave(voice, alert.startedAtUptimeMillis, alert.muted)
                 alert.countingDown -> Countdown(seconds, share)
                 alert.quietReasonResId != null -> Text(
                     text = stringResource(alert.quietReasonResId),
@@ -282,29 +296,66 @@ private fun AdhanAlertContent(alert: AdhanAlert, seconds: Long, share: Float, on
                 )
             }
         }
-        Spacer(Modifier.height(36.dp))
-        // A full pill echoing the arcade's arches, in the drawing's ink, with a hairline gold edge.
-        Button(
-            onClick = onCancel,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 64.dp),
-            shape = RoundedCornerShape(percent = 50),
-            border = BorderStroke(1.dp, Gold),
-            colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Paper),
-        ) {
+        if (voice != null && alert.quietReasonResId != null) {
             Text(
-                text = stringResource(
-                    when {
-                        alert.countingDown -> R.string.adhan_soon_cancel
-                        alert.sounding -> R.string.adhan_notification_stop
-                        else -> R.string.adhan_close
-                    },
-                ),
-                fontSize = 19.sp,
-                fontWeight = FontWeight.SemiBold,
+                text = stringResource(alert.quietReasonResId),
+                color = Ink,
+                fontSize = 16.sp,
+                lineHeight = 22.sp,
+                textAlign = TextAlign.Center,
             )
         }
+        Spacer(Modifier.height(if (voice != null) 12.dp else 36.dp))
+        if (alert.onVolumeChange != null) {
+            AdhanPlaybackControls(alert.volume, alert.onVolumeChange, onStop = onCancel)
+        } else {
+            Button(
+                onClick = onCancel,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+                shape = RoundedCornerShape(percent = 50),
+                border = BorderStroke(1.dp, Gold),
+                colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Paper),
+            ) {
+                Text(
+                    text = stringResource(if (alert.countingDown) R.string.adhan_soon_cancel else R.string.adhan_close),
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdhanPlaybackControls(volume: Float, onVolumeChange: (Float) -> Unit, onStop: () -> Unit) {
+    val volumeLabel = stringResource(R.string.adhan_playback_volume)
+    val colors = SliderDefaults.colors(activeTrackColor = Gold, inactiveTrackColor = Gold.copy(alpha = 0.32f))
+    // Keep the scale and its gestures aligned with the fixed mute (left) and loud (right) endpoints.
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(painterResource(R.drawable.ic_volume_off), contentDescription = null, modifier = Modifier.size(22.dp), tint = Ink)
+            Slider(
+                value = volume,
+                onValueChange = onVolumeChange,
+                modifier = Modifier.weight(1f).semantics { contentDescription = volumeLabel },
+                thumb = { Box(Modifier.size(16.dp).background(Ink, CircleShape)) },
+                track = { state ->
+                    SliderDefaults.Track(
+                        sliderState = state, modifier = Modifier.height(4.dp), colors = colors,
+                        thumbTrackGapSize = 0.dp, drawStopIndicator = null,
+                    )
+                },
+            )
+            Icon(painterResource(R.drawable.ic_volume_on), contentDescription = null, modifier = Modifier.size(22.dp), tint = Ink)
+        }
+    }
+    TextButton(onClick = onStop, colors = ButtonDefaults.textButtonColors(contentColor = Ink)) {
+        Text(stringResource(R.string.adhan_notification_stop), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -344,21 +395,20 @@ private fun Countdown(seconds: Long, share: Float) {
  * earlier, so the muezzin's phrases spread from the centre and the bars fall still in his pauses. No microphone.
  */
 @Composable
-private fun VoiceWave(alert: AdhanAlert) {
+private fun VoiceWave(voice: AdhanVoice, startedAtUptimeMillis: Long, muted: Boolean) {
     val context = LocalContext.current
-    val levels by produceState<ByteArray?>(initialValue = null, alert.voice) {
-        val voice = alert.voice ?: return@produceState
+    val levels by produceState<ByteArray?>(initialValue = null, voice) {
         value = withContext(Dispatchers.IO) {
             runCatching { context.resources.openRawResource(voice.levelResId).use { it.readBytes() } }.getOrNull()
         }
     }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) withFrameMillis { now = System.currentTimeMillis() } }
+    var now by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
+    LaunchedEffect(Unit) { while (true) withFrameMillis { now = SystemClock.uptimeMillis() } }
     // Muted by volume down: the voice runs on, faded, so the page shows the adhan is still going.
-    val shade = if (alert.muted) WAVE_MUTED_ALPHA else 1f
+    val shade = if (muted) WAVE_MUTED_ALPHA else 1f
     Canvas(Modifier.fillMaxSize()) {
         val data = levels
-        val position = (now - alert.startedAtMillis).coerceAtLeast(0L) / 1000f * LEVELS_PER_SECOND
+        val position = (now - startedAtUptimeMillis).coerceAtLeast(0L).toFloat() / ADHAN_LEVEL_INTERVAL_MILLIS
         val barWidth = WAVE_BAR_WIDTH.toPx()
         val step = barWidth + WAVE_BAR_GAP.toPx()
         val tallest = size.height * WAVE_HEIGHT_SHARE
@@ -389,8 +439,6 @@ private fun levelAt(data: ByteArray, index: Float): Float {
     return a + (b - a) * between
 }
 
-/** The loudness tracks' rate (scripts/adhan/adhan-level.mjs measures them from the recordings). */
-private const val LEVELS_PER_SECOND = 20f
 private const val WAVE_SIDE_BARS = 10
 private const val WAVE_LEVELS_PER_BAR = 1.6f
 private const val WAVE_HEIGHT_SHARE = 0.6f

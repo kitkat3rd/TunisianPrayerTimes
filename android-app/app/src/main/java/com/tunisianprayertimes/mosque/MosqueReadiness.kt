@@ -20,7 +20,7 @@ object MosqueReadiness {
         if (Build.VERSION.SDK_INT >= 31 && !context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()) add(R.string.mosque_needs_exact)
         if (MosqueSilenceSettings.usesOwnedRules(context) && SilenceOwner.entries.any { !SilenceCoordinator.ruleReady(context, it) }) add(R.string.mosque_needs_rules)
     }
-    fun issues(context: Context): List<Int> = buildList {
+    fun issues(context: Context, store: SilenceAreaRead = PrivateSilenceAreaStore.read(context)): List<Int> = buildList {
         if (Build.VERSION.SDK_INT < 29) add(R.string.mosque_needs_android)
         if (!MosqueSilenceSettings.usesOwnedRules(context) || !SilenceCoordinator.ruleReady(context, SilenceOwner.MOSQUE)) add(R.string.mosque_needs_rules)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) add(R.string.mosque_needs_precise)
@@ -35,10 +35,11 @@ object MosqueReadiness {
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) add(R.string.mosque_needs_notifications)
         if (Build.VERSION.SDK_INT >= 28 && context.getSystemService(ActivityManager::class.java).isBackgroundRestricted) add(R.string.mosque_background_restricted)
         if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) != ConnectionResult.SUCCESS) add(R.string.mosque_needs_play_services)
-        val store = PrivateSilenceAreaStore.read(context)
         if (!store.available) add(R.string.mosque_store_unavailable)
         else if (store.areas.none { it.geometry.enabled }) add(R.string.mosque_no_areas)
         else if (store.areas.filter { it.geometry.enabled }.sumOf { it.geometry.polygons.size } > 100) add(R.string.mosque_too_many_areas)
     }
+    fun locationIssue(issue: Int) = issue == R.string.mosque_needs_precise ||
+        issue == R.string.mosque_needs_background || issue == R.string.mosque_needs_location
     fun ready(context: Context) = issues(context).isEmpty()
 }

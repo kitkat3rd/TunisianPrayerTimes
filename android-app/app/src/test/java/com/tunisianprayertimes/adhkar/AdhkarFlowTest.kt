@@ -10,7 +10,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.SilenceStatus
+import com.tunisianprayertimes.ui.defaultDhikrReminder
 import com.tunisianprayertimes.ui.salawatDhikrPreset
+import com.tunisianprayertimes.ui.tahlilDhikrPreset
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -96,6 +98,24 @@ class AdhkarFlowTest {
         val first = repo.openSession(listOf("salah_istighfar"))
         assertEquals(2, repo.state.value.sessions.getValue(first).counts["salah_istighfar"])
         assertEquals(first, repo.openSession(listOf("salah_istighfar")))
+    }
+    @Test fun standaloneTahlilDefaultsScheduleTheFirstNudgeFortyFiveMinutesAfterAdhan() {
+        val id = DhikrCatalog.DAILY_TAHLIL_ID
+        val defaults = listOf(
+            tahlilDhikrPreset() to DhikrTimeKind.FAJR,
+            defaultDhikrReminder(id, null) to DhikrTimeKind.FAJR,
+            defaultDhikrReminder(id, DhikrCategory.MORNING, wholeCollection = false) to DhikrTimeKind.FAJR,
+            defaultDhikrReminder(id, DhikrCategory.EVENING, wholeCollection = false) to DhikrTimeKind.ASR,
+        )
+        for ((reminder, prayer) in defaults) {
+            val adhan = requireNotNull(DhikrReminderScheduler.resolveTime(context, DhikrTime(prayer), friday))
+            val period = window(reminder)
+            assertEquals(100, reminder.targetCount)
+            assertEquals(adhan + 45 * 60_000L, period.startMillis)
+            assertEquals(period.startMillis, dhikrNudgeTimes(reminder, period).first())
+        }
+        assertEquals(DhikrTime(DhikrTimeKind.FAJR), defaultDhikrReminder(id, DhikrCategory.MORNING).start)
+        assertEquals(DhikrTime(DhikrTimeKind.ASR), defaultDhikrReminder(id, DhikrCategory.EVENING).start)
     }
     @Test fun morningCollectionRunsFromFajrToFajrAndSurvivesRestart() {
         val items = listOf("sayyid_istighfar", "ayat_kursi")
@@ -366,6 +386,42 @@ class AdhkarFlowTest {
         repo.move(id, 0)
         assertEquals(0, repo.state.value.sessions.getValue(id).index)
     }
+    @Test fun advancingFromTheLastDhikrReturnsToUnfinishedItemsInListOrder() {
+        val items = listOf("sayyid_istighfar", "salah_istighfar", "salah_salam", "ayat_kursi", "salah_la_mani", "ya_hayyu")
+        val id = repo.openSession(items)
+        fun session() = repo.state.value.sessions.getValue(id)
+        fun finishCurrent() {
+            val session = session()
+            repeat(repo.state.value.target(session) - (session.counts[session.itemId] ?: 0)) { repo.count(id, 1) }
+        }
+
+        finishCurrent()
+        repo.move(id, 1)
+        repo.count(id, 1)
+        repo.move(id, 1)
+        repo.skipItem(id)
+        finishCurrent()
+        repo.move(id, 2)
+        finishCurrent()
+        assertFalse(repo.state.value.isComplete(session()))
+
+        repo.advanceAfterReading(id, items.last())
+        assertEquals(1, session().index)
+        assertEquals(1, session().counts[items[1]])
+        repo.advanceAfterReading(id, items.last())
+        assertEquals(1, session().index)
+
+        finishCurrent()
+        repo.advanceAfterReading(id, items[1])
+        assertEquals(4, session().index)
+        assertEquals(setOf(items[2]), session().skippedIds)
+        finishCurrent()
+        assertTrue(repo.state.value.isComplete(session()))
+
+        repo.advanceAfterReading(id, items[4])
+        assertEquals(items.lastIndex, session().index)
+    }
+
     @Test fun customIntervalDrivesNudgeFrequency() {
         val rule = rule(100).copy(cadence = DhikrCadence.CUSTOM, intervalMinutes = 15,
             start = DhikrTime(minuteOfDay = 480), end = DhikrTime(minuteOfDay = 600))

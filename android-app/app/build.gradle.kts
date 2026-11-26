@@ -53,6 +53,7 @@ android {
         applicationId = "com.tunisianprayertimes"
         minSdk = 26
         targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 155
         versionName = "2.144"
         
@@ -140,6 +141,8 @@ dependencies {
     implementation("com.google.android.play:asset-delivery-ktx:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("net.sf.geographiclib:GeographicLib-Java:2.1")
+    implementation("org.maplibre.gl:android-sdk:13.7.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Compose
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))

@@ -106,7 +106,7 @@ data class MosqueSchedule(
         val DEFAULT = MosqueSchedule(
             mapOf(
                 Prayer.FAJR to PrayerSettings(IqamahRule.AfterAdhan(15), 10),
-                Prayer.DHUHR to PrayerSettings(IqamahRule.AfterAdhan(10), 10),
+                Prayer.DHUHR to PrayerSettings(IqamahRule.FixedTime(LocalTime.of(13, 0)), 10),
                 Prayer.ASR to PrayerSettings(IqamahRule.AfterAdhan(10), 10),
                 Prayer.MAGHRIB to PrayerSettings(IqamahRule.AfterAdhan(5), 8),
                 Prayer.ISHA to PrayerSettings(IqamahRule.AfterAdhan(10), 10),

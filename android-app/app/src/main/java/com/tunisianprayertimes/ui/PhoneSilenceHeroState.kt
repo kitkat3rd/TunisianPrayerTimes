@@ -30,19 +30,24 @@ internal fun phoneStatusNoticeText(
     isPhoneSilenced: Boolean,
     hasDnd: Boolean,
     silenceReason: PhoneSilenceReason?,
+    showMissingDnd: Boolean = true,
 ): String? {
-    if (hasDnd && !isPhoneSilenced) return null
+    if (!hasDnd && showMissingDnd) return context.getString(R.string.phone_status_permission_short)
+    if (!isPhoneSilenced) return null
 
     return when {
-        !hasDnd -> context.getString(R.string.phone_status_permission_short)
         silenceReason != null -> phoneSilenceReasonText(context, silenceReason)
         else -> context.getString(R.string.phone_status_silent_short)
     }
 }
 
 internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason): String {
+    if (reason.source in setOf(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED, PhoneSilenceReasonSource.MANUAL_UNTIL_PRAYER, PhoneSilenceReasonSource.MANUAL_UNTIL_TIME) &&
+        com.tunisianprayertimes.mosque.MosquePrayerActions.canUndo(context)) return context.getString(R.string.phone_status_silent_manual_until_time,
+        formatTimeOfDay(com.tunisianprayertimes.PrefsManager.getManualSilenceEndsAtMillis(context)))
     return when (reason.source) {
-        PhoneSilenceReasonSource.MOSQUE_WINDOW -> context.getString(R.string.mosque_phone_reason)
+        PhoneSilenceReasonSource.MOSQUE_WINDOW -> context.getString(if (com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor.fallbackRequested(context))
+            R.string.mosque_adaptive_fallback else R.string.mosque_phone_reason)
         PhoneSilenceReasonSource.AUTO_PRAYER -> context.getString(
             R.string.phone_status_silent_auto_prayer,
             prayerName(context, requireNotNull(reason.prayer)),

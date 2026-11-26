@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,7 +19,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -103,7 +103,7 @@ internal fun MethodChooserSheet(question: MethodQuestion, onAnswered: () -> Unit
     var selected by rememberSaveable { mutableStateOf(defaults.preselected) }
     var asr by rememberSaveable { mutableStateOf<Int?>(null) }
     val canSave = (!askMethods || selected != null) && (!askAsr || asr != null)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding().testTag("method_chooser_sheet")) {
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -154,8 +154,24 @@ internal fun MethodChooserSheet(question: MethodQuestion, onAnswered: () -> Unit
  * unknown, which uses `mwl`, with «تأكيد» to keep it.
  */
 @Composable
-internal fun MethodConfirmBanner(question: MethodQuestion, onChoose: () -> Unit, onConfirm: () -> Unit) {
+internal fun MethodConfirmBanner(question: MethodQuestion, onChoose: () -> Unit, onConfirm: () -> Unit, compact: Boolean = false) {
     val method = MethodPresentation.name(question.defaults.preselected ?: question.defaults.fallback)
+    if (compact) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("method_confirm_banner"),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TextButton(onClick = onChoose, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text(stringResource(R.string.today_suggested_method, method), fontSize = 14.sp, color = GreenPrimaryDark)
+            }
+            if (!question.hasChooser) {
+                TextButton(onClick = onConfirm, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.method_confirm_title), color = GreenPrimaryDark)
+                }
+            }
+        }
+        return
+    }
     // Inside the page's own 16 dp margins, under the place header.
     Column(
         modifier = Modifier

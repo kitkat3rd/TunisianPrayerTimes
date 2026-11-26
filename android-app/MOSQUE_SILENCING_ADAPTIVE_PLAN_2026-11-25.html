@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>When the phone goes quiet at a mosque · TunisianPrayerTimes</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f6f7f1;
+      --surface: #fffefa;
+      --ink: #172b25;
+      --muted: #4c6058;
+      --line: #cbd5cd;
+      --green: #19594b;
+      --green-fill: #e3eee6;
+      --orange: #87521a;
+      --orange-fill: #fae8c9;
+      --blue: #2354a0;
+      --blue-fill: #e8f0fc;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 1rem/1.62 "Segoe UI", system-ui, sans-serif;
+    }
+    header, main, footer {
+      width: min(100% - 2.5rem, 68rem);
+      margin-inline: auto;
+    }
+    header { padding-block: clamp(2.7rem, 9vw, 6.3rem) 1.85rem; }
+    h1, h2 {
+      margin: 0;
+      font-family: Georgia, serif;
+      font-weight: 400;
+      line-height: 1.09;
+      letter-spacing: -.035em;
+    }
+    h1 { max-width: 20ch; font-size: clamp(2.5rem, 6.5vw, 4.6rem); }
+    h2 { font-size: clamp(1.85rem, 4vw, 2.75rem); }
+    h3 { margin: 1.5rem 0 .35rem; font-size: 1.09rem; line-height: 1.35; }
+    p { margin: .65rem 0; }
+    ol, ul { padding-inline-start: 1.45rem; }
+    li + li { margin-block-start: .6rem; }
+    a { color: var(--green); text-underline-offset: .18em; }
+    a:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 4px;
+    }
+    details { max-width: 78ch; margin: 1rem 0 0; padding: .7rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: .4rem; }
+    summary { cursor: pointer; color: var(--green); font-weight: 650; }
+    details[open] > summary { margin-bottom: .75rem; }
+    section > .matrix { max-width: 90ch; }
+    .context { color: var(--muted); font-size: .88rem; margin: 0 0 1.05rem; }
+    .lede { max-width: 60ch; font-size: clamp(1.06rem, 2.4vw, 1.27rem); margin-top: 1.15rem; }
+    nav { margin-top: 1.7rem; }
+    nav ul {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .45rem 1.2rem;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+    nav li + li { margin: 0; }
+    nav a { font-size: .9rem; font-weight: 600; }
+    section { padding-block: 1.6rem 2.1rem; border-top: 1px solid var(--line); }
+    section > p, section > ol, section > ul { max-width: 78ch; }
+    .callout {
+      max-width: 78ch;
+      padding: .7rem 1rem;
+      border-inline-start: .25rem solid var(--green);
+      background: var(--green-fill);
+      margin-block: 1.15rem;
+    }
+    figure {
+      margin: 1.35rem 0;
+      padding: clamp(.8rem, 2vw, 1.3rem);
+      border: 1px solid var(--line);
+      border-radius: .65rem;
+      background: var(--surface);
+    }
+    figure h3 { margin-top: 0; }
+    figcaption { color: var(--muted); font-size: .88rem; margin-top: .65rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: .7rem 1.1rem; align-items: end; margin: .6rem 0; }
+    .controls label { max-width: 100%; display: grid; gap: .25rem; min-width: 0; font-size: .89rem; font-weight: 600; }
+    select, input[type="range"] { width: 100%; }
+    select {
+      min-height: 2.7rem;
+      padding: .4rem .6rem;
+      border: 1px solid #81958b;
+      border-radius: .35rem;
+      background: white;
+      color: var(--ink);
+      font: inherit;
+      font-size: 1rem;
+    }
+    input[type="range"] { min-height: 2.7rem; padding: 0; margin: 0; accent-color: var(--blue); }
+    .scrubber { flex: 1 1 12rem; }
+    svg { width: 100%; display: block; font: .88rem "Segoe UI", system-ui, sans-serif; }
+    svg text { fill: var(--ink); }
+    .geometry { height: clamp(215px, 40vw, 295px); }
+    .replay { height: clamp(255px, 50vw, 375px); overflow: hidden; }
+    .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--muted); font-size: .86rem; }
+    .swatch { display: inline-block; width: 1em; border-top: 2px solid var(--orange); vertical-align: .22em; }
+    .swatch.dashed { border-top-style: dashed; }
+    .gps-key { color: var(--blue); }
+    .policy-choice { display: flex; align-items: center; gap: .5rem; font-size: .95rem; margin: .65rem 0; }
+    .policy-choice input { width: 1.1rem; height: 1.1rem; flex: none; accent-color: var(--green); }
+    .truth-key { color: var(--green); font-size: 1.25em; font-weight: 700; }
+    .live { font-size: .93rem; }
+    .timing { padding-block: .5rem .25rem; }
+    .timing-labels {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      font-size: clamp(.7rem, 2vw, .87rem);
+      margin-top: .6rem;
+      text-align: center;
+    }
+    .timing-labels span { padding-inline: .15rem; }
+    .timing-labels time { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+    .timing-track {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: .35rem 0;
+      padding-block: .35rem;
+      isolation: isolate;
+    }
+    .timing-track::before {
+      position: absolute;
+      content: "";
+      inset-block: 0;
+      left: 41.6667%;
+      border-inline-start: 1px dashed var(--muted);
+      z-index: 1;
+    }
+    .bar {
+      text-align: center;
+      position: relative;
+      line-height: 1.35;
+      padding: .36rem .25rem;
+      font-size: .82rem;
+      font-weight: 650;
+      border-radius: 999px;
+      margin-inline: 0;
+      z-index: 2;
+    }
+    .observation { grid-column: 1 / 7; background: var(--blue-fill); color: #21477e; }
+    .silencing { grid-column: 2 / 7; background: var(--green-fill); color: var(--green); }
+    .bar.observation { margin-inline: 8.333%; }
+    .bar.silencing { margin-inline: 10%; }
+    .paths { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin-block: 1rem; }
+    .paths > div { background: var(--surface); border-top: 3px solid var(--green); padding: .7rem .85rem; }
+    .paths h3 { margin: 0 0 .25rem; font-size: 1rem; }
+    .paths p { margin: 0; font-size: .9rem; }
+    .matrix { margin-block: 1rem; border-top: 1px solid var(--line); }
+    .matrix > div {
+      display: grid;
+      grid-template-columns: minmax(8rem, .9fr) 1.9fr;
+      gap: .5rem 1rem;
+      padding: .6rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .matrix dt { font-weight: 650; }
+    .matrix dd { margin: 0; }
+    code { font-size: .88em; overflow-wrap: anywhere; }
+    footer { color: var(--muted); padding-block: .5rem 2rem; border-top: 1px solid var(--line); font-size: .9rem; }
+    @media (max-width: 37rem) {
+      header, main, footer { width: calc(100% - 1.5rem); }
+      .paths { grid-template-columns: 1fr; }
+      .matrix > div { grid-template-columns: 1fr; gap: .12rem; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    @media print {
+      :root { --paper: #fff; }
+      header { padding-top: 0; }
+      nav { display: none; }
+      figure, .matrix > div, .paths > div { break-inside: avoid; }
+      * { print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <p class="context">TunisianPrayerTimes for Android · Proposed change · 25 November 2026</p>
+    <h1>When the phone goes quiet at a mosque</h1>
+    <p class="lede">The app would silence your phone during your chosen prayer time when the readings show a stop at a saved mosque. A sustained stop just outside can also count if the walk leads toward the mosque and the readings are uncertain enough to place you inside. If the phone loses location altogether, the app could follow the prayer schedule anywhere, including at home.</p>
+    <nav aria-label="Plan sections"><ul>
+      <li><a href="#review">Why change the app?</a></li>
+      <li><a href="#timing">When checks start</a></li>
+      <li><a href="#arrival">How the app detects arrival</a></li>
+      <li><a href="#replay">Try a walk</a></li>
+      <li><a href="#state">When location fails</a></li>
+      <li><a href="#implementation">How to test the plan</a></li>
+    </ul></nav>
+  </header>
+
+  <main>
+    <section id="review">
+      <h2>Why change the app?</h2>
+      <p>Today, the app waits until your chosen silence period starts. It then looks for two location readings that place you clearly inside a saved mosque. This works if you are already inside a large mosque. It can miss an entire visit to a small one.</p>
+      <p>Omar Ibn Abdelaziz Mosque in Mégrine Riadh shows why. Even at the best spot inside its saved outline, the nearest boundary is only about 14.6 metres away. If your phone reports that its position is accurate to about 25 metres, the current rule needs more than 27 metres of clearance.</p>
+      <p>The proposal uses the walk, the stop and the quality of the readings. By default, it accepts a sustained nearby stop when the readings could also place you inside. You can choose a stricter rule for a particular mosque. The examples below use the same readings for both destinations so you can see the tradeoff.</p>
+    </section>
+
+    <section id="timing">
+      <h2>When do location checks start?</h2>
+      <p>For each prayer you enable, checks can start <strong>10 minutes before the call to prayer</strong>. If you chose an earlier time for silence to start, checks can begin then. An early arrival can help the app recognize your visit. The app waits until your chosen start time to silence the phone.</p>
+
+      <figure>
+        <h3>Example for a 13:00 call to prayer</h3>
+        <div class="timing" role="img" aria-label="The app can check location from 12:50 to 13:15. It can silence the phone from 12:55 until 13:15. The call to prayer is at 13:00.">
+          <div class="timing-labels" aria-hidden="true">
+            <span><time datetime="12:50">12:50</time></span>
+            <span><time datetime="12:55">12:55</time></span>
+            <span><time datetime="13:00">13:00</time><br>Prayer</span>
+            <span><time datetime="13:05">13:05</time></span>
+            <span><time datetime="13:10">13:10</time></span>
+            <span><time datetime="13:15">13:15</time></span>
+          </div>
+          <div class="timing-track" aria-hidden="true">
+            <div class="bar observation">Location checks</div>
+            <div class="bar silencing">Phone can go quiet</div>
+          </div>
+        </div>
+        <figcaption>You chose silence from 12:55 to 13:15. If the app confirms your arrival at 12:53, it can silence the phone at 12:55. At 13:15 this prayer stops keeping the phone quiet.</figcaption>
+      </figure>
+
+      <p>When the silence period starts, the app checks again, even if Android missed the earlier check. If the app already confirmed your visit, a reading from the last 30 seconds must still support it. If the readings suggest you are leaving, the app waits.</p>
+      <details>
+        <summary>How often should the app check location?</summary>
+        <p>Start with a low-power reading. Ask Android to report when the phone crosses a wide circle around a saved mosque. This circle is called a geofence. An alert can arrive several minutes late, so the silence period has its own start alarm. <a href="https://developer.android.com/develop/sensors-and-location/location/geofencing">Android geofence guidance</a></p>
+        <p>The phone reports its estimated position and a radius in metres for its accuracy. Together they form a circle on the map. Ask for a precise reading about every 5 seconds when that circle comes within 100 metres of the saved outline or when a geofence alert arrives. Allow <strong>120 seconds</strong> for this check. In the simulated 25-metre example below, the phone reaches the entrance after 72 seconds and confirms the stop after 99 seconds. The current app ends its check at 90 seconds.</p>
+        <p>If the phone is far away, stop requesting readings and leave the geofences active. If the phone is near the mosque and the result is still uncertain, try a low-power reading every 60 seconds. Someone can walk to the entrance without crossing the geofence again.</p>
+        <p>To restart precise checks from two low-power readings, the distance to the boundary must drop by more than 6 metres and by more than the sum of their accuracy radii. Count repeated alerts once. Start at most one precise check every 5 minutes for this kind of movement. A new geofence entry, the start of the silence period or a request from the user can also start a check.</p>
+        <p>If silence starts hours after the prayer time, pause active checks after the early check and resume at the chosen start. Overlapping prayers can share location checks. End this feature’s silence whenever no enabled silence period is open. If there is a gap between periods when location checks are allowed, discard the earlier readings and start a new visit check.</p>
+      </details>
+    </section>
+
+    <section id="arrival">
+      <h2>How can the app tell you have arrived?</h2>
+      <p><strong>Look for a stop, then ask what places it at the mosque.</strong> The app can use a stop clearly inside the saved outline, or a walk toward it followed by a stop at its edge. This covers a person already inside, someone walking in, and a stop immediately next door. A person who keeps moving gets more time to reach their destination.</p>
+      <p><strong>If the dot jumps across the street, use the earlier readings.</strong> Suppose two precise readings placed you at the edge of the mosque after your approach. Then the signal grew weaker and the dot moved into the street. If the new readings settle and still fit the last precise position, the app can count the visit. A fresh, precise reading across the street would cancel that explanation.</p>
+      <p><strong>If the whole walk appears across the street, the phone may never see which building you entered.</strong> By default, after a measured approach, the app counts a stable 45-second stop if each accuracy circle still reaches the mosque. This also silences someone who really stops opposite and produces the same readings. If that would be a problem at a particular mosque, you can require stronger evidence there. If you want silence for just one ambiguous visit, use the manual action for that prayer.</p>
+      <p>The blue dot below is the position the phone reports. The blue circle shows its estimated error. The orange strip is the 3 metres the ordinary arrival rule allows outside the mosque. The app never moves the dot to the nearest mosque. <a href="https://developer.android.com/reference/android/location/Location#getAccuracy()">How Android estimates accuracy</a></p>
+
+      <figure>
+        <h3>How close must the dot be to the mosque?</h3>
+        <div class="controls">
+          <label for="margin-example">Location reading
+            <select id="margin-example">
+              <option value="near">2 m outside with 4 m accuracy</option>
+              <option value="noisier">2 m outside with 8 m accuracy</option>
+              <option value="farther">5 m outside with 4 m accuracy</option>
+            </select>
+          </label>
+        </div>
+        <svg id="margin-diagram" class="geometry" role="img" aria-label="Saved mosque boundary, the 3-metre strip outside it, and the phone’s estimated position"></svg>
+        <noscript><p>For the ordinary rule, a dot 2 metres outside can count toward a stop. A dot 5 metres outside needs other evidence.</p></noscript>
+        <div class="legend"><span><span class="gps-key" aria-hidden="true">⊙</span> Phone position and estimated accuracy</span></div>
+        <p id="margin-result" class="live" aria-live="polite"></p>
+        <figcaption>Try the reading 5 metres outside. It does not qualify for the ordinary stop rule. The replay below shows when earlier readings or a sustained nearby stop can change the decision.</figcaption>
+      </figure>
+
+      <details>
+        <summary>What evidence does each decision require?</summary>
+        <p>These numbers are starting points for testing. Use fresh, distinct readings in time order. Check the recorded time since boot, coordinates and reported accuracy. Ignore simulated, invalid or future readings and readings over 30 seconds old. A valid reading with a large accuracy radius still shows that location is available.</p>
+        <dl class="matrix">
+          <div><dt>What counts as a stop?</dt><dd>Use at least three readings from the same candidate area, with an accuracy radius of at most 30 metres. Every pair of positions during the stop must be within 12 metres. Allow a gap of at most 12 seconds between readings. Restart the stop when the readings leave its permitted area or spread too far apart. A longer gap or unusable accuracy also clears the approach history. A very slow walk can still resemble a stop.</dd></div>
+          <div><dt>Already inside.</dt><dd>Confirm a stop after 15 seconds if every position is inside the same saved part of the mosque by more than its accuracy radius plus 2 metres. This route needs no earlier walk. Today’s rule accepts two readings 15 seconds apart. The proposed third reading and movement check reduce the chance of silencing someone crossing a large compound. <a href="app/src/main/java/com/tunisianprayertimes/mosque/presence/PresenceMachine.kt">Current arrival rule</a></dd></div>
+          <div><dt>Approach and stop.</dt><dd>Keep up to 90 seconds of continuous readings. Compare the first three with the last three for the same mosque outline. The groups must be separate. For each group take the middle distance to the boundary and the middle accuracy radius, sorting each measure separately. Count distances inside as negative. The distance must fall by more than 6 metres and by more than the sum of those two radii. After the approach, the first and last positions of a stop must be inside or within 3 metres of the outer edge. Allow one position outside that strip in any three consecutive readings if its error circle reaches the mosque and it stays within the same 12-metre group. This handles a dot that briefly jumps across the boundary. Require 15 seconds if every radius during the stop is at most 10 metres, or 25 seconds otherwise.</dd></div>
+          <div><dt>Good readings followed by drift.</dt><dd>After the approach, require two readings at least 5 seconds apart, each with a radius of at most 8 metres, within the ordinary arrival area and within 12 metres of each other. Remember the later position for up to 45 seconds. To confirm a subsequent stop outside the strip, require 25 seconds of less precise readings. Each error circle must reach the mosque and overlap the last precise reading’s error circle. A gap, an incompatible position or a new precise reading outside the strip cancels this evidence. Start a fresh approach before counting a later stop across the street. Poor readings cannot extend the 45 seconds.</dd></div>
+          <div><dt>A sustained stop just outside.</dt><dd>Use this rule by default when the user enables the proposed feature. Require a measured approach to the same mosque, then 45 seconds of stable readings outside its 3-metre strip. Each centre must be within its own accuracy radius of the mosque boundary. Only readings with a radius of at most 30 metres can count. A dot 16 metres outside with 25-metre accuracy can qualify. At the same spot, a 4-metre reading puts the phone too far away. A single overlapping circle or a stationary phone with no observed approach cannot start silence. The stricter setting turns off this rule for that mosque.</dd></div>
+          <div><dt>A short or missing approach.</dt><dd>If the inside rule cannot confirm the visit, keep checking within the time limit. If the result stays uncertain, leave automatic mosque silence off. Show a quiet <strong>Silence until this prayer ends</strong> action in the app and its existing observation notification during an active period. A tap is a timed manual choice for that prayer. It works even when the phone never saw the walk. Show the end time and an undo action.</dd></div>
+        </dl>
+        <p>Follow each part of each enabled area separately. Never add the first half of an approach to one building to the second half of an approach to another. Respect holes in the outline. If two enabled mosques both qualify, one silence request is enough. If a courtyard or entrance is genuinely missing, correct the private saved outline. Measure distance to the saved footprint. The nearby rule requires no extra area on the map.</p>
+      </details>
+      <details>
+        <summary>What about traffic, home or a signal that stays wrong?</summary>
+        <dl class="matrix">
+          <div><dt>Walking past or driving by.</dt><dd>Keep silence off while readings show continued travel. A short stop at a crossing usually ends before the nearby stop qualifies. A long wait in traffic or a shop visit can match an arrival exactly. Keep the existing Android Auto rule. Use the stricter setting at a mosque where silencing a long wait across the street would be a problem.</dd></div>
+          <div><dt>Home or work beside a mosque.</dt><dd>A stationary phone with uncertain readings supplies no approach. If an entire walk home resembles the walk into the mosque, the same readings must give the same result. Choose the stricter setting at that mosque if quieting the phone at home would be a problem. If errors put the whole stop inside the mosque outline, even the ordinary rule can silence someone opposite. Repeated readings can share the same error. A small reported radius can also be wrong. The user can skip the prayer or end silence.</dd></div>
+          <div><dt>A short walk, a late start or arrival by car.</dt><dd>After a person parks, use fresh evidence from the final walk or a stop clearly inside. If checks begin after the person went indoors, the inside rule can still work. If the position remains too uncertain and the app missed the approach, offer timed manual silence. Waiting indoors longer supplies no missing route.</dd></div>
+          <div><dt>Two places give identical readings.</dt><dd>Averaging more dots, following the nearest road or counting steps cannot establish which side of the street the person chose if both trips fit all the observations. A one-time user choice resolves the immediate visit. Fully automatic identification in this case would require a separate observation that actually distinguishes the destinations, such as a verified entrance event tied to the phone.</dd></div>
+        </dl>
+      </details>
+    </section>
+
+    <section id="replay">
+      <h2>Try a walk at Mégrine Riadh</h2>
+      <p>Choose a walk and move the slider to see what the app would do at each step. The mosque outline is real. The walks and location readings are simulated. In every example, the app starts checking at 0 seconds. The silence period starts at 60 seconds and ends at 120 seconds.</p>
+      <p>Start with <strong>Enter mosque, dot opposite</strong>. At 105 seconds the dot is about 16 metres outside. Switch to <strong>Stop opposite, same readings</strong>. Only the green diamond moves. It shows where the simulated person really is. The app has access only to the blue readings. Both walks now trigger silence at 105 seconds. At 120 seconds the silence period ends. The final message shows how long the phone was silent. Select the stricter rule to compare the result.</p>
+
+      <figure>
+        <h3>A walk to Omar Ibn Abdelaziz Mosque</h3>
+        <div class="controls">
+          <label for="trace-example">Choose a walk
+            <select id="trace-example">
+              <option value="shifted" selected>Enter mosque, dot opposite</option>
+              <option value="opposite">Stop opposite, same readings</option>
+              <option value="door">Reach the mosque before the signal gets worse</option>
+              <option value="accurateOpposite">Stop across the street with precise readings</option>
+              <option value="wait">Wait briefly across the street and move on</option>
+              <option value="noHistory">Start with a stationary dot across the street</option>
+              <option value="jitter">One reading slips outside the strip</option>
+              <option value="indoorUnclear">Start inside with 25 m accuracy</option>
+              <option value="precise">Arrival and departure with precise readings</option>
+              <option value="coarse">Arrival with 25 m accuracy</option>
+              <option value="adjacent">Stop just outside the mosque</option>
+              <option value="pass">Walk past</option>
+              <option value="frontage">Slow walk past the entrance</option>
+              <option value="stationary">Stand still near the wall with 25 m accuracy</option>
+              <option value="gap">Missing readings during a stop</option>
+              <option value="inside">Already inside when checks start</option>
+            </select>
+          </label>
+          <label class="scrubber" for="trace-reading">
+            <span>Time in the walk · <output id="trace-time" for="trace-reading"></output></span>
+            <input id="trace-reading" type="range" min="0" max="12" step="1" value="9">
+          </label>
+        </div>
+        <label class="policy-choice"><input id="strict-policy" type="checkbox"> Require stronger evidence at this mosque (exclude uncertain stops across the street)</label>
+        <svg id="trace-map" class="replay" role="img" aria-label="Simulated walk at Omar Ibn Abdelaziz Mosque"></svg>
+        <div class="legend">
+          <span><span class="swatch" aria-hidden="true"></span> Saved mosque outline</span>
+          <span><span class="swatch dashed" aria-hidden="true"></span> 3 m strip</span>
+          <span><span class="gps-key" aria-hidden="true">⊙</span> Reported position and accuracy</span>
+          <span><span class="truth-key" aria-hidden="true">◇</span> Actual position in the two identical-reading walks</span>
+        </div>
+        <noscript><p>By default, both walks with identical readings trigger silence at 105 seconds. Silence ends at 120 seconds. With the stricter rule, both walks stay audible.</p></noscript>
+        <p id="trace-result" class="live" aria-live="polite"></p>
+        <figcaption>The blue circle shows why both destinations are possible. The app sees the reported position, its accuracy and the earlier readings. The map uses the confirmed part of the mosque (catalogue TN01775). Its full boundary is still unknown. Street data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>. <a href="https://www.openstreetmap.org/node/1236582731">Mosque on the map</a>.</figcaption>
+      </figure>
+
+    </section>
+
+    <section id="state">
+      <h2>What if the phone cannot get a location?</h2>
+      <p>An uncertain reading still tells the app that the phone’s location service is working. The app follows the prayer schedule alone only if it determines that location is unavailable. You would have to turn on the proposed feature for this to happen.</p>
+      <p>Suppose you are at home and your silence period starts at 12:55. Here is what the app would do.</p>
+      <dl class="matrix">
+        <div><dt>The phone gets a reading.</dt><dd>Even with a 70-metre accuracy radius, a reading can place your home well away from every saved mosque. Mosque silencing stays off. If a reading leaves your position uncertain, the app waits for evidence of a visit.</dd></div>
+        <div><dt>You switched off location or removed permission.</dt><dd>The app can follow the schedule and silence the phone at 12:55, as soon as Android lets it check those settings. The app stops requesting location while access is off.</dd></div>
+        <div><dt>Android accepts the request but sends no valid reading.</dt><dd>The app waits 90 seconds, including one retry. If it started the request at 12:55, it can first use the schedule at 12:56:30, provided the silence period is still open. Settings should show why the phone went quiet.</dd></div>
+        <div><dt>You disabled your last saved area or paused the silence rule.</dt><dd>Mosque silencing stays off. The same applies if setup is incomplete or Android prevents the app from starting its location service.</dd></div>
+      </dl>
+      <details>
+        <summary>How should the app handle a failure or recovery?</summary>
+        <p>Check the location switch and permissions when the silence period starts. For a request that produces no readings, start the 90-second timer only when Android accepts the request. Ignore old, simulated and duplicate readings. If an earlier check timed out before the silence period, run a new check. If readings stop during an active visit, start a fresh 90-second check once two requested update intervals have passed without a valid reading. Include the retry in that deadline. Keep the visit’s own expiry timers running. Time spent waiting for an alarm or deliberately pausing between requests does not count as a location failure.</p>
+        <p>Treat missing consent, unreadable saved areas, unsupported settings, unavailable Google Play services and blocked notifications as setup problems. To use the schedule, the app also needs permission to control its Android Do Not Disturb rule and a working alarm to end silence.</p>
+        <p>If location returns, check it the next time Android allows the app to run or when the user asks for a check. Until then, scheduled silence can last to the end of the silence period. If a fresh check confirms a visit under the rules for this mosque, keep the same silence rule active. If two fresh readings at least 20 seconds apart place the phone clearly away, end mosque silencing. For this check, each position must clear every saved area by more than its accuracy radius plus 8 metres.</p>
+        <p>If readings resume but leave the position uncertain, check for up to 120 seconds from the first valid reading. End mosque silencing if the app still cannot confirm a visit. If a single reading is followed by another verified loss of location, the schedule can take over again. A skip or the end of the silence period takes priority.</p>
+      </details>
+
+      <h3>When does the phone return to its usual sound setting?</h3>
+      <p>The app ends mosque silencing when it confirms you have left, when you skip the prayer, or when the last active silence period ends. A single uncertain reading indoors can happen while you are still at prayer. The app gives a confirmed visit time to recover. Another setting, such as manual silence, can still keep the phone quiet.</p>
+      <details>
+        <summary>How long can a confirmed visit last without good readings?</summary>
+        <p>To confirm departure, require two readings at least 20 seconds apart. Each must have an accuracy radius of 30 metres or less. Each position must lie outside every enabled area by more than its radius plus 8 metres. The 8 metres include the 3-metre strip and a further 5 metres for departure. A usable reading inside or near a boundary breaks this sequence. Crossing a geofence starts a check. A neighbouring saved area can still support the visit.</p>
+        <p>When the app confirms a visit, start two timers. End the visit after <strong>5 minutes without a usable reading</strong> or <strong>15 minutes without fresh evidence that you are still there</strong>, whichever comes first. For the first timer, a usable reading has an accuracy radius of 100 metres or less. To restart the second timer, require a reading clearly inside or a fresh stop at the same part of the mosque. For a visit accepted after a nearby stop, another qualifying 45-second stop beside the same mosque can also restart it. Poor readings across the street cannot keep renewing a visit based only on earlier precise readings at the mosque. If low-power checks are too far apart, request precise readings before time runs out.</p>
+        <p>When either timer expires, end mosque silencing unless a separate check confirms that location is unavailable and the schedule may take over. If you skip a prayer during an early check, show which prayer and date you are skipping. Later alarms or restored location must respect that choice and any pause you set in Android.</p>
+      </details>
+    </section>
+
+    <section id="implementation">
+      <h2>How should we test this plan?</h2>
+      <p>First, run the current and proposed rules on the same recorded walks. Record when each rule would silence the phone and when it would restore sound. Once the app respects the chosen times, skips and pauses in those tests, offer a trial to people who choose to take part.</p>
+      <p>Use a small mosque beside a street and a larger mosque compound. Have participants approach along the same street, then enter the mosque, wait in traffic, stop opposite or go home nearby. Label the actual destination independently of the phone’s dot. Test with the screen off. Before a wider release, check that the new rule misses fewer visits on walks kept aside for the final test. Measure how often it silences a phone by mistake, how long it takes to restore sound and how much battery it uses. The proposed distances and times still need these field tests.</p>
+
+      <details>
+        <summary>What needs to change in the Android app?</summary>
+        <h3>Schedule location checks and silence separately</h3>
+        <p>Use the prayer planner’s times for each enabled prayer, including Friday prayer, Eid and periods that cross midnight. Give the early alarm a separate action and identify the prayer and date. The current receiver rejects early silence alarms. Check both schedules again when the clock, time zone, place, prayer settings or mode changes. Only a current, unskipped silence period can start mosque silencing. <a href="../multiplatform/shared/src/commonMain/kotlin/com/tunisianprayertimes/silence/SilenceWindowPlanner.kt">Prayer planner</a> · <a href="app/src/main/java/com/tunisianprayertimes/SilenceReceiver.kt">Alarm receiver</a></p>
+        <p>Use the time allowed for location checks in the monitor, location service and geofence receiver, including when Android finishes registering a geofence. End each location request at its deadline and each geofence at the end of the check period. Invalidate old requests before cancelling them so a late reading cannot restart a visit. Start the location service only when Android permits it, such as after a user action, a qualifying exact alarm or a geofence alert. If the early start fails, try again at the start of the silence period. <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueObservationService.kt">Location service</a> · <a href="https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start">Android rules for starting a service</a></p>
+        <h3>Use one Do Not Disturb rule for mosque silencing</h3>
+        <p>Check four things separately. Is the silence period open and the rule available? Has the user completed setup? Can the app request location? Did that request return a valid reading? Use the same rule for a confirmed visit and for scheduled silence during a location failure. Switching the reason alone should leave the phone quiet.</p>
+        <p>Update the final check in <code>canActivateLocked</code> before changing <code>SilenceOwner.MOSQUE</code>, the app’s mosque rule. Check whether this rule may stay active even when it is already on. End it after a skip, a pause, a condition that requires the user to restart checks, or the end of the silence period. Retry if Android fails to release it. Respect manual silence, wake alarms, awake checks and Android Auto. After the app restarts or the phone reboots, discard old readings. Check the current schedule, saved skips and settings again. <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueReadiness.kt">Setup checks</a> · <a href="app/src/main/java/com/tunisianprayertimes/mosque/SilenceCoordinator.kt">Do Not Disturb rules</a></p>
+        <h3>Keep the user’s choices separate</h3>
+        <p>Save the stricter setting per mosque on this phone. Explain that the default also accepts a real stop opposite if its readings fit a visit. Changing the setting or the outline discards old arrival evidence. Never enlarge the outline from unlabelled visits. For a one-time manual choice, show the prayer and end time and respect current controls. Use the manual silence timer. Keep any existing longer manual timer and let the user undo this action without cancelling another silence. Record a manual action as manual in the trial results. <a href="app/src/main/java/com/tunisianprayertimes/ManualSilenceScheduler.kt">Manual silence timer</a></p>
+        <h3>Explain the change before turning it on</h3>
+        <p>The current Arabic settings say that the app checks location only during a silence period. Update that text and the explanation of background location. Tell existing users about early checks and the possibility of silence at home. Use the current rule until they choose the new one.</p>
+        <p>Show what the app is doing, such as checking before prayer, checking an arrival, continuing silence during a visit, or following the schedule because location is unavailable. Tell the user if setup needs attention. Keep readings in memory only while location checks are allowed. Let users choose travel updates separately. <a href="app/src/main/res/values/strings_mosque_silence.xml">Current Arabic settings text</a> · <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueSilenceSettings.kt">Saved settings</a></p>
+      </details>
+
+      <details>
+        <summary>Which tests and measurements are needed?</summary>
+        <dl class="matrix">
+          <div><dt>Replay location readings.</dt><dd>Test each route to silence. Run identical readings with two different real destinations and require identical automatic decisions for the same settings. Test a precise approach followed by drift, small jumps at the boundary, an indoor start with poor accuracy, a precise position opposite, nearby stops with and without a measured approach, a short stop in traffic, a skipped prayer and a manual choice. Include a stationary phone with a consistent position error, missing or out-of-order readings, and areas with holes or separate parts. Test opening and closing times without a new reading. Test readings at exactly 90 and 120 seconds. A reading that arrives at a deadline cannot restart the expired check.</dd></div>
+          <div><dt>Test the Android controls.</dt><dd>Use the actual alarm receiver, location monitor and Do Not Disturb rule. Test a skip before the prayer, overlapping checks with a gap between silence periods, changes to overnight schedules, an app restart, a blocked service start, loss of permission and recovery. Include Android’s pause control, manual silence, wake features and Android Auto. Check for early silence, a skipped prayer turning silence back on, or an unnecessary change to the rule when only the reason changes. Repeat the existing tests for silence based on time alone.</dd></div>
+          <div><dt>Test real phones with the screen off.</dt><dd>Use the OnePlus and a Pixel. Record the scheduled alarm time, actual alarm time, service start, first reading, start of silence and return of sound. Repeat while Android is conserving power and after Android stops the app. Compare time spent requesting precise readings and battery use per prayer day with the current app. <a href="MOSQUE_SILENCING_STAGE0_REPORT_2026-10-31.md">Earlier device tests</a></dd></div>
+          <div><dt>Measure the results of real walks.</dt><dd>With participants’ permission, record their actual arrival and departure times. Report missed visits per visit, unwanted silences per walk past, and unwanted silences per prayer period at home. Count tolerated next-door stops separately. Report real opposite-side stops under the default and stricter rules. Compare each new rule with the current rule and the 3-metre approach rule on the same walks. Record each use of scheduled silence and its cause. For each phone and mosque, give the counts and totals. Report the median delay and the delay that covers 90% of cases, both from arrival during an eligible period to silence and from physical departure to release. Agree on acceptable battery use and release times from the device results before wider use.</dd></div>
+        </dl>
+      </details>
+    </section>
+  </main>
+  <footer>
+    <p>Android source for the current feature · <a href="app/src/main/java/com/tunisianprayertimes/mosque/presence/PresenceGeometry.kt">How the app uses saved boundaries</a> · <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueSilenceMonitor.kt">When the app checks location</a></p>
+  </footer>
+
+  <script id="replay-data" type="application/json">
+{"boundary":[[-27.88,-3.15],[-8.38,7.65],[-10.05,11.59],[-3.12,14.58],[-2.53,17.56],[5.94,21.49],[11.45,11.59],[20.7,-0.56],[16.57,-3.6],[19.38,-9.74],[2.84,-19.46],[-27.88,-3.15]],"tolerance":[[-29.29,-5.8],[-30.02,-5.25],[-30.56,-4.51],[-30.84,-3.63],[-30.85,-2.72],[-30.58,-1.84],[-30.06,-1.09],[-29.33,-0.53],[-12.2,8.97],[-12.81,10.42],[-13.04,11.33],[-12.97,12.26],[-12.63,13.13],[-12.03,13.85],[-11.24,14.34],[-5.76,16.71],[-5.47,18.14],[-5.15,19.02],[-4.57,19.76],[-3.79,20.28],[4.68,24.21],[5.54,24.46],[6.43,24.45],[7.28,24.17],[8.01,23.66],[8.56,22.95],[13.97,13.24],[23.09,1.26],[23.53,0.42],[23.7,-0.51],[23.56,-1.45],[23.14,-2.3],[22.48,-2.98],[20.31,-4.57],[22.11,-8.49],[22.35,-9.33],[22.34,-10.21],[22.08,-11.05],[21.58,-11.78],[20.9,-12.33],[4.36,-22.05],[3.41,-22.41],[2.4,-22.43],[1.43,-22.11],[-29.29,-5.8]],"roads":[[[-127.12,35.96],[-155.91,97.36],[-168.33,123.76],[-183.5,155.77],[-193.54,173.34],[-198.67,181.58],[-204.65,192.21],[-221.38,226.26],[-236.2,253.61],[-256.14,295.3],[-268.69,321.82]],[[-169.76,373.51],[-144.8,328.99],[-136.32,311.67],[-131.78,306.89],[-93.43,248.71],[-46.84,174.65],[-44.34,170.58],[-16.75,128.54],[6.91,87.44]],[[-154.24,216.45],[-130.58,178],[-105.98,140.61],[-98.45,127.94],[-53.42,53.27]],[[184.3,-71.56],[93.64,80.28],[71.89,116.71],[42.99,163.07],[14.2,207.38],[-32.27,283.96],[-84.24,367.58]],[[71.89,116.71],[6.91,87.44],[-16.14,73.23],[-53.42,53.27],[-75.15,9.08]],[[-16.14,73.23],[7.87,34.29],[35.82,-15.65],[62.57,-61.51]],[[-150.65,48.15],[-218.98,10.51],[-286.12,-24.97]],[[-820.69,45.78],[-817.17,38.07],[-799.19,-5.65],[-779.23,-51.16],[-747.09,-128.08],[-737.05,-152.1],[-707.66,-217.56],[-703.72,-225.92],[-698.59,-234.16],[-693.09,-240.73],[-685.56,-247.18],[-682.21,-249.22],[-679.48,-250.88],[-672.18,-253.63],[-665.01,-255.77],[-657.97,-257.21],[-650.68,-257.56],[-643.04,-257.21],[-635.51,-256.02],[-370.08,-196.75],[-352.53,-192.62],[-336.26,-189.79],[-311.19,-184.75],[-280.98,-177.63],[-187.08,-158.15],[-114.22,-142.63],[7.03,-117.67],[62.46,-99.99],[110.01,-86.01]],[[-214.92,83.49],[-150.65,48.15],[-127.12,35.96],[-75.15,9.08],[1.29,-31.06],[29.49,-44.38],[62.57,-61.51],[110.01,-86.01]],[[-280.98,-177.63],[-136.37,-103.33],[-69.3,-69.16],[1.29,-31.06]],[[110.01,-86.01],[184.3,-71.56],[285.96,-48.62],[381.64,-27.12],[408.64,-20.91],[442.33,-11.72],[484.45,-2.76],[573.56,16.54],[692.24,42.31],[826.36,72.44],[959.98,103.3],[1020.01,115.75],[1046.28,121.23],[1141.3,142.75],[1242.43,164.53],[1293.11,175.99],[1344.53,184.7],[1365.83,187.39],[1387.61,188.43],[1411.82,188.81],[1468.27,186.98],[1499.79,184.75]],[[-88.67,172.97],[-77.7,155.37],[-60.87,128.35]],[[7.87,34.29],[47.65,56.26],[93.64,80.28]],[[-105.98,140.61],[-77.7,155.37],[-46.84,174.65]],[[-155.91,97.36],[-98.45,127.94]],[[-36.01,223.67],[-14.45,187.47],[10.17,146.17]],[[172.59,66.56],[152.71,104.23]],[[339.97,150.15],[302.57,133.43],[254.67,107.87],[206.05,82.66],[185.44,72.74],[172.59,66.56],[161.37,61.17],[159.4,61.04],[157.31,62.78],[153.72,70.31],[140.7,94.74]],[[145.84,142.16],[152.05,127.82],[156.35,121.13],[160.42,119.58],[178.45,129.25],[215.25,150.76],[242.13,166.88],[255.5,173.09],[260.4,173.93],[263.63,171.54],[270.08,162.46],[282.44,138.57],[284.35,136.78],[286.69,135.7],[289.55,136.3],[318.93,151.23],[334.75,158.38]]],"scenarios":{"precise":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-24,-17.5,4],[32,-13,-23,4],[42,-3,-11.5,4],[47,-1,-9.5,4],[52,-3,-13.5,4],[57,1,-21,4],[70,3,-28,16],[95,12,-37,4],[105,27,-44,4],[115,43,-52,4]],"coarse":[[0,-107,26,25],[9,-96,20,25],[18,-85,14,25],[27,-72,7,25],[36,-59,0,25],[45,-46,-6,25],[54,-33,-13,25],[63,-20,-20,25],[72,-10,-16,25],[81,-4,-13,25],[90,-1,-15,25],[99,-4,-13,25],[108,-4,-16,25]],"adjacent":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-24,-17.5,4],[32,-13,-23,4],[42,-6,-18,4],[50,-5,-18,4],[57,-4,-18.5,4],[70,-4,-18,4]],"pass":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-24,-17.5,4],[32,-13,-23,4],[42,-1,-15,4],[50,13,-37,4],[58,25,-42,4],[68,42,-51,4]],"frontage":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-32,-13,4],[32,-28,-10,4],[42,-22,-8.3,4],[47,-18,-10.4,4],[52,-13,-13.05,4],[57,-8,-15.7,4],[62,3,-30,4],[72,18,-42,4]],"stationary":[[0,-6,-18,25],[8,-6,-18,25],[16,-5,-18,25],[24,-6,-18,25],[32,-5,-18,25],[42,-6,-18,25],[52,-5,-18,25],[62,-6,-18,25],[72,-5,-18,25]],"gap":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-24,-17.5,4],[32,-13,-23,4],[42,-6,-18,4],[47,-5,-18,4],[72,-4,-18,4],[80,-5,-18,4],[90,-4,-18,4]],"inside":[[0,2,-3,4],[8,1,-3,4],[16,2,-2,4],[38,1,-2,4],[56,2,-3,4],[75,1,-3,4]],"shifted":[[0,-116,10,25],[7,-102,4,25],[14,-91,0,25],[21,-77,-6,25],[28,-63,-12,25],[35,-49,-17,25],[42,-35,-23,25],[49,-22,-29,25],[56,-8,-32,25],[63,-4,-33,25],[70,-3,-33,25],[77,-4,-33,25],[84,-3,-34,25],[91,-4,-33,25],[98,-3.5,-33,25],[105,-3,-34,25],[112,-4,-33,25],[119,-3,-33,25]],"opposite":[[0,-116,10,25],[7,-102,4,25],[14,-91,0,25],[21,-77,-6,25],[28,-63,-12,25],[35,-49,-17,25],[42,-35,-23,25],[49,-22,-29,25],[56,-8,-32,25],[63,-4,-33,25],[70,-3,-33,25],[77,-4,-33,25],[84,-3,-34,25],[91,-4,-33,25],[98,-3.5,-33,25],[105,-3,-34,25],[112,-4,-33,25],[119,-3,-33,25]],"door":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-24,-17.5,4],[32,-13,-23,4],[42,-6,-18,4],[47,-5,-18,4],[53,-4,-33,25],[60,-3,-33,25],[67,-4,-33,25],[74,-3,-34,25],[81,-4,-33,25],[88,-3,-33,25],[95,-4,-33,25],[102,-3,-33,25]],"accurateOpposite":[[0,-116,10,4],[7,-102,4,4],[14,-91,0,4],[21,-77,-6,4],[28,-63,-12,4],[35,-49,-17,4],[42,-35,-23,4],[49,-22,-29,4],[56,-8,-32,4],[63,-4,-33,4],[70,-3,-33,4],[77,-4,-33,4],[84,-3,-34,4],[91,-4,-33,4],[98,-3.5,-33,4],[105,-3,-34,4],[112,-4,-33,4],[119,-3,-33,4]],"wait":[[0,-116,10,25],[7,-102,4,25],[14,-91,0,25],[21,-77,-6,25],[28,-63,-12,25],[35,-49,-17,25],[42,-35,-23,25],[49,-22,-29,25],[56,-8,-32,25],[63,-4,-33,25],[70,-3,-33,25],[77,-4,-33,25],[84,10,-39,25],[91,22,-45,25],[98,32,-50,25],[105,42,-55,25],[112,50,-60,25]],"noHistory":[[0,-3,-33,25],[7,-4,-33,25],[14,-3,-33,25],[21,-4,-33,25],[28,-3,-33,25],[35,-4,-33,25],[42,-3,-33,25],[49,-4,-33,25],[56,-3,-33,25],[63,-4,-33,25],[70,-3,-33,25],[77,-4,-33,25],[84,-3,-33,25],[91,-4,-33,25],[98,-3,-33,25],[105,-4,-33,25]],"jitter":[[0,-65,4,4],[8,-52,-3,4],[16,-38,-10,4],[24,-24,-17.5,4],[32,-13,-23,4],[42,-6,-18,4],[47,-6,-20,8],[52,-5,-18,4],[57,-4,-18.5,4],[64,-4,-18,4],[71,-5,-18,4]],"indoorUnclear":[[0,2,-3,25],[8,1,-3,25],[16,2,-3,25],[24,1,-3,25],[32,2,-3,25],[40,1,-3,25],[48,2,-3,25],[56,1,-3,25],[64,2,-3,25],[72,1,-3,25],[80,2,-3,25],[88,1,-3,25],[96,2,-3,25],[104,1,-3,25]]}}
+  </script>
+  <script>
+    const colors = {
+      ink: "var(--ink)", muted: "var(--muted)", line: "var(--line)", orange: "var(--orange)",
+      greenFill: "var(--green-fill)", orangeFill: "var(--orange-fill)", blue: "var(--blue)", surface: "var(--surface)"
+    };
+    const bufferMeters = 3;
+
+    function draw(svg, tag, attributes, content) {
+      const mark = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [name, value] of Object.entries(attributes)) mark.setAttribute(name, value);
+      if (content !== undefined) mark.textContent = content;
+      svg.append(mark);
+    }
+
+    function frame(svg) {
+      const {width, height} = svg.getBoundingClientRect();
+      svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+      svg.replaceChildren();
+      return {width, height};
+    }
+
+    const marginInput = document.getElementById("margin-example");
+    const marginDiagram = document.getElementById("margin-diagram");
+    const marginResult = document.getElementById("margin-result");
+    const examples = { near: [2, 4], noisier: [2, 8], farther: [5, 4] };
+
+    function renderMargin() {
+      const [offset, radius] = examples[marginInput.value];
+      const {width, height} = frame(marginDiagram);
+      if (width < 100) return;
+      const s = Math.min((width - 20) / 22, (height - 80) / 17);
+      const wall = width / 2 - s;
+      const edge = wall + bufferMeters * s;
+      const cx = wall + offset * s;
+      const top = 32;
+      const bottom = height - 42;
+      const cy = (top + bottom) / 2;
+      const left = Math.max(2, width / 2 - 255);
+      const right = Math.min(width - 2, width / 2 + 255);
+      const mark = (tag, a, t) => draw(marginDiagram, tag, a, t);
+      mark("rect", {x:left, y:top, width:wall-left, height:bottom-top, fill:colors.greenFill});
+      mark("rect", {x:wall, y:top, width:edge-wall, height:bottom-top, fill:colors.orangeFill});
+      mark("line", {x1:left, x2:right, y1:bottom, y2:bottom, stroke:colors.line});
+      mark("line", {x1:wall, x2:wall, y1:top, y2:bottom, stroke:colors.orange, "stroke-width":2});
+      mark("line", {x1:edge, x2:edge, y1:top, y2:bottom, stroke:colors.orange, "stroke-dasharray":"4 3"});
+      mark("text", {x:wall-10, y:19, "text-anchor":"end"}, "Inside the mosque");
+      mark("text", {x:edge+10, y:19}, "Beyond the strip");
+      mark("line", {x1:wall, x2:edge, y1:bottom+8, y2:bottom+8, stroke:colors.orange});
+      for (const x of [wall, edge]) mark("line", {x1:x, x2:x, y1:bottom+4, y2:bottom+12, stroke:colors.orange});
+      mark("text", {x:(wall+edge)/2, y:bottom+28, "text-anchor":"middle"}, "3 m strip");
+      mark("circle", {cx, cy, r:radius*s, fill:"color-mix(in srgb, var(--blue) 9%, transparent)", stroke:colors.blue, "stroke-width":1.7});
+      mark("line", {x1:cx, x2:cx+radius*s, y1:cy, y2:cy, stroke:colors.blue});
+      mark("circle", {cx, cy, r:4.5, fill:colors.blue, stroke:colors.surface, "stroke-width":1.2});
+      mark("text", {x:cx+radius*s/2, y:cy-7, "text-anchor":"middle"}, radius + " m");
+      marginResult.textContent = offset <= bufferMeters
+        ? "The dot is within the 3-metre strip. This reading can count toward a stop."
+        : "The blue circle reaches the strip. The dot is outside the strip, so this reading alone cannot establish an arrival.";
+      marginDiagram.setAttribute("aria-label", offset + " metres outside with " + radius +
+        " metres reported accuracy. " + marginResult.textContent);
+    }
+
+    const mapData = JSON.parse(document.getElementById("replay-data").textContent);
+    const traceInput = document.getElementById("trace-example");
+    const slider = document.getElementById("trace-reading");
+    const traceMap = document.getElementById("trace-map");
+    const clock = document.getElementById("trace-time");
+    const traceResult = document.getElementById("trace-result");
+    const windowOpensAt = 60;
+    const windowClosesAt = 120;
+
+    function signedDistance(x, y, ring = mapData.boundary) {
+      let inside = false;
+      let nearest = Infinity;
+      for (let i = 1; i < ring.length; i++) {
+        const [ax, ay] = ring[i - 1];
+        const [bx, by] = ring[i];
+        const dx = bx - ax;
+        const dy = by - ay;
+        const f = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+        nearest = Math.min(nearest, Math.hypot(x - ax - f * dx, y - ay - f * dy));
+        if ((ay > y) !== (by > y) && x < ax + (y - ay) * dx / dy) inside = !inside;
+      }
+      return inside ? -nearest : nearest;
+    }
+
+    function medianOfThree(group, key) {
+      return group.map(fix => fix[key]).sort((a, b) => a - b)[1];
+    }
+
+    function approaching(history) {
+      if (history.length < 6) return false;
+      const early = history.slice(0, 3);
+      const late = history.slice(-3);
+      const drop = medianOfThree(early, "distance") - medianOfThree(late, "distance");
+      return drop > Math.max(6, medianOfThree(early, "accuracy") + medianOfThree(late, "accuracy"));
+    }
+
+    function fitsCluster(points, next) {
+      return points.every(fix => Math.hypot(fix.x - next.x, fix.y - next.y) <= 12);
+    }
+
+    function dwellComplete(points) {
+      if (points.length < 3) return false;
+      const seconds = points.some(fix => fix.accuracy > 10) ? 25 : 15;
+      return points.at(-1).t - points[0].t >= seconds;
+    }
+
+    function extendStop(points, fix, qualifies) {
+      if (!qualifies) return [];
+      if (!fitsCluster(points, fix)) return [fix];
+      return [...points, fix];
+    }
+
+    function extendEdgeStop(points, fix, canStart) {
+      const inStrip = fix.distance <= bufferMeters;
+      if (inStrip) {
+        if (!points.length && !canStart) return [];
+        return extendStop(points, fix, true);
+      }
+      // Keep one slightly outside reading only if its circle still reaches the mosque.
+      if (!points.length || fix.distance > fix.accuracy || !fitsCluster(points, fix)) return [];
+      if (points.slice(-2).some(previous => previous.distance > bufferMeters)) return [];
+      return [...points, fix];
+    }
+
+    function spans(points, seconds) {
+      return points.length >= 3 && points.at(-1).t - points[0].t >= seconds;
+    }
+
+    function evaluate(samples, permitNearby = true) {
+      // Only measured readings and the saved policy enter this function.
+      const timeline = new Map(samples.map(([t, x, y, accuracy]) =>
+        [t, {t, x, y, accuracy, distance:signedDistance(x, y)}]));
+      const times = [...new Set([...timeline.keys(), windowOpensAt, windowClosesAt])].sort((a,b) => a - b);
+      let history = [], insideStop = [], edgeStop = [], doorStop = [], nearbyStop = [], supportStop = [];
+      let previousDoorReading = null, doorReading = null;
+      let lastSupport = null, outsideStart = null, previous = null;
+      let visit = null, silenced = false;
+      let silenceStartedAt = null, nearbyStopExcluded = false;
+      const silenceIntervals = [];
+      const events = [];
+
+      function clearEntry() {
+        history = []; insideStop = []; edgeStop = []; doorStop = []; nearbyStop = [];
+        previousDoorReading = doorReading = null;
+      }
+
+      for (const t of times) {
+        const reading = timeline.get(t);
+        let reason;
+        if (t >= windowClosesAt) {
+          silenced = false;
+          reason = "The silence period has ended.";
+        } else if (reading) {
+          const {distance, accuracy} = reading;
+          const eligible = accuracy > 0 && accuracy <= 30;
+          const nearEdge = eligible && distance <= bufferMeters;
+          const deepInside = eligible && distance < -(accuracy + 2);
+          const uncertainNearby = eligible && distance > bufferMeters && distance <= accuracy;
+          const gap = previous && t - previous.t > 12;
+          if (gap || !eligible) {
+            clearEntry();
+            supportStop = [];
+          }
+          if (visit) {
+            const outside = eligible && distance > bufferMeters + accuracy + 5;
+            outsideStart = outside ? (outsideStart ?? t) : null;
+            const nearbySupport = visit === "nearby" && permitNearby && uncertainNearby;
+            // A group used for renewal must stay in one zone throughout its required time.
+            if (supportStop.length && supportStop[0].nearbySupport !== nearbySupport) supportStop = [];
+            const heldReading = {...reading, nearbySupport};
+            if (nearbySupport) supportStop = extendStop(supportStop, heldReading, true);
+            else supportStop = eligible ? extendEdgeStop(supportStop, heldReading, nearEdge) : [];
+            if (deepInside || (nearbySupport ? spans(supportStop, 45) : nearEdge && dwellComplete(supportStop))) lastSupport = t;
+            if (outsideStart !== null && t - outsideStart >= 20) {
+              visit = null;
+              clearEntry(); supportStop = [];
+              lastSupport = outsideStart = null;
+              reason = "The readings show that the person has left.";
+            } else {
+              reason = outside ? "The app is checking whether the person has left." :
+                lastSupport === t ? "The readings still support this stop." : "The app is holding a recent visit while it waits for clearer readings.";
+            }
+          } else {
+            if (eligible) {
+              history = history.filter(fix => fix.t >= t - 90);
+              history.push(reading);
+            }
+            let approach = approaching(history);
+            const preciseEdge = nearEdge && accuracy <= 8 && approach;
+            if (preciseEdge && previousDoorReading && t - previousDoorReading.t >= 5 &&
+                fitsCluster([previousDoorReading], reading)) doorReading = reading;
+            // Keep the first reading long enough to check a pair even at a high delivery rate.
+            if (!preciseEdge) previousDoorReading = null;
+            else if (!previousDoorReading || doorReading === reading || !fitsCluster([previousDoorReading], reading)) previousDoorReading = reading;
+
+            if (doorReading && t - doorReading.t > 45) doorReading = null;
+            if (doorReading && distance > bufferMeters) {
+              const separation = Math.hypot(reading.x - doorReading.x, reading.y - doorReading.y);
+              if (accuracy <= 8 || separation > accuracy + doorReading.accuracy) {
+                // A contradictory reading also breaks the approach that supplied the earlier position.
+                clearEntry();
+                history.push(reading);
+                approach = false;
+              }
+            }
+            const compatibleDrift = doorReading && eligible && accuracy > 8 &&
+              distance > bufferMeters && distance <= accuracy;
+            const moved = nearEdge && !fitsCluster(edgeStop, reading);
+            insideStop = extendStop(insideStop, reading, deepInside);
+            edgeStop = eligible ? extendEdgeStop(edgeStop, reading, approach) : [];
+            doorStop = extendStop(doorStop, reading, compatibleDrift);
+            nearbyStop = extendStop(nearbyStop, reading, uncertainNearby && (nearbyStop.length > 0 || approach));
+            if (spans(insideStop, 15)) visit = "inside";
+            else if (nearEdge && dwellComplete(edgeStop)) visit = "edge";
+            else if (spans(doorStop, 25)) visit = "door";
+            else if (permitNearby && spans(nearbyStop, 45)) visit = "nearby";
+
+            if (visit) {
+              lastSupport = t;
+              reason = {inside:"The readings show a stop clearly inside the mosque.", edge:"The readings show an approach and a stop at the mosque.",
+                door:"Two earlier precise readings reached the mosque. The later readings are less precise and support a stop.",
+                nearby:"The phone approached the mosque and stayed nearby for at least 45 seconds. Its readings could still place it inside."}[visit];
+            } else if (spans(nearbyStop, 45)) {
+              if (t >= windowOpensAt) nearbyStopExcluded = true;
+              reason = "These readings fit both destinations. The stricter rule excludes this stop.";
+            } else if (doorStop.length) {
+              reason = "Earlier precise readings reached the mosque. The app is checking the stop after accuracy dropped.";
+            } else if (nearbyStop.length) {
+              reason = permitNearby ? "The app is checking for a 45-second stop near the mosque." : "The readings could come from either side of the street.";
+            } else if (moved || gap) {
+              reason = moved ? "The positions spread more than 12 metres apart. The app restarts the stop timer." : "There was a gap in the readings. The app checks again.";
+            } else {
+              reason = insideStop.length || edgeStop.length ? "The app is checking whether the person has stopped." : "The app is checking for arrival.";
+            }
+          }
+          previous = reading;
+        } else {
+          reason = permitNearby && nearbyStop.length && !visit
+            ? "The silence period has started. The readings have not yet confirmed a 45-second stop."
+            : "The silence period has started. The app checks the latest reading.";
+        }
+        if (t < windowClosesAt) {
+          const recentSupport = lastSupport !== null && t - lastSupport <= 30 && outsideStart === null;
+          silenced = Boolean(t >= windowOpensAt && visit && (silenced || recentSupport));
+        }
+        if (silenced && silenceStartedAt === null) silenceStartedAt = t;
+        if (!silenced && silenceStartedAt !== null) {
+          silenceIntervals.push({start:silenceStartedAt, end:t});
+          silenceStartedAt = null;
+        }
+        if (t === windowClosesAt) {
+          if (silenceIntervals.length) {
+            const periods = silenceIntervals.map(({start,end}) => start + " to " + end + " seconds");
+            const duration = silenceIntervals.reduce((total, period) => total + period.end - period.start, 0);
+            reason += " The phone was silent from " + periods.join(" and from ") + " (" + duration + " seconds in total).";
+          } else {
+            reason += " The phone stayed audible throughout this prayer.";
+            if (nearbyStopExcluded) reason += " The stricter rule excluded the nearby stop.";
+          }
+        }
+        events.push({...previous, t, readingAt:previous.t, newReading:!!reading, silenced, visit, reason});
+      }
+      return events;
+    }
+
+    const strictInput = document.getElementById("strict-policy");
+    let traces = {};
+    const focusTime = {precise:60, coarse:99, adjacent:60, pass:68, frontage:57, stationary:62, gap:72, inside:60,
+      shifted:105, opposite:105, door:81, accurateOpposite:105, wait:91, noHistory:105, jitter:60, indoorUnclear:64};
+
+    function applyPolicy() {
+      traces = Object.fromEntries(Object.entries(mapData.scenarios).map(([name, samples]) =>
+        [name, evaluate(samples, !strictInput.checked)]));
+    }
+
+    function chooseTrace() {
+      slider.max = traces[traceInput.value].length - 1;
+      slider.value = traces[traceInput.value].findIndex(event => event.t === focusTime[traceInput.value]);
+      renderTrace();
+    }
+
+    function renderTrace() {
+      const run = traces[traceInput.value];
+      const fix = run[Number(slider.value)];
+      const observed = run.slice(0, Number(slider.value) + 1).filter(event => event.newReading);
+      clock.value = fix.t + " seconds";
+      slider.setAttribute("aria-valuetext", fix.t + " seconds, " + (fix.newReading ? "new location reading" : "scheduled time"));
+      const decision = fix.silenced ? "Mosque silencing is on." : "Mosque silencing is off.";
+      const timing = fix.t < windowOpensAt ? " The silence period starts at 60 seconds." : "";
+      const position = Math.abs(fix.distance).toFixed(1) + " m " + (fix.distance < 0 ? "inside" : "outside");
+      const age = fix.newReading ? "" : " That reading is " + (fix.t - fix.readingAt) + " seconds old.";
+      traceResult.textContent = decision + timing + " " + fix.reason + " The last dot is " + position +
+        " the boundary. Its accuracy radius is " + fix.accuracy + " m." + age;
+      const paired = traceInput.value === "shifted" || traceInput.value === "opposite";
+      if (paired && fix.t >= 63) {
+        traceResult.textContent += traceInput.value === "shifted"
+          ? " In this example the person is inside the mosque."
+          : " In this example the person is across the street.";
+      }
+      traceMap.setAttribute("aria-label", "Mégrine Riadh mosque replay at " + fix.t + " seconds. " + traceResult.textContent);
+
+      const {width, height} = frame(traceMap);
+      if (width < 100) return;
+      const s = Math.min((width - 18) / 202, (height - 18) / 130);
+      const x = n => width / 2 + (n + 33) * s;
+      const y = n => height / 2 + (n + 8) * s;
+      const points = path => path.map(([a,b]) => x(a) + "," + y(b)).join(" ");
+      const mark = (tag, a, t) => draw(traceMap, tag, a, t);
+      for (const road of mapData.roads) {
+        mark("polyline", {points:points(road), fill:"none", stroke:colors.line,
+          "stroke-width":3.5, "stroke-linejoin":"round", "stroke-linecap":"round"});
+      }
+      mark("polygon", {points:points(mapData.tolerance), fill:"none", stroke:colors.orange,
+        "stroke-width":1.4, "stroke-dasharray":"4 3"});
+      mark("polygon", {points:points(mapData.boundary), fill:colors.orangeFill, stroke:colors.orange, "stroke-width":1.7});
+      mark("text", {x:x(2), y:y(7), "text-anchor":"middle"}, "Mosque");
+      if (observed.length > 1) {
+        mark("polyline", {points:points(observed.map(f => [f.x,f.y])), fill:"none", stroke:colors.blue,
+          "stroke-width":1.6, "stroke-dasharray":"2 4", "stroke-linecap":"round"});
+      }
+      mark("circle", {cx:x(fix.x), cy:y(fix.y), r:fix.accuracy*s,
+        fill:"color-mix(in srgb, var(--blue) 9%, transparent)", stroke:colors.blue, "stroke-width":1.35});
+      for (const point of observed) {
+        mark("circle", {cx:x(point.x), cy:y(point.y), r:point.t === fix.readingAt ? 4.7 : 2.5, fill:colors.blue,
+          stroke:point.t === fix.readingAt ? colors.surface : "none", "stroke-width":1.25});
+      }
+      if (paired) {
+        const px = x(fix.x);
+        const py = y(fix.y + (traceInput.value === "shifted" ? 22 : 0));
+        const diamond = "M " + px + " " + (py-7) + " l 7 7 -7 7 -7 -7 z";
+        mark("path", {d:diamond, fill:"none", stroke:"white", "stroke-width":4});
+        mark("path", {d:diamond, fill:"none", stroke:"var(--green)", "stroke-width":2});
+      }
+      mark("text", {x:13, y:17, "text-anchor":"middle"}, "N");
+      mark("path", {d:"M 13 33 V 23 M 9 27 L 13 23 L 17 27", fill:"none", stroke:colors.muted});
+      const end = width - 10;
+      mark("line", {x1:end-10*s, x2:end, y1:height-8, y2:height-8, stroke:colors.muted, "stroke-width":1.8});
+      mark("text", {x:end, y:height-14, "text-anchor":"end"}, "10 m");
+    }
+
+    marginInput.addEventListener("change", renderMargin);
+    traceInput.addEventListener("change", chooseTrace);
+    strictInput.addEventListener("change", () => { applyPolicy(); renderTrace(); });
+    slider.addEventListener("input", renderTrace);
+    new ResizeObserver(renderMargin).observe(marginDiagram);
+    new ResizeObserver(renderTrace).observe(traceMap);
+    renderMargin();
+    applyPolicy();
+    chooseTrace();
+  </script>
+</body>
+</html>

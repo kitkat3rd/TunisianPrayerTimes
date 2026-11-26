@@ -58,7 +58,7 @@ internal fun QuranReciterSheet(
     /** The voice chosen while listening, downloading before it replaces the one heard. */
     switchingTo: String? = null,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         // Large text makes it taller than the screen: it scrolls then.
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp).testTag("quran_reciter_sheet")) {
             QuranPanelHeader("القارئ", onDismiss)
@@ -113,8 +113,8 @@ internal fun QuranDownloadsSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
-        Column(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp).testTag("quran_downloads_sheet")) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp).testTag("quran_downloads_sheet")) {
             QuranPanelHeader("التنزيلات", onDismiss)
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 media.pages?.let { pages ->

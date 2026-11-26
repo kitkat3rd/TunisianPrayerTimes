@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -19,9 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -30,12 +28,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,8 +41,7 @@ import com.tunisianprayertimes.MethodChip
 import com.tunisianprayertimes.MethodPresentation
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.PrefsManager
-import com.tunisianprayertimes.ScheduleRefreshCoordinator
-import com.tunisianprayertimes.adhkar.DhikrReminderScheduler
+import com.tunisianprayertimes.R
 import com.tunisianprayertimes.engine.CustomMethodRanges
 import com.tunisianprayertimes.engine.HighLatitudeRule
 import com.tunisianprayertimes.engine.TimeEvent
@@ -64,149 +61,129 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.util.Locale
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 
-/**
- * The prayer-tab settings of plan 6.11 for a place abroad: «طريقة الحساب», the zone line with «حسب موقعي بالضبط»,
- * «وقت العصر», «الليالي القصيرة» where a rule can act, and «تعديل الأوقات بالدقائق». A Tunisian place shows none of
- * them (D7). The sources are in «طريقتك»: the method's own, and the place names' credit (owner, 2026-10-19).
- */
 @Composable
-internal fun PrayerMethodSection(onTimesChanged: () -> Unit) {
+internal fun PrayerMethodSection(
+    place: PrayerPlace.Coordinates,
+    onTimesChanged: () -> Unit,
+    onShowInmExample: () -> Unit,
+) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var revision by remember { mutableIntStateOf(0) }
-    val place = remember(revision) { PrayerTimesRepository.place(context) }
-    var sheet by remember { mutableStateOf<String?>(null) }
-
-    fun changed() {
+    var sheet by remember(place.cacheKey) { mutableStateOf<String?>(null) }
+    val choice = remember(place, revision) {
+        PrayerTimesRepository.choice(context, place) ?: PrayerMethodChoice(PrayerMethods.MWL.id)
+    }
+    val placeTimes = remember { PrayerTimesRepository.placeTimesFor(context) }
+    val method = remember(place, choice) { placeTimes.method(place, choice) }
+    val year = LocalDate.now(place.zone).year
+    val mapped = remember(place, choice, year) {
+        val mappedChoice = choice.copy(zonePick = choice.zonePick.takeUnless { it == ZonePick.Exact })
+        runCatching { placeTimes.mapping(place, mappedChoice, year) }.getOrNull()
+    }
+    fun save(next: PrayerMethodChoice) {
+        PrefsManager.setMethodChoice(context, place, next)
         revision++
         onTimesChanged()
-        scope.launch {
-            ScheduleRefreshCoordinator.syncAll(context)
-            // A new method moves the times: the saved adhkar reminders are checked again over the year (6.9).
-            withContext(Dispatchers.Default) { DhikrReminderScheduler.recheckSavedReminders(context) }
-        }
     }
 
-    val abroad = place as? PrayerPlace.Coordinates
-    if (abroad != null) {
-        val choice = remember(revision) { PrayerTimesRepository.choice(context, abroad) ?: PrayerMethodChoice(PrayerMethods.MWL.id) }
-        val placeTimes = remember { PrayerTimesRepository.placeTimesFor(context) }
-        val method = remember(choice) { placeTimes.method(abroad, choice) }
-        val year = LocalDate.now(abroad.zone).year
-        val mapped = remember(choice, abroad) { runCatching { placeTimes.mapping(abroad, choice.copy(zonePick = choice.zonePick.takeUnless { it == ZonePick.Exact }), year) }.getOrNull() }
-        fun save(next: PrayerMethodChoice) {
-            PrefsManager.setMethodChoice(context, abroad, next)
-            changed()
-        }
-
-        SettingsRow(
-            title = "طريقة الحساب",
-            subtitle = MethodPresentation.summary(method),
+    PrayerSettingsGroup {
+        PrayerSettingsLink(
+            title = stringResource(R.string.prayer_settings_choose_method),
+            summary = MethodPresentation.name(method.id),
             onClick = { sheet = "methods" },
         )
-        HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-        // «طريقتك» (6.11): the method's parameters, its record against the official table, today's times.
-        SettingsRow(title = "تفاصيل طريقة الحساب", subtitle = "المعايير، ومطابقة الجدول الرسمي، وأوقات اليوم", onClick = { sheet = "explainer" })
         if (mapped != null) {
-            HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-            ZoneLineRow(
-                text = MethodPresentation.zoneLine(method.id, mapped, abroad),
-                exact = choice.zonePick == ZonePick.Exact,
-                onExactChange = { exact -> save(choice.copy(zonePick = if (exact) ZonePick.Exact else null)) },
+            PrayerSettingsDivider()
+            val useExactLocation = choice.zonePick == ZonePick.Exact
+            PrayerSettingsSwitch(
+                title = stringResource(R.string.prayer_settings_exact_location),
+                summary = if (useExactLocation) null else MethodPresentation.zoneLine(method.id, mapped, place),
+                checked = useExactLocation,
+                onCheckedChange = { exact -> save(choice.copy(zonePick = if (exact) ZonePick.Exact else null)) },
             )
         }
-        HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+        PrayerSettingsDivider()
         AsrRow(factor = choice.asrShadow ?: method.asrShadow, onFactor = { f -> save(choice.copy(asrShadow = f)) })
-        if (kotlin.math.abs(abroad.point.latitude) >= HIGH_LATITUDE_FROM) {
-            HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-            SettingsRow(
+        if (kotlin.math.abs(place.point.latitude) >= HIGH_LATITUDE_FROM) {
+            PrayerSettingsDivider()
+            PrayerSettingsLink(
                 title = "الليالي القصيرة",
-                subtitle = highLatitudeName(choice.highLatitude ?: method.highLatitude),
+                summary = highLatitudeName(choice.highLatitude ?: method.highLatitude),
                 onClick = { sheet = "nights" },
             )
         }
-        HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-        SettingsRow(
+        PrayerSettingsDivider()
+        PrayerSettingsLink(
             title = "تعديل الأوقات بالدقائق",
-            subtitle = adjustmentsSummary(choice.adjustments),
+            summary = adjustmentsSummary(choice.adjustments),
             onClick = { sheet = "adjust" },
         )
-        HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+    }
 
-        when (sheet) {
-            "methods" -> PrayerMethodSheet(
-                place = abroad,
-                current = choice,
-                placeTimes = placeTimes,
-                onPick = { id ->
-                    sheet = null
-                    if (id == PrayerMethod.CUSTOM_ID) sheet = "custom"
-                    else save(PrayerMethodChoice(id, asrShadow = choice.asrShadow, adjustments = choice.adjustments, chooserAnswered = true, methodPicked = true))
-                },
-                onDismiss = { sheet = null },
-            )
-            "custom" -> CustomMethodSheet(
-                base = method,
-                mainlandFrance = abroad.isMainlandFrance,
-                onSave = { custom ->
-                    sheet = null
-                    save(PrayerMethodChoice(PrayerMethod.CUSTOM_ID, adjustments = choice.adjustments, custom = custom, chooserAnswered = true, methodPicked = true))
-                },
-                onDismiss = { sheet = null },
-            )
-            "adjust" -> AdjustmentsSheet(
-                adjustments = choice.adjustments,
-                onChange = { event, minutes -> save(choice.withAdjustment(event, minutes)) },
-                onDismiss = { sheet = null },
-            )
-            "explainer" -> MethodExplainerSheet(place = abroad, choice = choice, onDismiss = { sheet = null })
-            "nights" -> HighLatitudeSheet(
-                current = choice.highLatitude ?: method.highLatitude,
-                onPick = { rule -> sheet = null; save(choice.copy(highLatitude = rule)) },
-                onDismiss = { sheet = null },
-            )
-        }
+    PrayerSettingsGroup(title = stringResource(R.string.prayer_settings_about_calculation)) {
+        PrayerSettingsLink(
+            title = stringResource(R.string.prayer_settings_method_details),
+            onClick = { sheet = "explainer" },
+        )
+        PrayerSettingsDivider()
+        PrayerSettingsLink(
+            title = stringResource(R.string.prayer_method_entry_example_title),
+            modifier = Modifier.testTag(TestTags.PRAYER_TIME_METHOD_ROW),
+            onClick = onShowInmExample,
+        )
+    }
+
+    when (sheet) {
+        "methods" -> PrayerMethodSheet(
+            place = place,
+            current = choice,
+            placeTimes = placeTimes,
+            onPick = { id ->
+                sheet = null
+                if (id == PrayerMethod.CUSTOM_ID) sheet = "custom"
+                else save(PrayerMethodChoice(id, asrShadow = choice.asrShadow, adjustments = choice.adjustments, chooserAnswered = true, methodPicked = true))
+            },
+            onDismiss = { sheet = null },
+        )
+        "custom" -> CustomMethodSheet(
+            base = method,
+            mainlandFrance = place.isMainlandFrance,
+            onSave = { custom ->
+                sheet = null
+                save(PrayerMethodChoice(PrayerMethod.CUSTOM_ID, adjustments = choice.adjustments, custom = custom, chooserAnswered = true, methodPicked = true))
+            },
+            onDismiss = { sheet = null },
+        )
+        "adjust" -> AdjustmentsSheet(
+            adjustments = choice.adjustments,
+            onChange = { event, minutes -> save(choice.withAdjustment(event, minutes)) },
+            onDismiss = { sheet = null },
+        )
+        "explainer" -> MethodExplainerSheet(place = place, choice = choice, onDismiss = { sheet = null })
+        "nights" -> HighLatitudeSheet(
+            current = choice.highLatitude ?: method.highLatitude,
+            onPick = { rule -> sheet = null; save(choice.copy(highLatitude = rule)) },
+            onDismiss = { sheet = null },
+        )
     }
 }
 
 /** Where a method's own short-night rule can act: Diyanet's takdir, the first, starts at 44.375° N (README H6). */
 private const val HIGH_LATITUDE_FROM = 44.375
 
-@Composable
-private fun SettingsRow(title: String, subtitle: String?, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(role = Role.Button, onClick = onClick).padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextDark)
-            if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 12.sp, color = PrayerSilencePalette.SecondaryText)
-        }
-    }
-}
-
-@Composable
-private fun ZoneLineRow(text: String, exact: Boolean, onExactChange: (Boolean) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextDark)
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("حسب موقعي بالضبط", fontSize = 13.sp, color = PrayerSilencePalette.SecondaryText, modifier = Modifier.weight(1f))
-            Switch(checked = exact, onCheckedChange = onExactChange)
-        }
-    }
-}
-
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AsrRow(factor: Int, onFactor: (Int) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text("وقت العصر", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextDark)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = factor == 1, onClick = { onFactor(1) }, label = { Text("الجمهور") })
-            FilterChip(selected = factor == 2, onClick = { onFactor(2) }, label = { Text("الحنفية") })
+    val chipColors = FilterChipDefaults.filterChipColors(
+        selectedContainerColor = PrayerSilencePalette.TintedStrip,
+        selectedLabelColor = PrayerSilencePalette.PrimaryText,
+    )
+    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Text("وقت العصر", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = factor == 1, onClick = { onFactor(1) }, label = { Text("الجمهور") }, colors = chipColors)
+            FilterChip(selected = factor == 2, onClick = { onFactor(2) }, label = { Text("الحنفية") }, colors = chipColors)
         }
     }
 }
@@ -249,7 +226,7 @@ private val CHOOSABLE_RULES: List<Pair<HighLatitudeRule, Boolean>> = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HighLatitudeSheet(current: HighLatitudeRule, onPick: (HighLatitudeRule) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp)) {
             Text("الليالي القصيرة", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextDark)
             CHOOSABLE_RULES.forEach { (rule, everyNight) ->
@@ -288,8 +265,8 @@ private fun PrayerMethodSheet(
     // Only the methods followed at the place (owner, 2026-10-18): never Slovenia's in Riyadh or New York.
     val others = remember(place) { placeTimes.offeredMethods(place).filter { m -> country.none { it.id == m.id } } }
     val today = LocalDate.now(place.zone)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding()) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding().testTag("prayer_method_list")) {
             item { SectionTitle("الشائعة في بلدك") }
             items(country, key = { "c:" + it.id }) { m ->
                 MethodEntry(place, m, today, current.methodId == m.id, placeTimes,
@@ -380,7 +357,7 @@ internal fun MethodEntry(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdjustmentsSheet(adjustments: Map<TimeEvent, Int>, onChange: (TimeEvent, Int) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp)) {
             Text("تعديل الأوقات بالدقائق", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextDark)
             TimeEvent.entries.forEach { event ->
@@ -438,7 +415,7 @@ private fun CustomMethodSheet(base: PrayerMethod, mainlandFrance: Boolean, onSav
         evidence = com.tunisianprayertimes.method.Evidence(com.tunisianprayertimes.method.EvidenceKind.PUBLISHED, "custom"),
     )
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp)
                 .verticalScroll(rememberScrollState()),

@@ -49,6 +49,7 @@ class MosqueSettingsFileTest {
             listOf(
                 MosqueSettingsFile.Change(Prayer.FAJR, MosqueSettingsFile.Field.IQAMAH, "+15", "+20"),
                 MosqueSettingsFile.Change(Prayer.FAJR, MosqueSettingsFile.Field.DURATION, "10", "12"),
+                MosqueSettingsFile.Change(Prayer.DHUHR, MosqueSettingsFile.Field.IQAMAH, "13:00", "+10"),
                 MosqueSettingsFile.Change(Prayer.MAGHRIB, MosqueSettingsFile.Field.DURATION, "8", "7"),
                 MosqueSettingsFile.Change(Prayer.ISHA, MosqueSettingsFile.Field.IQAMAH, "+10", "20:00"),
                 MosqueSettingsFile.Change(Prayer.JOMOAA, MosqueSettingsFile.Field.IQAMAH, "+15", "13:15"),

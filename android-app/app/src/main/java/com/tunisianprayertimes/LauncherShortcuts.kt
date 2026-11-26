@@ -22,49 +22,55 @@ internal object LauncherShortcuts {
             val manager = context.getSystemService(ShortcutManager::class.java) ?: return
             val launcher = ComponentName(context, MainActivity::class.java)
             val silenced = SilenceStatus.isAppControlledSilenceActive(context)
-            fun shortcut(id: String, label: Int, icon: Int, action: String, rank: Int) =
+            fun shortcut(id: String, label: Int, icon: Int, intent: Intent, rank: Int, longLabel: Int = label) =
                 ShortcutInfo.Builder(context, id)
                     .setActivity(launcher)
                     .setShortLabel(context.getString(label))
-                    .setLongLabel(context.getString(label))
+                    .setLongLabel(context.getString(longLabel))
                     .setIcon(Icon.createWithResource(context, icon))
-                    // Explicit actions keep an old/pinned "Unsilence" from ever silencing the phone.
-                    .setIntent(Intent(context, SilenceShortcutActivity::class.java).setAction(action))
+                    .setIntent(intent)
                     .setRank(rank)
                     .build()
 
             val desired = listOf(
                 shortcut(
+                    "wake_before_adhan", R.string.shortcut_before_adhan, R.drawable.ic_tab_alarms,
+                    Intent(context, WakeShortcutActivity::class.java).setAction(WakeShortcutActions.BEFORE_ADHAN),
+                    0, R.string.shortcut_before_adhan_long,
+                ),
+                shortcut(
+                    "wake_nap", R.string.shortcut_nap, R.drawable.ic_adhkar_sleep,
+                    Intent(context, WakeShortcutActivity::class.java).setAction(WakeShortcutActions.NAP),
+                    1,
+                ),
+                shortcut(
                     "silence_toggle",
                     if (silenced) R.string.shortcut_unsilence else R.string.shortcut_silence,
                     if (silenced) R.drawable.ic_volume_on else R.drawable.ic_volume_off,
-                    if (silenced) SilenceShortcutActions.UNSILENCE else SilenceShortcutActions.SILENCE,
-                    0,
+                    Intent(context, SilenceShortcutActivity::class.java)
+                        .setAction(if (silenced) SilenceShortcutActions.UNSILENCE else SilenceShortcutActions.SILENCE),
+                    2,
                 ),
                 shortcut(
                     "silence_30_minutes",
                     if (silenced) R.string.shortcut_silence_reset_30 else R.string.shortcut_silence_30,
                     R.drawable.ic_adhkar_clock,
-                    SilenceShortcutActions.SILENCE_30_MINUTES,
-                    1,
+                    Intent(context, SilenceShortcutActivity::class.java).setAction(SilenceShortcutActions.SILENCE_30_MINUTES),
+                    3,
                 ),
-                ShortcutInfo.Builder(context, "hifz_review")
-                    .setActivity(launcher)
-                    .setShortLabel(context.getString(R.string.shortcut_review))
-                    .setLongLabel(context.getString(R.string.shortcut_review_long))
-                    .setIcon(Icon.createWithResource(context, R.drawable.ic_tab_quran))
-                    .setIntent(Intent(Intent.ACTION_MAIN)
+                shortcut(
+                    "hifz_review", R.string.shortcut_review, R.drawable.ic_tab_quran,
+                    Intent(Intent.ACTION_MAIN)
                         .addCategory(Intent.CATEGORY_LAUNCHER)
                         .setClass(context, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                         .putExtra(MainTabNavigation.EXTRA_DESTINATION, MainTabNavigation.DESTINATION_QURAN)
-                        .putExtra(MainTabNavigation.EXTRA_QURAN_ACTION, MainTabNavigation.QURAN_ACTION_HIFZ_REVIEW))
-                    .setRank(2)
-                    .build(),
-            )
+                        .putExtra(MainTabNavigation.EXTRA_QURAN_ACTION, MainTabNavigation.QURAN_ACTION_HIFZ_REVIEW),
+                    4, R.string.shortcut_review_long,
+                ),
+            ).take(manager.maxShortcutCountPerActivity)
             val current = manager.dynamicShortcuts.associateBy { it.id }
             if (current.keys != desired.map { it.id }.toSet()) {
-                // Also removes the previous "hifz_record" entry from the long-press menu.
                 manager.dynamicShortcuts = desired
             } else {
                 val changed = desired.filter { next ->

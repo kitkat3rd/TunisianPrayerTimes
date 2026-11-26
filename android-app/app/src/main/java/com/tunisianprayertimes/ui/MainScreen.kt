@@ -82,7 +82,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
@@ -185,6 +184,7 @@ import com.tunisianprayertimes.PlaceResolution
 import com.tunisianprayertimes.PlaceCatalogue
 import com.tunisianprayertimes.CitySearch
 import com.tunisianprayertimes.place.PrayerPlace
+import com.tunisianprayertimes.adhkar.DhikrReminderScheduler
 import com.tunisianprayertimes.silence.SilenceEnd
 import com.tunisianprayertimes.silence.SilenceEndpoints
 import com.tunisianprayertimes.silence.SilenceFit
@@ -217,6 +217,8 @@ import com.tunisianprayertimes.formatArabicByDuration
 import com.tunisianprayertimes.formatArabicMinutes
 import com.tunisianprayertimes.wake.PrayerWakeRepository
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
+import com.tunisianprayertimes.wake.hasFutureWakeTriggers
+import com.tunisianprayertimes.wake.prayerWakeJson
 import com.tunisianprayertimes.wake.AwakeCheckService
 import com.tunisianprayertimes.wake.WakeMotivationCard
 import java.time.LocalDate
@@ -358,6 +360,15 @@ private fun MainDestination.analyticsName(): String = when (this) {
     MainDestination.Quran -> "quran"
 }
 
+private fun requestedMainTab(destination: String?) = when (destination) {
+    MainTabNavigation.DESTINATION_PRAYERS -> MainDestination.Today
+    MainTabNavigation.DESTINATION_ALARMS -> MainDestination.Alarms
+    MainTabNavigation.DESTINATION_QIBLA, MainTabNavigation.DESTINATION_WORSHIP -> MainDestination.Worship
+    MainTabNavigation.DESTINATION_ADHKAR -> MainDestination.Adhkar
+    MainTabNavigation.DESTINATION_QURAN -> MainDestination.Quran
+    else -> null
+}
+
 private fun MainDestination.testTag(): String = when (this) {
     MainDestination.Today -> TestTags.MAIN_TAB_TODAY
     MainDestination.Alarms -> TestTags.MAIN_TAB_ALARMS
@@ -394,6 +405,38 @@ fun MainScreen(
     requestedWorshipAction: String? = null,
 ) {
     val context = LocalContext.current
+    val mainDestinations = remember { MainDestination.entries.toList() }
+    var selectedDestinationIndex by rememberSaveable {
+        mutableIntStateOf((requestedMainTab(requestedDestination) ?: MainDestination.Today).ordinal)
+    }
+    LaunchedEffect(requestedDestinationSequence, requestedDestination) {
+        requestedMainTab(requestedDestination)?.let { selectedDestinationIndex = it.ordinal }
+    }
+    val currentDestinationIndex = selectedDestinationIndex.takeIf { it in mainDestinations.indices } ?: 0
+    val selectedDestination = mainDestinations[currentDestinationIndex]
+    // The first-run location screen can replace the main content while an alarm draft waits.
+    var wakeDraftAwaitingPlace by rememberSaveable { mutableStateOf<String?>(null) }
+    var needsPlaceDecision by remember { mutableStateOf(PrefsManager.isFirstLaunch(context)) }
+    if (needsPlaceDecision) {
+        DisposableEffect(context) {
+            fun refresh() { needsPlaceDecision = PrefsManager.isFirstLaunch(context) }
+            val unsubscribe = PrefsManager.observeLocationSelection(context, ::refresh)
+            refresh()
+            onDispose { unsubscribe() }
+        }
+    }
+    // A place-free shortcut or notification can open its tab immediately. The question belongs to Prayer.
+    var handledPickerSequence by rememberSaveable { mutableIntStateOf(-1) }
+    val directedPicker = requestedDestination == MainTabNavigation.DESTINATION_PRAYERS &&
+        requestedPrayersAction == MainTabNavigation.PRAYERS_ACTION_CHOOSE_PLACE &&
+        handledPickerSequence != requestedDestinationSequence
+    if (needsPlaceDecision && selectedDestination == MainDestination.Today) {
+        OnboardingScreen(pickerRequestId = requestedDestinationSequence.takeIf { directedPicker }) {
+            if (directedPicker) handledPickerSequence = requestedDestinationSequence
+            needsPlaceDecision = false
+        }
+        return
+    }
     val notificationManager = remember { context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }
     val officialDateRecords by OfficialIslamicDates.updates.collectAsStateWithLifecycle()
     val schedulerScope = rememberCoroutineScope()
@@ -414,8 +457,6 @@ fun MainScreen(
     // State derived from system/prefs — re-evaluated on refreshTick
     val hasDnd = remember(refreshTick) { notificationManager.isNotificationPolicyAccessGranted }
     val hasAlarm = remember(refreshTick) { hasExactAlarmPermission(context) }
-    val hasNotifications = remember(refreshTick) { hasPostNotificationsPermission(context) }
-    val hasFullScreenIntent = remember(refreshTick) { hasFullScreenIntentPermission(context) }
     val hasBattery = remember(refreshTick) { isIgnoringBatteryOptimizations(context) }
     val hasPhoneState = remember(refreshTick) {
         ContextCompat.checkSelfPermission(
@@ -430,7 +471,7 @@ fun MainScreen(
             context = context,
             permissionType = "phone_state",
             result = if (granted) "granted" else "denied",
-            entryPoint = "main_banner",
+            entryPoint = "missed_call_feedback",
         )
         refreshTick++
     }
@@ -445,13 +486,14 @@ fun MainScreen(
                 context = context,
                 permissionType = "phone_state",
                 result = "request_opened",
-                entryPoint = "auto_silence",
+                entryPoint = "missed_call_feedback",
             )
             phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
         }
     }
 
     var autoSilenceEnabled by rememberSaveable { mutableStateOf(PrefsManager.isEnabled(context)) }
+    var autoSilenceRequested by remember { mutableStateOf(PrefsManager.isAutomaticSilenceRequested(context)) }
     var callEndVibrationEnabled by rememberSaveable {
         mutableStateOf(PrefsManager.isCallEndVibrationEnabled(context))
     }
@@ -462,29 +504,31 @@ fun MainScreen(
     var locationPickerRequested by remember { mutableStateOf(PrefsManager.consumePlacePickerOnStart(context)) }
     // 6.8: a skipped first run's place, shown with «تأكيد الموقع» until the user confirms it or a fix arrives.
     var placeProvisional by remember(delegationId) { mutableStateOf(PrefsManager.isPlaceProvisional(context)) }
-    // 6.4, 6.11: a chooser country's question, or an unknown country's «تأكيد الطريقة», until answered. The chooser
-    // opens by itself once per country and session; dismissed, it leaves the banner.
+    // Country-specific method questions remain next to the place until the user opens or answers them.
     var methodQuestion by remember(delegationId) { mutableStateOf(runCatching { pendingMethodQuestion(context) }.getOrNull()) }
-    var methodChooserSeen by rememberSaveable { mutableStateOf(setOf<String>()) }
     var methodChooserOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(methodQuestion) {
+    // Keep the existing travel prompt for established installations. A new first timetable uses the method row.
+    var legacyMethodSeen by rememberSaveable { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(selectedDestination, methodQuestion, placeProvisional) {
         val question = methodQuestion
-        if (question != null && question.hasChooser && question.key !in methodChooserSeen) {
-            methodChooserSeen = methodChooserSeen + question.key
+        if (selectedDestination == MainDestination.Today && !PrefsManager.usesPlaceOnboarding(context) &&
+            !placeProvisional && question != null && question.hasChooser && question.key !in legacyMethodSeen
+        ) {
+            legacyMethodSeen = legacyMethodSeen + question.key
             methodChooserOpen = true
         }
     }
-    var prayerTabSettingsOpen by rememberSaveable { mutableStateOf(false) }
+    var prayerTabSettingsPage by rememberSaveable { mutableStateOf<PrayerTabSettingsPage?>(null) }
     var backgroundLocationDisclosureOpen by rememberSaveable { mutableStateOf(false) }
-    // Read again on every resume: the user grants the background location in the system's own page.
-    val backgroundLocationNeeded = remember(refreshTick, autoLocationEnabled) {
-        DelegationLocator.needsBackgroundLocationPermission(context)
+    val hasTravelLocation = remember(refreshTick) { DelegationLocator.hasLocationPermission(context) }
+    val travelPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        refreshTick++
     }
-    var prayerTimeMethodOpen by rememberSaveable { mutableStateOf(false) }
     DisposableEffect(context) {
         // Background location updates must refresh the timetable alongside the label.
         val unsubscribe = PrefsManager.observeLocationSelection(context) {
             delegationId = screenTimesId(context)
+            placeProvisional = PrefsManager.isPlaceProvisional(context)
         }
         delegationId = screenTimesId(context)
         onDispose { unsubscribe() }
@@ -520,6 +564,7 @@ fun MainScreen(
 
     fun refreshSilenceState() {
         autoSilenceEnabled = PrefsManager.isEnabled(context)
+        autoSilenceRequested = PrefsManager.isAutomaticSilenceRequested(context)
         autoSilenceActive = PrefsManager.isAutoSilenceActive(context)
         manualSilenceActive = PrefsManager.isManualSilenceActive(context)
         phoneSilenced = SilenceStatus.isPhoneSilenced(context)
@@ -530,6 +575,13 @@ fun MainScreen(
     }
 
     fun toggleManualSilence(mode: ManualSilenceMode = manualSilenceMode) {
+        if (!manualSilenceActive && !autoSilenceActive && mode == ManualSilenceMode.UNTIL_PRAYER &&
+            !PrefsManager.hasConfirmedPlace(context)
+        ) {
+            locationPickerRequested = true
+            Toast.makeText(context, R.string.prayer_entry_confirm_to_schedule, Toast.LENGTH_LONG).show()
+            return
+        }
         if (!notificationManager.isNotificationPolicyAccessGranted) {
             Toast.makeText(context, context.getString(R.string.toast_dnd_permission), Toast.LENGTH_SHORT).show()
             return
@@ -590,7 +642,6 @@ fun MainScreen(
                 return
             }
 
-            ensureCallTrackingPermission()
             silenceActionPending = true
             schedulerScope.launch {
                 try {
@@ -647,14 +698,24 @@ fun MainScreen(
     }
 
     fun changeAutoSilence(enabled: Boolean) {
-        if (autoSilenceEnabled == enabled) return
+        if (PrefsManager.isAutomaticSilenceRequested(context) == enabled) return
+        if (enabled && !PrefsManager.hasConfirmedPlace(context)) {
+            prayerTabSettingsPage = null
+            locationPickerRequested = true
+            Toast.makeText(context, R.string.prayer_entry_confirm_to_schedule, Toast.LENGTH_LONG).show()
+            return
+        }
         autoSilenceEnabled = enabled
+        autoSilenceRequested = enabled
         PrefsManager.setEnabled(context, enabled)
         AnalyticsTracker.autoSilenceStateChanged(context, enabled)
-        if (enabled && hasDnd && hasAlarm) ensureCallTrackingPermission()
         Toast.makeText(
             context,
-            context.getString(if (enabled) R.string.toast_auto_enabled else R.string.toast_auto_disabled),
+            context.getString(when {
+                !enabled -> R.string.toast_auto_disabled
+                !hasDnd || !hasAlarm -> R.string.prayer_silence_permission_needed
+                else -> R.string.toast_auto_enabled
+            }),
             Toast.LENGTH_SHORT,
         ).show()
         // Arming or cancelling every window (and restoring the ringer) off the main thread.
@@ -694,7 +755,7 @@ fun MainScreen(
         }
 
         withContext(Dispatchers.IO) {
-            com.tunisianprayertimes.adhkar.DhikrReminderScheduler.refresh(context, rearm = true)
+            DhikrReminderScheduler.refresh(context, rearm = true)
         }
 
         refreshSilenceState()
@@ -772,6 +833,26 @@ fun MainScreen(
     var quickAddVisible by rememberSaveable { mutableStateOf(false) }
     var wakeSilenceConflictEditor by remember { mutableStateOf<WakeSilenceConflictEditorState?>(null) }
     var pendingReturnToPrayersAfterEdit by rememberSaveable { mutableStateOf(false) }
+    var wakePlaceRequest by remember { mutableStateOf<PrayerWakeConfig?>(null) }
+    wakePlaceRequest?.let { draft ->
+        PrayerPlaceRequiredDialog(onChoosingPlace = {
+            wakeDraftAwaitingPlace = prayerWakeJson.encodeToString(PrayerWakeConfig.serializer(), draft)
+            editingWakeAlarm = null
+            wakeSilenceConflictEditor = null
+            pendingReturnToPrayersAfterEdit = false
+            selectedDestinationIndex = MainDestination.Today.ordinal
+        }) { wakePlaceRequest = null }
+    }
+    LaunchedEffect(wakeDraftAwaitingPlace, needsPlaceDecision, placeProvisional, delegationId, selectedDestination) {
+        val encoded = wakeDraftAwaitingPlace ?: return@LaunchedEffect
+        if (selectedDestination != MainDestination.Today) {
+            wakeDraftAwaitingPlace = null
+        } else if (PrefsManager.hasConfirmedPlace(context)) {
+            wakeDraftAwaitingPlace = null
+            editingWakeAlarm = prayerWakeJson.decodeFromString(PrayerWakeConfig.serializer(), encoded)
+            selectedDestinationIndex = MainDestination.Alarms.ordinal
+        }
+    }
 
     fun createWakeAlarm(preset: WakeQuickPreset) {
         quickAddVisible = false
@@ -779,24 +860,12 @@ fun MainScreen(
         editingWakeAlarm = newWakeAlarmConfig(preset)
     }
 
-    val mainDestinations = remember { MainDestination.values().toList() }
-    var selectedDestinationIndex by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(requestedDestination, requestedDestinationSequence) {
-        val requestedIndex = when (requestedDestination) {
-            MainTabNavigation.DESTINATION_PRAYERS -> mainDestinations.indexOf(MainDestination.Today)
-            MainTabNavigation.DESTINATION_ALARMS -> mainDestinations.indexOf(MainDestination.Alarms)
-            MainTabNavigation.DESTINATION_QIBLA, MainTabNavigation.DESTINATION_WORSHIP -> mainDestinations.indexOf(MainDestination.Worship)
-            MainTabNavigation.DESTINATION_ADHKAR -> mainDestinations.indexOf(MainDestination.Adhkar)
-            MainTabNavigation.DESTINATION_QURAN -> mainDestinations.indexOf(MainDestination.Quran)
-            else -> -1
-        }
-        if (requestedIndex in mainDestinations.indices) {
-            selectedDestinationIndex = requestedIndex
-        }
         // The travel notification opens the city picker (6.8).
-        if (requestedDestination == MainTabNavigation.DESTINATION_PRAYERS &&
-            requestedPrayersAction == MainTabNavigation.PRAYERS_ACTION_CHOOSE_PLACE
-        ) locationPickerRequested = true
+        if (directedPicker) {
+            locationPickerRequested = true
+            handledPickerSequence = requestedDestinationSequence
+        }
         // The fasting notification opens its card's sheet, or the suhoor alarm's questions.
         if (requestedDestination == MainTabNavigation.DESTINATION_WORSHIP) when (requestedWorshipAction) {
             MainTabNavigation.WORSHIP_ACTION_FASTING -> FastingRequests.sheet = true
@@ -804,18 +873,24 @@ fun MainScreen(
             MainTabNavigation.WORSHIP_ACTION_REMEMBRANCE -> RemembranceRequests.sheet = true
         }
     }
-    val currentDestinationIndex = if (selectedDestinationIndex in mainDestinations.indices) {
-        selectedDestinationIndex
-    } else {
-        0
-    }
-    val selectedDestination = mainDestinations[currentDestinationIndex]
     val todayScrollState = rememberScrollState()
     val alarmsScrollState = rememberScrollState()
     val qiblaScrollState = rememberScrollState()
     val adhkarScrollState = rememberScrollState()
+    val prayerDayZone = PrayerTimesRepository.place(context).zone
     var prayerTableSelectedDate by rememberSaveable {
-        mutableLongStateOf(startOfDayMillis(System.currentTimeMillis()))
+        mutableLongStateOf(calendarDateMillis(LocalDate.now(prayerDayZone)))
+    }
+    var previousPrayerDayZone by rememberSaveable { mutableStateOf(prayerDayZone.id) }
+    LaunchedEffect(prayerDayZone) {
+        if (previousPrayerDayZone != prayerDayZone.id) {
+            val now = java.time.Instant.now()
+            val previousToday = now.atZone(java.time.ZoneId.of(previousPrayerDayZone)).toLocalDate()
+            if (calendarLocalDate(prayerTableSelectedDate) == previousToday) {
+                prayerTableSelectedDate = calendarDateMillis(now.atZone(prayerDayZone).toLocalDate())
+            }
+            previousPrayerDayZone = prayerDayZone.id
+        }
     }
     val selectedDestinationScrollState = when (selectedDestination) {
         MainDestination.Today -> todayScrollState
@@ -836,70 +911,17 @@ fun MainScreen(
         }
     }
 
-    fun requestFullScreenIntentIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val nm = context.getSystemService(NotificationManager::class.java)
-            if (!nm.canUseFullScreenIntent()) {
-                AnalyticsTracker.permissionStepResult(
-                    context = context,
-                    permissionType = "full_screen_intent",
-                    result = "request_opened",
-                    entryPoint = "wake_alarm",
-                )
-                Toast.makeText(context, context.getString(R.string.wake_alarm_full_screen_permission), Toast.LENGTH_LONG).show()
-                context.startActivity(
-                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                    }
-                )
-            }
-        }
-    }
-
-    var notificationPermissionPromptRequested by rememberSaveable { mutableStateOf(false) }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        AnalyticsTracker.permissionStepResult(
-            context = context,
-            permissionType = "notifications",
-            result = if (granted) "granted" else "denied",
-            entryPoint = "wake_alarm",
-        )
-        if (granted) {
-            notificationPermissionPromptRequested = false
-        }
-        refreshTick++
-        requestFullScreenIntentIfNeeded()
-    }
-
-    fun requestWakeNotificationPermission() {
-        if (hasPostNotificationsPermission(context)) {
-            refreshTick++
-            return
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermissionPromptRequested = true
-            AnalyticsTracker.permissionStepResult(
-                context = context,
-                permissionType = "notifications",
-                result = "request_opened",
-                entryPoint = "wake_alarm",
-            )
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
     val wakeRepository = remember(context) { com.tunisianprayertimes.wake.PrayerWakeRepository(context) }
-    val wakeAlarmsForPermission: List<PrayerWakeConfig>? by wakeRepository.wakeAlarms.collectAsState(initial = null)
-    val hasEnabledFutureWakeAlarm = wakeAlarmsForPermission
-        ?.let { wakeAlarms -> WakeAlarmScheduler.schedulingSnapshot(context, wakeAlarms).enabledFutureAlarmCount > 0 }
-        ?: false
+    val storedWakeAlarms: List<PrayerWakeConfig>? by wakeRepository.wakeAlarms.collectAsState(initial = null)
     val mainScope = rememberCoroutineScope()
     val awakeCheckRunning by AwakeCheckService.isRunning.collectAsState()
 
     // The Fajr suggestion saves straight away, as the editor's save would.
     fun addSuggestedFajrAlarm(config: PrayerWakeConfig) {
+        if (!PrefsManager.hasConfirmedPlace(context)) {
+            wakePlaceRequest = config
+            return
+        }
         if (hasUnresolvedWakeSilenceConflict(context, delegationId, config)) {
             // Only the editor can settle a silence-window conflict, so the alarm opens there.
             quickAddVisible = false
@@ -912,21 +934,6 @@ fun MainScreen(
             AnalyticsTracker.wakeAlarmSaved(context, config)
             rescheduleIfEnabled()
         }
-        if (!hasPostNotificationsPermission(context)) {
-            requestWakeNotificationPermission()
-        } else {
-            requestFullScreenIntentIfNeeded()
-        }
-    }
-
-    LaunchedEffect(selectedDestination, hasNotifications, hasEnabledFutureWakeAlarm, notificationPermissionPromptRequested) {
-        if (selectedDestination == MainDestination.Alarms &&
-            hasEnabledFutureWakeAlarm &&
-            !hasNotifications &&
-            !notificationPermissionPromptRequested
-        ) {
-            requestWakeNotificationPermission()
-        }
     }
 
     if (quickAddVisible) {
@@ -935,10 +942,27 @@ fun MainScreen(
             onPresetSelected = ::createWakeAlarm,
         )
     }
-    val showPermissionBanner = !hasDnd || !hasAlarm || !hasPhoneState
-    val showBatteryBanner = !hasBattery
+    val missingSilenceAccess = autoSilenceEnabled && (!hasDnd || !hasAlarm)
+    val missingCallAccess = callEndVibrationEnabled && !hasPhoneState
+    val usesPlaceOnboarding = remember { PrefsManager.usesPlaceOnboarding(context) }
+    val methodConfirmation: @Composable () -> Unit = {
+        methodQuestion?.takeUnless { placeProvisional }?.let { question ->
+            MethodConfirmBanner(
+                question = question,
+                compact = usesPlaceOnboarding,
+                onChoose = {
+                    if (question.hasChooser) methodChooserOpen = true
+                    else prayerTabSettingsPage = PrayerTabSettingsPage.Calculation
+                },
+                onConfirm = {
+                    answerMethodQuestion(context, question, methodId = null, asrShadow = null)
+                    methodQuestion = null
+                },
+            )
+        }
+    }
     val showWakeAlarmAddButton = selectedDestination == MainDestination.Alarms &&
-        wakeAlarmsForPermission?.isNotEmpty() == true &&
+        storedWakeAlarms?.isNotEmpty() == true &&
         editingWakeAlarm == null
     var wakeAlarmAddButtonVisible by remember { mutableStateOf(true) }
     var wakeAlarmBottomPullHideActive by remember { mutableStateOf(false) }
@@ -1081,24 +1105,16 @@ fun MainScreen(
                             },
                             modifier = Modifier.weight(1f),
                         )
-                        PrayerTabSettingsButton(onClick = { prayerTabSettingsOpen = true })
+                        PrayerTabSettingsButton(onClick = { prayerTabSettingsPage = PrayerTabSettingsPage.Overview })
                     }
                     // The place's and the method's questions, under the header they are about.
-                    methodQuestion?.let { question ->
-                        MethodConfirmBanner(
-                            question = question,
-                            onChoose = { if (question.hasChooser) methodChooserOpen = true else prayerTabSettingsOpen = true },
-                            onConfirm = {
-                                answerMethodQuestion(context, question, methodId = null, asrShadow = null)
-                                methodQuestion = null
-                            },
-                        )
-                    }
+                    if (!usesPlaceOnboarding) methodConfirmation()
                     if (placeProvisional) {
                         ProvisionalPlaceBanner(
                             onConfirm = {
                                 PrefsManager.setPlaceProvisional(context, false)
                                 placeProvisional = false
+                                rescheduleIfEnabled()
                             },
                             onChange = { locationPickerRequested = true },
                         )
@@ -1112,7 +1128,6 @@ fun MainScreen(
                     MainDestination.Today -> {
                         TodayNextPrayerCard(
                             delegationId = delegationId,
-                            selectedDate = prayerTableSelectedDate,
                             isPhoneSilenced = phoneSilenced || phoneDndActive,
                             doNotDisturbActive = phoneDndActive,
                             hasDnd = hasDnd,
@@ -1127,15 +1142,30 @@ fun MainScreen(
                             onManualSilenceClick = { toggleManualSilence(ManualSilenceMode.UNTIL_STOPPED) },
                         )
 
-                        AnimatedVisibility(
-                            visible = showPermissionBanner,
-                            enter = expandVertically(),
-                            exit = shrinkVertically()
-                        ) {
+                        PrayerSettingsCard(
+                            delegationId = delegationId,
+                            activity = activity,
+                            placeConfirmed = !placeProvisional && PrefsManager.hasConfirmedPlace(context),
+                            timetableUncovered = !methodChooserOpen && prayerTabSettingsPage == null && !locationPickerRequested,
+                            autoSilenceEnabled = autoSilenceEnabled,
+                            onChooseLocation = { locationPickerRequested = true },
+                            pendingMethodRow = if (usesPlaceOnboarding && methodQuestion != null && !placeProvisional) methodConfirmation else null,
+                            selectedDate = prayerTableSelectedDate,
+                            onSelectedDateChange = { selectedDate ->
+                                prayerTableSelectedDate = startOfDayMillis(selectedDate)
+                            },
+                            onConfigChanged = {
+                                rescheduleIfEnabled()
+                            },
+                            silencePermissionsGranted = hasDnd && hasAlarm,
+                            onEnableSilenceMaster = { changeAutoSilence(true) }
+                        )
+
+                        if (missingSilenceAccess || missingCallAccess) {
                             PermissionBanner(
-                                hasDnd = hasDnd,
-                                hasAlarm = hasAlarm,
-                                hasPhoneState = hasPhoneState,
+                                hasDnd = !autoSilenceEnabled || hasDnd,
+                                hasAlarm = !autoSilenceEnabled || hasAlarm,
+                                hasPhoneState = !missingCallAccess,
                                 onRequestPhoneState = {
                                     AnalyticsTracker.permissionStepResult(
                                         context = context,
@@ -1145,39 +1175,9 @@ fun MainScreen(
                                     )
                                     phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
                                 },
-                                context = context
+                                context = context,
                             )
                         }
-
-                        AnimatedVisibility(
-                            visible = showBatteryBanner,
-                            enter = expandVertically(),
-                            exit = shrinkVertically()
-                        ) {
-                            BatteryBanner(context = context)
-                        }
-
-                        PrayerSettingsCard(
-                            delegationId = delegationId,
-                            activity = activity,
-                            onChooseLocation = { locationPickerRequested = true },
-                            selectedDate = prayerTableSelectedDate,
-                            onSelectedDateChange = { selectedDate ->
-                                prayerTableSelectedDate = startOfDayMillis(selectedDate)
-                            },
-                            onConfigChanged = {
-                                rescheduleIfEnabled()
-                            },
-                            silencePermissionsGranted = hasDnd && hasAlarm,
-                            onEnableSilenceMaster = {
-                                if (!PrefsManager.isEnabled(context)) {
-                                    autoSilenceEnabled = true
-                                    PrefsManager.setEnabled(context, true)
-                                    AnalyticsTracker.autoSilenceStateChanged(context, true)
-                                }
-                                rescheduleIfEnabled()
-                            }
-                        )
 
                         ManualSilenceCard(
                             hasDnd = hasDnd,
@@ -1226,9 +1226,9 @@ fun MainScreen(
                         SunriseAndNightTimesCard(
                             delegationId = delegationId,
                             selectedDate = prayerTableSelectedDate,
-                            wakeAlarms = wakeAlarmsForPermission,
+                            wakeAlarms = storedWakeAlarms,
                             onEditWakeAlarm = { alarmId ->
-                                wakeAlarmsForPermission
+                                storedWakeAlarms
                                     ?.firstOrNull { alarm -> alarm.id == alarmId }
                                     ?.let { alarm ->
                                         pendingReturnToPrayersAfterEdit = true
@@ -1242,53 +1242,77 @@ fun MainScreen(
                             RamadanBadge()
                         }
 
-                        // Automatic silencing is configured in Settings.
-                        if (prayerTabSettingsOpen) {
+                        prayerTabSettingsPage?.let { page ->
                             PrayerTabSettingsSheet(
-                                autoSilenceEnabled = autoSilenceEnabled,
+                                page = page,
+                                onPageChange = { prayerTabSettingsPage = it },
+                                place = PrayerTimesRepository.place(context),
+                                selectedDate = prayerTableSelectedDate,
+                                onTimesChanged = {
+                                    delegationId = screenTimesId(context)
+                                    schedulerScope.launch {
+                                        ScheduleRefreshCoordinator.syncAll(context)
+                                        withContext(Dispatchers.Default) {
+                                            DhikrReminderScheduler.recheckSavedReminders(context)
+                                        }
+                                    }
+                                },
+                                autoSilenceEnabled = autoSilenceRequested,
                                 onAutoSilenceChange = ::changeAutoSilence,
                                 callEndVibrationEnabled = callEndVibrationEnabled,
                                 onCallEndVibrationChange = { enabled ->
                                     callEndVibrationEnabled = enabled
                                     PrefsManager.setCallEndVibrationEnabled(context, enabled)
+                                    if (enabled) ensureCallTrackingPermission()
                                 },
                                 autoLocationEnabled = autoLocationEnabled,
                                 onAutoLocationChange = { enabled ->
-                                    autoLocationEnabled = enabled
-                                    PrefsManager.setAutoLocationUpdateEnabled(context, enabled)
-                                    // Following a trip needs the location while the app is closed: asked as the switch goes on.
-                                    if (enabled && DelegationLocator.needsBackgroundLocationPermission(context)) {
-                                        backgroundLocationDisclosureOpen = true
+                                    if (enabled && !PrefsManager.hasConfirmedPlace(context)) {
+                                        Toast.makeText(context, R.string.travel_confirm_place, Toast.LENGTH_LONG).show()
+                                        prayerTabSettingsPage = null
+                                        locationPickerRequested = true
+                                    } else {
+                                        autoLocationEnabled = enabled
+                                        PrefsManager.setAutoLocationUpdateEnabled(context, enabled)
+                                        if (!enabled) PrefsManager.setBackgroundTravelEnabled(context, false)
+                                        if (enabled && !hasTravelLocation) {
+                                            travelPermissionLauncher.launch(DelegationLocator.requestedPermissions)
+                                        }
+                                        refreshTick++
                                     }
                                 },
-                                backgroundLocationNeeded = backgroundLocationNeeded,
-                                onAllowBackgroundLocation = { backgroundLocationDisclosureOpen = true },
-                                onShowPrayerTimeMethod = {
-                                    prayerTabSettingsOpen = false
-                                    prayerTimeMethodOpen = true
+                                access = PrayerSettingsAccess(
+                                    hasPhoneState = hasPhoneState,
+                                    hasForegroundLocation = hasTravelLocation,
+                                    backgroundTravelActive = PrefsManager.isBackgroundTravelEnabled(context) &&
+                                        DelegationLocator.hasBackgroundLocationPermission(context),
+                                    offerBatteryHelp = !hasBattery && (autoSilenceEnabled || storedWakeAlarms.orEmpty().any { it.enabled } ||
+                                        com.tunisianprayertimes.adhan.AdhanSettings.enabledPrayers(context).isNotEmpty()),
+                                ),
+                                onBackgroundTravelChange = { enabled ->
+                                    if (enabled && !PrefsManager.hasConfirmedPlace(context)) {
+                                        Toast.makeText(context, R.string.travel_confirm_place, Toast.LENGTH_LONG).show()
+                                        prayerTabSettingsPage = null
+                                        locationPickerRequested = true
+                                    } else if (enabled) {
+                                        backgroundLocationDisclosureOpen = true
+                                    } else {
+                                        PrefsManager.setBackgroundTravelEnabled(context, false)
+                                        refreshTick++
+                                    }
                                 },
-                                onDismiss = { prayerTabSettingsOpen = false },
-                                methodSection = { PrayerMethodSection(onTimesChanged = { delegationId = screenTimesId(context) }) },
-                                inmMethodIsExample = PrayerTimesRepository.place(context) !is PrayerPlace.Inm,
+                                onDismiss = { prayerTabSettingsPage = null },
                             )
                         }
                         if (backgroundLocationDisclosureOpen) {
                             BackgroundLocationDisclosure { granted ->
                                 backgroundLocationDisclosureOpen = false
-                                // The pre-prayer checks are armed only with the permission: schedule them now.
-                                if (granted) refreshTick++
+                                if (granted && PrefsManager.isAutoLocationUpdateEnabled(context) && PrefsManager.hasConfirmedPlace(context)) {
+                                    PrefsManager.setBackgroundTravelEnabled(context, true)
+                                }
+                                refreshTick++
                             }
                         }
-                        if (prayerTimeMethodOpen) {
-                            PrayerTimeMethodDialog(
-                                // Abroad, INM's worked example is always Tunis's (615, 6.11).
-                                delegationId = (PrayerTimesRepository.place(context) as? PrayerPlace.Inm)?.delegationId ?: PlaceResolution.TUNIS_DELEGATION_ID,
-                                selectedDate = prayerTableSelectedDate,
-                                onDismiss = { prayerTimeMethodOpen = false },
-                                asExample = PrayerTimesRepository.place(context) !is PrayerPlace.Inm,
-                            )
-                        }
-
                         Text(
                             text = stringResource(R.string.info_text),
                             fontSize = 12.sp,
@@ -1303,7 +1327,9 @@ fun MainScreen(
 
                     MainDestination.Alarms -> {
                         WakeAlarmCard(
-                            wakeAlarms = wakeAlarmsForPermission,
+                            wakeAlarms = storedWakeAlarms,
+                            exactAlarmsAllowed = hasAlarm,
+                            onPlaceRequired = { wakePlaceRequest = it },
                             delegationId = delegationId,
                             activity = activity,
                             awakeCheckRunning = awakeCheckRunning,
@@ -1479,6 +1505,7 @@ fun MainScreen(
             val isPersistedAlarm = wakeAlarms.any { existing -> existing.id == wakeAlarm.id }
             WakeEditorSheet(
                 activity = activity,
+                onPlaceRequired = { wakePlaceRequest = it },
                 delegationId = delegationId,
                 initialConfig = wakeAlarm,
                 isNewAlarm = !isPersistedAlarm,
@@ -1536,6 +1563,7 @@ fun MainScreen(
                     if (config.enabled &&
                         config.mainAlarm.mode == WakeMainAlarmMode.FROM_NOW &&
                         config.silenceUntilAlarm &&
+                        WakeAlarmScheduler.canScheduleExactAlarms(context) &&
                         WakeAlarmComputer.compute(Calendar.getInstance(), config, emptyList()).allTriggers.isNotEmpty()
                     ) {
                         WakeAlarmScheduler.activateSilenceUntilAlarm(context, config.id)
@@ -1543,13 +1571,6 @@ fun MainScreen(
                     } else if (com.tunisianprayertimes.wake.WakeAlarmScheduler.isSilencedAlarm(context, config.id)) {
                         WakeAlarmScheduler.removeSilenceUntilAlarm(context, config.id)
                         refreshSilenceState()
-                    }
-                    if (config.enabled) {
-                        if (!hasPostNotificationsPermission(context)) {
-                            requestWakeNotificationPermission()
-                        } else {
-                            requestFullScreenIntentIfNeeded()
-                        }
                     }
                 },
                 onEditSilenceWindowRequest = { draftConfig, conflict ->
@@ -1583,21 +1604,12 @@ fun MainScreen(
 
 @Composable
 private fun PhoneStatusNotice(
-    isPhoneSilenced: Boolean,
-    hasDnd: Boolean,
-    silenceReason: PhoneSilenceReason?,
+    statusText: String,
+    missingAccess: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val statusText = phoneStatusNoticeText(
-        context = context,
-        isPhoneSilenced = isPhoneSilenced,
-        hasDnd = hasDnd,
-        silenceReason = silenceReason,
-    ) ?: return
-
     val accentColor by animateColorAsState(
-        targetValue = if (!hasDnd) Color(0xFFFFD166) else Color(0xFFFFCDD2),
+        targetValue = if (missingAccess) Color(0xFFFFD166) else Color(0xFFFFCDD2),
         label = "phoneStatusAccent"
     )
 
@@ -1747,50 +1759,6 @@ private fun PermissionBanner(
     }
 }
 
-@Composable
-private fun BatteryBanner(context: Context) {
-    OutlinedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp)
-            .clickable {
-                AnalyticsTracker.permissionStepResult(
-                    context = context,
-                    permissionType = "battery_optimization",
-                    result = "request_opened",
-                    entryPoint = "main_banner",
-                )
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                intent.data = Uri.parse("package:${context.packageName}")
-                context.startActivity(intent)
-            },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = BannerBg),
-        border = androidx.compose.foundation.BorderStroke(1.dp, BannerStroke)
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_battery_alert),
-                contentDescription = null,
-                tint = BannerText,
-                modifier = Modifier
-                    .padding(end = 10.dp)
-                    .size(22.dp),
-            )
-            Text(
-                text = stringResource(R.string.banner_battery_missing),
-                fontSize = 13.sp,
-                color = BannerText,
-                lineHeight = 18.sp,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LocationPickerCard(
@@ -1890,16 +1858,6 @@ private fun LocationPickerCard(
         selectedLocation.delegationId !in availableIds
     var showSheet by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
-    var backgroundLocationOffer by remember { mutableStateOf(false) }
-
-    // Once, right after a fix the user asked for (Play wants the disclosure in the app's normal use): with the location
-    // also while the app is closed, the place follows a trip by itself (6.8).
-    fun offerBackgroundLocation() {
-        if (DelegationLocator.needsBackgroundLocationPermission(context) && !PrefsManager.isBackgroundLocationOffered(context)) {
-            PrefsManager.setBackgroundLocationOffered(context)
-            backgroundLocationOffer = true
-        }
-    }
     // A city abroad picked by hand, its first days being computed before it is stored.
     var preparingPlace by remember { mutableStateOf(false) }
     // Each choice of place (a pick, a lookup) takes a number: only the latest one is stored, whichever ends first.
@@ -1955,7 +1913,6 @@ private fun LocationPickerCard(
                     onDelegationSelected(result.delegation)
                     PrefsManager.setGpsLocation(context, result)
                     selectedLocation = PrefsManager.getLocationSelection(context)
-                    offerBackgroundLocation()
                 }
                 DelegationLocationResult.PermissionDenied -> {
                     AnalyticsTracker.permissionStepResult(
@@ -2037,10 +1994,12 @@ private fun LocationPickerCard(
     val abroad = savedPlace as? PrayerPlace.Coordinates
     val locationTitle = if (abroad != null) {
         PrefsManager.getPlaceNameSnapshot(context) ?: stringResource(R.string.location_current_place)
-    } else selectedLocation.name
-        ?: if (selectedLocation.fromGps) stringResource(R.string.location_current_position)
-        else stringResource(R.string.hint_search_delegation)
-    val hasLocation = abroad != null || selectedLocation.name != null || selectedLocation.fromGps
+    } else selectedLocation.name ?: savedDelegation?.nomAr ?: stringResource(when {
+        savedPlace == PrayerPlace.Inm(PlaceResolution.TUNIS_DELEGATION_ID) -> R.string.location_default_tunis
+        selectedLocation.fromGps -> R.string.location_current_position
+        else -> R.string.hint_search_delegation
+    })
+    val hasLocation = abroad != null || savedDelegation != null || selectedLocation.name != null || selectedLocation.fromGps
     val governorateName = remember(gouvernorats, delegationId) {
         gouvernorats.firstOrNull { gov -> gov.delegations.any { it.id == delegationId } }?.nomAr
     }
@@ -2053,9 +2012,12 @@ private fun LocationPickerCard(
     // A place abroad found by GPS is named by its catalogue city («قرب X»), a delegation by its neighbourhood.
     val gpsSource = stringResource(R.string.location_header_from_gps)
         .takeIf { selectedLocation.fromGps && (selectedLocation.name != null || abroad != null) }
+    val sourceContext = if (selectedLocation.name != null && savedDelegation != null &&
+        savedDelegation.nomAr != locationTitle && placeContext.isNotBlank()
+    ) stringResource(R.string.prayer_entry_time_reference, placeContext) else placeContext
     val locationSubtitle = if (abroad != null) {
         listOfNotNull(gpsSource, abroad.countryCode?.let { CitySearch.countryName(PlaceCountry.normalize(it)) }).joinToString(" · ")
-    } else listOfNotNull(gpsSource, placeContext.takeIf { it.isNotEmpty() })
+    } else listOfNotNull(gpsSource, sourceContext.takeIf { it.isNotEmpty() })
         .joinToString(" · ")
 
     Column(modifier = modifier.testTag(TestTags.LOCATION_PICKER)) {
@@ -2173,10 +2135,6 @@ private fun LocationPickerCard(
         }
     }
 
-    if (backgroundLocationOffer) {
-        BackgroundLocationDisclosure { backgroundLocationOffer = false }
-    }
-
     if (showSheet) {
         LocalityPickerSheet(
             catalog = pickerCatalog,
@@ -2263,7 +2221,6 @@ internal fun delegationSearchScore(delegation: Delegation, terms: List<String>):
 @Composable
 private fun TodayNextPrayerCard(
     delegationId: Int,
-    selectedDate: Long,
     isPhoneSilenced: Boolean,
     doNotDisturbActive: Boolean,
     hasDnd: Boolean,
@@ -2280,11 +2237,7 @@ private fun TodayNextPrayerCard(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    val currentCalendar = remember(currentTimeMillis) {
-        Calendar.getInstance().apply { timeInMillis = currentTimeMillis }
-    }
-    val currentDayMillis = remember(currentTimeMillis) { startOfDayMillis(currentTimeMillis) }
-    val timesKey = remember(delegationId, currentDayMillis) { PrayerTimesRepository.timesKey(context) }
+    val timesKey = remember(delegationId) { PrayerTimesRepository.timesKey(context) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -2361,7 +2314,11 @@ private fun TodayNextPrayerCard(
 private fun PrayerSettingsCard(
     delegationId: Int,
     activity: androidx.appcompat.app.AppCompatActivity,
+    placeConfirmed: Boolean,
+    timetableUncovered: Boolean,
+    autoSilenceEnabled: Boolean,
     onChooseLocation: () -> Unit,
+    pendingMethodRow: (@Composable () -> Unit)?,
     selectedDate: Long,
     onSelectedDateChange: (Long) -> Unit,
     onConfigChanged: () -> Unit,
@@ -2376,11 +2333,12 @@ private fun PrayerSettingsCard(
     val correctedCalendar = rememberTunisianHijriCalendar()
     val selectedHijriYear = correctedCalendar.date(calendarLocalDate(selectedDate)).year
     val lifecycleOwner = LocalLifecycleOwner.current
+    val displayedPlace = remember(delegationId) { PrayerTimesRepository.place(context) }
     var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val currentCalendar = remember(currentTimeMillis) {
         Calendar.getInstance().apply { timeInMillis = currentTimeMillis }
     }
-    val currentDayMillis = remember(currentTimeMillis) { startOfDayMillis(currentTimeMillis) }
+    val currentDayMillis = calendarDateMillis(java.time.Instant.ofEpochMilli(currentTimeMillis).atZone(displayedPlace.zone).toLocalDate())
     var lastCurrentDayMillis by remember { mutableLongStateOf(currentDayMillis) }
 
     DisposableEffect(lifecycleOwner) {
@@ -2439,7 +2397,7 @@ private fun PrayerSettingsCard(
     val phoneZone = java.time.ZoneId.systemDefault()
     // The five adhans of the prayer day shown, as instants (6.6).
     val dailyAnchors = remember(delegationId, selectedLocalDate, refreshTick, phoneZone) {
-        runCatching { prayerTimelineAnchors(context, selectedLocalDate) }.getOrDefault(emptyMap())
+        runCatching { prayerTimelineAnchors(context, selectedLocalDate, displayedPlace) }.getOrDefault(emptyMap())
     }
     // Dhuhr in the phone's clock, for the Eid rows' cut-off (Tunisia only, A10).
     val dhuhrClock = dailyAnchors[Prayer.DHUHR]?.let { Math.floorMod(it.minutes, 1440) } ?: (13 * 60)
@@ -2515,24 +2473,37 @@ private fun PrayerSettingsCard(
     var jumuaChooserOpen by remember { mutableStateOf(false) }
 
     // The next of the day's prayers, today only, by instant (Jumu'a in Dhuhr's place on a Friday).
-    val nextPrayer = if (isToday) {
+    val nextPrayer = if (isToday && dailyAnchors.isNotEmpty()) {
         val now = java.time.Instant.ofEpochMilli(currentTimeMillis)
         PrayerTimesRepository.prayerOccurrences(context, selectedLocalDate).firstOrNull { it.at > now }?.prayer
     } else null
 
     val dailyPrayers = remember { listOf(Prayer.FAJR, Prayer.DHUHR, Prayer.ASR, Prayer.MAGHRIB, Prayer.ISHA) }
-    val sectionPrayers = remember(isAidFitr, isAidAdha) {
+    val canFoldEditors = remember { PrefsManager.usesPlaceOnboarding(context) } && !autoSilenceEnabled
+    var editorsRequested by rememberSaveable { mutableStateOf(false) }
+    val compactTimes = canFoldEditors && !editorsRequested
+    val friday = selectedLocalDate.dayOfWeek == java.time.DayOfWeek.FRIDAY
+    val sectionPrayers = remember(compactTimes, friday, isAidFitr, isAidAdha) {
         buildList {
-            addAll(dailyPrayers)
-            add(Prayer.JOMOAA)
-            if (isAidFitr) add(Prayer.AID_FITR)
-            if (isAidAdha) add(Prayer.AID_ADHA)
+            for (prayer in dailyPrayers) {
+                add(if (compactTimes && friday && prayer == Prayer.DHUHR) Prayer.JOMOAA else prayer)
+                if (prayer == Prayer.FAJR && compactTimes) {
+                    if (isAidFitr) add(Prayer.AID_FITR)
+                    if (isAidAdha) add(Prayer.AID_ADHA)
+                }
+            }
+            if (!compactTimes) {
+                add(Prayer.JOMOAA)
+                if (isAidFitr) add(Prayer.AID_FITR)
+                if (isAidAdha) add(Prayer.AID_ADHA)
+            }
         }
     }
     // The editors' anchors (6.9, D8): each adhan as an instant; Jumu'a on the Friday on or after the date shown.
     val sectionAnchors: Map<Prayer, PrayerTimelineAnchor> = remember(
         delegationId, selectedLocalDate, refreshTick, silenceTimesRevision, isAidFitr, isAidAdha, selectedHijriYear, correctedCalendar, phoneZone,
     ) {
+        if (dailyAnchors.isEmpty()) return@remember emptyMap()
         val place = PrayerTimesRepository.place(context)
         buildMap {
             putAll(dailyAnchors)
@@ -2546,10 +2517,11 @@ private fun PrayerSettingsCard(
         }
     }
     // The next adhan after each row's, for the overlap warning.
-    val nextAnchors: Map<Prayer, PrayerTimelineAnchor?> = remember(sectionAnchors) {
-        sectionAnchors.mapValues { (_, anchor) -> nextTimelineAnchor(context, anchor) }
+    val nextAnchors: Map<Prayer, PrayerTimelineAnchor?> = remember(compactTimes, sectionAnchors) {
+        if (compactTimes) emptyMap() else sectionAnchors.mapValues { (_, anchor) -> nextTimelineAnchor(context, anchor) }
     }
-    val timelineScale = remember(sectionAnchors, refreshTick, sectionPrayers) {
+    val timelineScale = remember(compactTimes, sectionAnchors, refreshTick, sectionPrayers) {
+        if (compactTimes) return@remember null
         val entries = sectionPrayers.mapNotNull { prayer ->
             sectionAnchors[prayer]
                 ?.let { anchor -> anchor to resolvePrayerTimelineWindow(anchor, PrefsManager.getEffectiveConfig(context, prayer)) }
@@ -2610,7 +2582,25 @@ private fun PrayerSettingsCard(
                 )
             }
             // 6.11: the official zone the place maps to, and the place's UTC offset when the phone keeps another zone.
-            val listNotes = remember(delegationId, selectedLocalDate) { runCatching { timesListNotes(context, selectedLocalDate) }.getOrNull() }
+            val listNotes = remember(delegationId, selectedLocalDate, phoneZone) {
+                runCatching { timesListNotes(context, selectedLocalDate, phoneZone) }.getOrNull()
+            }
+            val methodName = remember(delegationId, dailyAnchors.isNotEmpty()) {
+                if (dailyAnchors.isEmpty()) return@remember null
+                if (displayedPlace is PrayerPlace.Inm) context.getString(R.string.today_inm_source)
+                else PrayerTimesRepository.choice(context, displayedPlace)?.let { com.tunisianprayertimes.MethodPresentation.name(it.methodId) }
+            }
+            if (pendingMethodRow != null) {
+                pendingMethodRow()
+            } else if (methodName != null && dailyAnchors.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.today_calculation_method, methodName),
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    color = PrayerSilencePalette.SecondaryText,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp).testTag("today_calculation_method"),
+                )
+            }
             listNotes?.zoneName?.let { zone ->
                 Text(
                     text = stringResource(R.string.list_zone_line, zone),
@@ -2621,7 +2611,7 @@ private fun PrayerSettingsCard(
             }
             listNotes?.placeOffset?.let { offset ->
                 Text(
-                    text = stringResource(R.string.list_place_offset, offset),
+                    text = stringResource(R.string.today_phone_clock, offset),
                     fontSize = 12.sp,
                     color = PrayerSilencePalette.SecondaryText,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp).testTag("times_place_offset"),
@@ -2680,9 +2670,30 @@ private fun PrayerSettingsCard(
                         else -> null
                     }
                     key(prayer) {
-                        PrayerRow(
+                        val timeRowModifier = if (isToday && timetableUncovered && anchor?.prayerDay == selectedLocalDate) {
+                            firstTimetableRowModifier(activity, displayedPlace, placeConfirmed)
+                        } else Modifier
+                        if (compactTimes) {
+                            CompactPrayerTimeRow(
+                                prayer = prayer,
+                                name = prayerNames.getValue(prayer),
+                                anchor = anchor,
+                                isNext = nextPrayer == prayer,
+                                onTimeClick = onTimeClick,
+                                modifier = timeRowModifier,
+                            )
+                            if (prayer == Prayer.FAJR) {
+                                val sunrise = remember(displayedPlace, selectedLocalDate, refreshTick) {
+                                    PrayerTimesRepository.prayerDay(context, selectedLocalDate, displayedPlace)
+                                        ?.get(com.tunisianprayertimes.engine.TimeEvent.SUNRISE)
+                                }
+                                HorizontalDivider(color = PrayerSilencePalette.SoftBorder, thickness = 1.dp)
+                                CompactSunriseRow(sunrise, selectedLocalDate, phoneZone)
+                            }
+                        } else PrayerRow(
                             prayer = prayer,
                             prayerName = prayerNames[prayer] ?: prayer.name,
+                            modifier = timeRowModifier,
                             anchor = anchor,
                             nextAnchor = nextAnchor,
                             isNextPrayer = prayer == nextPrayer && prayer != Prayer.JOMOAA,
@@ -2701,6 +2712,14 @@ private fun PrayerSettingsCard(
                     }
                 }
 
+                if (canFoldEditors) {
+                    TextButton(
+                        onClick = { editorsRequested = !editorsRequested },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("today_toggle_silence_editors"),
+                    ) {
+                        Text(stringResource(if (compactTimes) R.string.today_show_silence_editors else R.string.today_show_timetable), color = GreenPrimaryDark)
+                    }
+                }
                 if (jumuaChooserOpen) {
                     // Per country abroad (6.9, A18), today's keys in Tunisia; times shown in the phone's clock, as the rows.
                     val place = PrayerTimesRepository.place(context)
@@ -2754,7 +2773,7 @@ private fun PrayerSettingsCard(
                     )
                 }
 
-                if (!silencePermissionsGranted && anyPrayerEnabled) {
+                if (autoSilenceEnabled && !silencePermissionsGranted && anyPrayerEnabled) {
                     Text(
                         text = stringResource(R.string.prayer_silence_permission_needed),
                         modifier = Modifier
@@ -2803,14 +2822,18 @@ private fun PrayerSettingsCard(
                 Box(modifier = Modifier.padding(vertical = 12.dp)) {
                     PrayerDataUnavailable(
                         isToday = isToday,
-                        onReturnToToday = { onSelectedDateChange(startOfDayMillis(System.currentTimeMillis())) },
+                        onReturnToToday = { onSelectedDateChange(calendarDateMillis(LocalDate.now(displayedPlace.zone))) },
                         onChooseLocation = onChooseLocation,
+                        onRetry = { refreshTick++ },
                     )
                 }
             }
         }
     }
 
+    if (placeConfirmed && isToday && dailyAnchors.isNotEmpty()) {
+        FirstRunFeatureSuggestion()
+    }
     if (sharedSheetOpen) {
         val sharedAnchors = dailyPrayers.mapNotNull { prayer -> sectionAnchors[prayer]?.let { prayer to it } }.toMap()
         val sharedInitial = remember(sharedSheetOpen, refreshTick, selectedDate, delegationId) {
@@ -2914,7 +2937,8 @@ private fun SunriseAndNightTimesCard(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    val currentDayMillis = remember(currentTimeMillis) { startOfDayMillis(currentTimeMillis) }
+    val placeZone = remember(delegationId) { PrayerTimesRepository.place(context).zone }
+    val currentDayMillis = calendarDateMillis(java.time.Instant.ofEpochMilli(currentTimeMillis).atZone(placeZone).toLocalDate())
     val selectedDayMillis = remember(selectedDate) { startOfDayMillis(selectedDate) }
     val selectedCalendar = remember(selectedDayMillis) {
         Calendar.getInstance().apply { timeInMillis = selectedDayMillis }
@@ -3060,6 +3084,8 @@ private fun SunriseAndNightTimesCard(
 @Composable
 private fun WakeAlarmCard(
     wakeAlarms: List<PrayerWakeConfig>?,
+    exactAlarmsAllowed: Boolean,
+    onPlaceRequired: (PrayerWakeConfig) -> Unit,
     delegationId: Int,
     activity: androidx.appcompat.app.AppCompatActivity,
     awakeCheckRunning: Boolean,
@@ -3082,14 +3108,15 @@ private fun WakeAlarmCard(
     var alarmPendingDeletion by remember { mutableStateOf<PrayerWakeConfig?>(null) }
     // Every stored alarm, a finished one-off included: its occurrence can still be in progress.
     val storedWakeAlarms = wakeAlarms.orEmpty()
+    val canUsePrayerTimes = PrefsManager.canUsePlaceForAutomation(context)
     // An occurrence is in progress from its earliest ring to its latest, so the windows are worked out once a day.
     val todayStartMillis = startOfDayMillis(nowMillis)
-    val windowsByAlarm = remember(storedWakeAlarms, delegationId, todayStartMillis) {
+    val windowsByAlarm = remember(storedWakeAlarms, delegationId, canUsePrayerTimes, todayStartMillis) {
         storedWakeAlarms.associate { alarm ->
             alarm.id to WakeAlarmScheduler.occurrenceWindows(context, alarm)
         }
     }
-    var nextTriggers by remember(storedWakeAlarms, delegationId) {
+    var nextTriggers by remember(storedWakeAlarms, delegationId, canUsePrayerTimes) {
         mutableStateOf(nextWakeAlarmTriggersById(context, delegationId, storedWakeAlarms))
     }
     var runningOccurrences by remember(storedWakeAlarms, windowsByAlarm) {
@@ -3120,7 +3147,9 @@ private fun WakeAlarmCard(
     val loadedWakeAlarms = displayState.visibleWakeAlarms
     // The hero and every row read the same state, so they cannot tell different stories.
     val nowByAlarm = loadedWakeAlarms.associate { alarm ->
-        alarm.id to wakeAlarmNow(nextTriggers[alarm.id], runningOccurrences[alarm.id])
+        val placeReady = canUsePrayerTimes || alarm.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE
+        val next = nextTriggers[alarm.id].takeIf { placeReady && (exactAlarmsAllowed || !alarm.enabled) }
+        alarm.id to wakeAlarmNow(next, runningOccurrences[alarm.id])
     }
     // The hero shows what happens next across the alarms: a ring going or a check asking first, then whatever is
     // late or nearest, whether it belongs to an occurrence in progress or to the next one.
@@ -3159,6 +3188,17 @@ private fun WakeAlarmCard(
         modifier = Modifier
             .fillMaxWidth(),
     ) {
+        val pendingAlarms = loadedWakeAlarms.filter { it.hasFutureWakeTriggers(nowMillis) }
+        if (!canUsePrayerTimes) {
+            pendingAlarms.firstOrNull { it.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE }?.let { alarm ->
+                OutlinedButton(onClick = { onPlaceRequired(alarm) }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    Text(stringResource(R.string.wake_access_confirm_place))
+                }
+            }
+        }
+        if (pendingAlarms.any { canUsePrayerTimes || it.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE }) {
+            WakeAlarmAccessNotice(activity, saved = true, modifier = Modifier.padding(bottom = 12.dp))
+        }
         if (heroAlarm != null) {
             val (alarm, alarmNow) = heroAlarm
             Box(modifier = Modifier.padding(bottom = 12.dp)) {
@@ -3226,11 +3266,15 @@ private fun WakeAlarmCard(
                 nowMillis = nowMillis,
                 onEditAlarm = onEditAlarm,
                 onEnabledChange = { wakeAlarm, enabled ->
-                    coroutineScope.launch {
-                        val updatedAlarm = wakeAlarm.copy(enabled = enabled)
-                        wakeRepository.saveWakeConfig(updatedAlarm)
-                        AnalyticsTracker.wakeAlarmSaved(context, updatedAlarm)
-                        onConfigChanged()
+                    val updatedAlarm = wakeAlarm.copy(enabled = enabled)
+                    if (enabled && wakeAlarm.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE && !PrefsManager.hasConfirmedPlace(context)) {
+                        onPlaceRequired(updatedAlarm)
+                    } else {
+                        coroutineScope.launch {
+                            wakeRepository.saveWakeConfig(updatedAlarm)
+                            AnalyticsTracker.wakeAlarmSaved(context, updatedAlarm)
+                            onConfigChanged()
+                        }
                     }
                 },
                 onDeleteRequest = { alarm -> alarmPendingDeletion = alarm },
@@ -3301,7 +3345,7 @@ private fun WakeQuickAddSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color.White,
@@ -3535,7 +3579,7 @@ private fun WakeAlarmListPanel(
 }
 
 @Composable
-private fun WakeNextAlarmPanel(
+internal fun WakeNextAlarmPanel(
     wakeConfig: PrayerWakeConfig,
     alarmNow: WakeAlarmNow,
     nowMillis: Long,
@@ -3577,6 +3621,10 @@ private fun WakeNextAlarmPanel(
         WakeAlarmFocus.AWAKE_CHECK -> alarmNow.awakeCheckAtMillis ?: alarmNow.occurrenceAtMillis
         else -> shownRing?.atMillis ?: alarmNow.occurrenceAtMillis
     }
+    val shownDate = calendarLocalDate(shownAtMillis)
+    val calendar = rememberTunisianHijriCalendar()
+    val hijriDate = remember(shownDate, calendar) { hijriDateLabel(calendar.date(shownDate)) }
+    LoadOfficialCalendarYear(algorithmicHijriYear(shownDate))
     val shownIsExtra = focus != WakeAlarmFocus.AWAKE_CHECK && shownRing?.isExtra == true
     val titleRes = when (focus) {
         WakeAlarmFocus.RING ->
@@ -3604,41 +3652,36 @@ private fun WakeNextAlarmPanel(
         else -> stringResource(R.string.wake_editor_hero_countdown, countdown)
     }
     HeroCardSurface(modifier = Modifier.heightIn(min = MainHeroCardHeight)) {
-        BoxWithConstraints(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 17.dp, vertical = 13.dp)
                 .heightIn(min = 122.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            val sideBySide = maxWidth >= 270.dp && LocalDensity.current.fontScale <= 1.3f
-            val detailsWidth = maxWidth * 0.55f
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                WakeNextAlarmDetails(
-                    titleRes = titleRes,
-                    iconRes = iconRes,
-                    timeText = formatTimeOfDay(shownAtMillis),
-                    dateText = formatWakeAlarmDate(shownAtMillis),
-                    summaryText = summaryText,
-                    modifier = if (sideBySide) Modifier.width(detailsWidth) else Modifier.fillMaxWidth(),
+            WakeNextAlarmDetails(
+                titleRes = titleRes,
+                iconRes = iconRes,
+                timeText = formatTimeOfDay(shownAtMillis),
+                gregorianDateText = formatWakeAlarmDate(shownAtMillis),
+                hijriDateText = hijriDate,
+                summaryText = summaryText,
+            )
+            if (countdownText != null) {
+                WakeNextAlarmCountdown(text = countdownText, color = Gold)
+            }
+            if (showsTimeline) {
+                WakeNextAlarmTimeline(
+                    stops = wakeTimelineStops(
+                        offsets = ringOffsets,
+                        occurrenceAtMillis = alarmNow.occurrenceAtMillis,
+                        highlightedAtMillis = shownRing?.atMillis,
+                        highlightedOngoing = focus == WakeAlarmFocus.RINGING && !alarmNow.ringWaiting,
+                        awakeCheck = awakeCheck,
+                    ),
+                    nowMillis = nowMillis,
+                    formatTime = ::formatTimeOfDay,
                 )
-                // Counts to the next ring, whether it is the alarm or one of its extras, or to the awake check.
-                // It sits outside the narrower details column so it stays on one line, in the timeline's gold.
-                if (countdownText != null) {
-                    WakeNextAlarmCountdown(text = countdownText, color = Gold)
-                }
-                if (showsTimeline) {
-                    WakeNextAlarmTimeline(
-                        stops = wakeTimelineStops(
-                            offsets = ringOffsets,
-                            occurrenceAtMillis = alarmNow.occurrenceAtMillis,
-                            highlightedAtMillis = shownRing?.atMillis,
-                            highlightedOngoing = focus == WakeAlarmFocus.RINGING && !alarmNow.ringWaiting,
-                            awakeCheck = awakeCheck,
-                        ),
-                        nowMillis = nowMillis,
-                        formatTime = ::formatTimeOfDay,
-                    )
-                }
             }
         }
     }
@@ -3700,15 +3743,15 @@ internal fun WakeNextAlarmDetails(
     titleRes: Int,
     iconRes: Int,
     timeText: String,
-    dateText: String,
+    gregorianDateText: String,
+    hijriDateText: String,
     summaryText: String?,
-    modifier: Modifier = Modifier,
 ) {
     val largeText = LocalDensity.current.fontScale > 1.3f
     val alarmIconSize = 34.dp
     val alarmTextInset = alarmIconSize + 8.dp
     Column(
-        modifier = modifier,
+        modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(
@@ -3734,17 +3777,22 @@ internal fun WakeNextAlarmDetails(
                 style = TextStyle(fontFamily = AppFontFamily, textDirection = TextDirection.Ltr, fontFeatureSettings = "tnum"),
             )
         }
-        Text(
-            text = dateText,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color.White.copy(alpha = 0.9f),
-            modifier = Modifier.padding(start = alarmTextInset),
-        )
+        Column(modifier = Modifier.padding(start = alarmTextInset)) {
+            Text(
+                text = hijriDateText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White.copy(alpha = 0.9f),
+            )
+            Text(
+                text = gregorianDateText,
+                fontSize = 14.sp,
+                color = Color.White.copy(alpha = 0.9f),
+            )
+        }
         if (summaryText != null) {
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .clip(RoundedCornerShape(50))
                     .background(Color.White.copy(alpha = 0.91f))
                     .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -3757,7 +3805,7 @@ internal fun WakeNextAlarmDetails(
                     lineHeight = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = GreenPrimaryDark,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 Icon(
                     painter = painterResource(R.drawable.ic_adhkar_bell),
@@ -3927,7 +3975,8 @@ internal fun NextPrayerHeroCard(
     }
     // Always say what will happen at the next prayer; a missing Do Not Disturb
     // permission is already explained by the phone-status notice above.
-    val silenceLine = if (!hasDnd) null else when (val plan = upcomingSilence) {
+    val timesOnly = !autoSilenceEnabled && remember { PrefsManager.usesPlaceOnboarding(context) }
+    val silenceLine = if (!hasDnd || timesOnly) null else when (val plan = upcomingSilence) {
         is UpcomingSilence.Window -> HeroSilenceLine(
             text = stringResource(
                 R.string.next_prayer_silence_window,
@@ -3992,6 +4041,7 @@ internal fun NextPrayerHeroCard(
                     countdownPillTextColor = countdownPillTextColor,
                     isPhoneSilenced = isPhoneSilenced,
                     hasDnd = hasDnd,
+                    showMissingDnd = autoSilenceEnabled,
                     silenceReason = silenceReason,
                     modifier = Modifier.fillMaxWidth().align(Alignment.TopStart),
                     textWidthFraction = 0.6f,
@@ -4016,6 +4066,7 @@ internal fun NextPrayerHeroCard(
                         countdownPillTextColor = countdownPillTextColor,
                         isPhoneSilenced = isPhoneSilenced,
                         hasDnd = hasDnd,
+                        showMissingDnd = autoSilenceEnabled,
                         silenceReason = silenceReason,
                         modifier = Modifier.fillMaxWidth(),
                         headerAction = silenceControl,
@@ -4044,6 +4095,7 @@ private fun NextPrayerHeroDetails(
     countdownPillTextColor: Color,
     isPhoneSilenced: Boolean,
     hasDnd: Boolean,
+    showMissingDnd: Boolean,
     silenceReason: PhoneSilenceReason?,
     modifier: Modifier = Modifier,
     textWidthFraction: Float = 1f,
@@ -4178,12 +4230,12 @@ private fun NextPrayerHeroDetails(
                 isPhoneSilenced = isPhoneSilenced,
                 hasDnd = hasDnd,
                 silenceReason = silenceReason,
+                showMissingDnd = showMissingDnd,
             )
             if (phoneStatusText != null) {
                 PhoneStatusNotice(
-                    isPhoneSilenced = isPhoneSilenced,
-                    hasDnd = hasDnd,
-                    silenceReason = silenceReason,
+                    statusText = phoneStatusText,
+                    missingAccess = !hasDnd && showMissingDnd,
                 )
             } else if (silenceLine != null) {
                 Row(
@@ -4298,6 +4350,7 @@ private fun WakeAlarmFeatureChip(text: String) {
 private fun PrayerRow(
     prayer: Prayer,
     prayerName: String,
+    modifier: Modifier = Modifier,
     anchor: PrayerTimelineAnchor?,
     nextAnchor: PrayerTimelineAnchor?,
     isNextPrayer: Boolean,
@@ -4457,8 +4510,7 @@ private fun PrayerRow(
         else -> null
     }
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
             .background(if (highlighted) GoldLight.copy(alpha = 0.30f) else Color.Transparent),
     ) {
         if (anchor != null && window != null) {
@@ -4472,7 +4524,12 @@ private fun PrayerRow(
                 enabled = if (usesDraft) true else prayerEnabled,
                 showSwitch = showEnableSwitch && !usesDraft,
                 isNextPrayer = isNextPrayer,
-                onEnabledChange = { newValue ->
+                onEnabledChange = changePrayer@{ newValue ->
+                    if (newValue && !PrefsManager.hasConfirmedPlace(context)) {
+                        com.tunisianprayertimes.MainActivityPendingIntents.choosePlace(context).send()
+                        Toast.makeText(context, R.string.prayer_entry_confirm_to_schedule, Toast.LENGTH_LONG).show()
+                        return@changePrayer
+                    }
                     prayerEnabled = newValue
                     PrefsManager.setPrayerSilenceEnabled(context, prayer, newValue)
                     if (newValue && !PrefsManager.isEnabled(context)) {
@@ -5518,17 +5575,6 @@ private fun hasExactAlarmPermission(context: Context): Boolean {
     return true
 }
 
-private fun hasPostNotificationsPermission(context: Context): Boolean =
-    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-        ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-
-private fun hasFullScreenIntentPermission(context: Context): Boolean =
-    Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
-        context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
-
 private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
     val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     return pm.isIgnoringBatteryOptimizations(context.packageName)
@@ -5661,7 +5707,10 @@ internal fun scheduledWakeAlarmTriggersForDay(
 @Composable
 private fun ProvisionalPlaceBanner(onConfirm: () -> Unit, onChange: () -> Unit) {
     val context = LocalContext.current
-    val label = remember { PrefsManager.getPlaceNameSnapshot(context) ?: context.getString(R.string.location_default_tunis) }
+    val place = PrefsManager.getPlace(context)
+    val label = PrefsManager.getPlaceNameSnapshot(context)
+        ?: PrefsManager.getLocationSelection(context).name
+        ?: context.getString(R.string.location_default_tunis).takeIf { place == PrayerPlace.Inm(PlaceResolution.TUNIS_DELEGATION_ID) }
     // Inside the page's own 16 dp margins, under the place header.
     Column(
         modifier = Modifier
@@ -5674,14 +5723,19 @@ private fun ProvisionalPlaceBanner(onConfirm: () -> Unit, onChange: () -> Unit) 
             .testTag("provisional_place_banner"),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(stringResource(R.string.location_confirm_title), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = BannerText)
-        Text(stringResource(R.string.location_confirm_text, label), fontSize = 13.sp, color = TextDark, lineHeight = 19.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = if (label == null) stringResource(R.string.today_unnamed_suggestion) else stringResource(R.string.today_suggested_place, label),
+            fontSize = 15.sp, fontWeight = FontWeight.Bold, color = BannerText,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = onConfirm, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.location_confirm_yes), color = GreenPrimaryDark, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = if (label == null) stringResource(R.string.location_confirm_title) else stringResource(R.string.today_confirm_place, label),
+                    color = GreenPrimaryDark, fontWeight = FontWeight.SemiBold,
+                )
             }
             TextButton(onClick = onChange, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.location_confirm_change), color = GreenPrimaryDark)
+                Text(stringResource(R.string.today_change_place), color = GreenPrimaryDark)
             }
         }
     }

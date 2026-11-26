@@ -184,7 +184,7 @@ class WakeAlarmLayoutTest {
         show(2f) {
             Column(Modifier.width(260.dp).verticalScroll(rememberScrollState())) {
                 WakeNextAlarmDetails(R.string.wake_alarm_next_title, R.drawable.ic_tab_alarms,
-                    "12:59", "غدًا، الثلاثاء 24 نوفمبر",
+                    "12:59", "الثلاثاء 24 نوفمبر", "14 جمادى الثانية 1448 هـ",
                     "منبه قبل صلاة الفجر بعشرين دقيقة مع تأكيد الاستيقاظ")
             }
         }

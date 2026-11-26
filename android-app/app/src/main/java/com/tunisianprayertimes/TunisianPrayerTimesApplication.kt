@@ -1,10 +1,12 @@
 package com.tunisianprayertimes
 
-import com.tunisianprayertimes.mosque.SilenceCoordinator
-
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import com.tunisianprayertimes.adhkar.DhikrReminderScheduler
+import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
+import com.tunisianprayertimes.mosque.MosqueSilenceSettings
+import com.tunisianprayertimes.mosque.SilenceCoordinator
 import com.tunisianprayertimes.platform.SharedAndroid
 import com.tunisianprayertimes.platform.SilenceController
 import com.tunisianprayertimes.platform.TimerScheduler
@@ -28,6 +30,12 @@ class TunisianPrayerTimesApplication : Application() {
     private var dhikrLocationSubscription: (() -> Unit)? = null
     private var launcherShortcutsSubscription: (() -> Unit)? = null
 
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        // WorkManager's startup provider can run before Application.onCreate.
+        PrefsManager.initializeFirstRun(this)
+    }
+
     override fun onCreate() {
         super.onCreate()
         // Preferences, official Ramadan/Eid dates and the prayer-time and location loaders,
@@ -35,6 +43,18 @@ class TunisianPrayerTimesApplication : Application() {
         SharedAndroid.init(this)
         // Cleanup only: a process start never acquires mosque location or revives stored presence.
         SilenceCoordinator.recover(this)
+        AndroidAutoConnection.observe(this)
+        val locationSwitch = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+                if (MosqueSilenceSettings.combined(context)) {
+                    // A switch change can release DND or authorize schedule fallback, but cannot start a location service.
+                    MosqueSilenceMonitor.reconcile(context)
+                }
+            }
+        }
+        val locationFilter = android.content.IntentFilter(android.location.LocationManager.MODE_CHANGED_ACTION)
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(locationSwitch, locationFilter, RECEIVER_NOT_EXPORTED)
+        else registerReceiver(locationSwitch, locationFilter)
         launcherShortcutsSubscription = LauncherShortcuts.observe(this)
         AnalyticsTracker.applyRegionalCollection(this)
         SilenceController.init(this)

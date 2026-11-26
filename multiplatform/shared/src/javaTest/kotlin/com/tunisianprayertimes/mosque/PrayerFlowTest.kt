@@ -54,6 +54,20 @@ class PrayerFlowTest {
     }
 
     @Test
+    fun defaultDhuhrUsesOnePmAndFallsBackWhenTheAdhanIsLater() {
+        val schedule = MosqueSchedule.DEFAULT
+        val dayTimes = times()
+        val dhuhr = PrayerFlow.eventsFor(tuesday, dayTimes, schedule).single { it.prayer == Prayer.DHUHR }
+        assertEquals(at(tuesday, "13:00:00"), dhuhr.iqamahAt)
+        assertFalse(dhuhr.iqamahAdjusted)
+
+        val lateAdhan = dayTimes.copy(dhuhr = PrayerTime(Prayer.DHUHR, 13, 5))
+        val moved = PrayerFlow.eventsFor(tuesday, lateAdhan, schedule).single { it.prayer == Prayer.DHUHR }
+        assertEquals(at(tuesday, "13:15:00"), moved.iqamahAt)
+        assertTrue(moved.iqamahAdjusted)
+    }
+
+    @Test
     fun phaseEndIsTheNextBoundary() {
         val events = PrayerFlow.eventsFor(tuesday, times(), MosqueSchedule.DEFAULT)
         assertEquals(at(tuesday, "18:13:00"), PrayerFlow.stateAt(at(tuesday, "18:12:00"), events).phaseEndsAt)

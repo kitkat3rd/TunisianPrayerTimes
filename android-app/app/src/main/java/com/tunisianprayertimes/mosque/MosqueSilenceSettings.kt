@@ -18,6 +18,9 @@ object MosqueSilenceSettings {
     fun acceptBackgroundDisclosure(context: Context) = prefs(context).edit().putBoolean("background_disclosure", true).apply()
 
     internal fun enroll(context: Context) = prefs(context).edit().putBoolean("owned_rules", true).commit()
-    internal fun saveMode(context: Context, mode: AutomaticSilenceMode) =
-        prefs(context).edit().putString("mode", mode.name).commit()
+    internal fun saveMode(context: Context, mode: AutomaticSilenceMode, backgroundUseExplained: Boolean = false): Boolean {
+        val editor = prefs(context).edit().putString("mode", mode.name)
+        if (backgroundUseExplained) editor.putBoolean("background_disclosure", true)
+        return editor.commit()
+    }
 }

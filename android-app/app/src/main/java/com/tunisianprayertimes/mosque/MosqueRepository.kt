@@ -21,6 +21,7 @@ class Mosque internal constructor(
     val automaticSilencingEligible: Boolean,
     val boundaryCoverageStatus: String,
     internal val polygons: List<MosquePolygon>,
+    internal val coordinate: MosqueCoordinate? = null,
 )
 
 data class MosqueLocationFix(
@@ -154,6 +155,11 @@ internal fun parseMosqueCatalog(root: JSONObject): MosqueCatalog {
             automaticSilencingEligible = automaticEligible,
             boundaryCoverageStatus = properties.nullableString("boundaryCoverageStatus") ?: "coverage_unreviewed",
             polygons = polygons,
+            coordinate = properties.optJSONArray("coordinate")?.let { point ->
+                val latitude = point.optDouble(1)
+                val longitude = point.optDouble(0)
+                if (validMosqueCoordinates(latitude, longitude)) MosqueCoordinate(longitude, latitude) else null
+            },
         )
     }
     return MosqueCatalog(mosques)

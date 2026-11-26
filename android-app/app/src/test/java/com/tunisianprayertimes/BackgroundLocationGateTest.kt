@@ -46,31 +46,65 @@ class BackgroundLocationGateTest {
 
     @Test
     fun withoutBackgroundLocation_noPrePrayerCheckIsArmed() {
+        PrefsManager.setBackgroundTravelEnabled(context, true)
         SilenceScheduler.scheduleAll(context)
 
         assertTrue(alarms.scheduledAlarms.isNotEmpty())
         assertEquals(0, prePrayerChecks())
-        assertTrue(DelegationLocator.needsBackgroundLocationPermission(context))
+        assertFalse(DelegationLocator.canUpdateTravelInBackground(context))
     }
 
     @Test
-    fun withBackgroundLocation_thePrePrayerChecksAreArmed() {
+    fun withBackgroundTravelAndPermission_thePrePrayerChecksAreArmed() {
         shadowOf(context as Application).grantPermissions(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        PrefsManager.setBackgroundTravelEnabled(context, true)
 
         SilenceScheduler.scheduleAll(context)
 
         assertTrue(prePrayerChecks() > 0)
-        assertFalse(DelegationLocator.needsBackgroundLocationPermission(context))
+        assertTrue(DelegationLocator.canUpdateTravelInBackground(context))
     }
 
     @Test
     fun withAutoLocationOff_nothingIsAskedOrArmed() {
         shadowOf(context as Application).grantPermissions(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        PrefsManager.setBackgroundTravelEnabled(context, true)
         PrefsManager.setAutoLocationUpdateEnabled(context, false)
 
         SilenceScheduler.scheduleAll(context)
 
         assertEquals(0, prePrayerChecks())
-        assertFalse(DelegationLocator.needsBackgroundLocationPermission(context))
+        assertFalse(PrefsManager.isBackgroundTravelEnabled(context))
+        assertFalse(DelegationLocator.canUpdateTravelInBackground(context))
+    }
+
+    @Test
+    fun grantingLocationForAnotherFeatureCannotEnableTravelAfterUpgrade() {
+        PrefsManager.markFirstLaunchDone(context)
+        PrefsManager.initializeFirstRun(context)
+        shadowOf(context as Application).grantPermissions(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+
+        SilenceScheduler.scheduleAll(context)
+
+        assertFalse(PrefsManager.isBackgroundTravelEnabled(context))
+        assertEquals(0, prePrayerChecks())
+    }
+
+    @Test
+    fun legacyTravelWithExistingBackgroundAccessIsPreservedAtUpgrade() {
+        shadowOf(context as Application).grantPermissions(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        PrefsManager.markFirstLaunchDone(context)
+        PrefsManager.initializeFirstRun(context)
+
+        assertTrue(DelegationLocator.canUpdateTravelInBackground(context))
+    }
+
+    @Test
+    @Config(sdk = [28])
+    fun olderAndroidForegroundGrantStillRequiresAnExplicitTravelChoice() {
+        assertTrue(DelegationLocator.hasBackgroundLocationPermission(context))
+        assertFalse(DelegationLocator.canUpdateTravelInBackground(context))
+        PrefsManager.setBackgroundTravelEnabled(context, true)
+        assertTrue(DelegationLocator.canUpdateTravelInBackground(context))
     }
 }

@@ -1,13 +1,13 @@
 package com.tunisianprayertimes
 
-import com.tunisianprayertimes.mosque.MosqueSilenceSettings
-import com.tunisianprayertimes.mosque.SilenceCoordinator
-import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
-
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.tunisianprayertimes.mosque.MosquePeriods
+import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
+import com.tunisianprayertimes.mosque.MosqueSilenceSettings
+import com.tunisianprayertimes.mosque.SilenceCoordinator
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +23,19 @@ class SilenceReceiver : BroadcastReceiver() {
         Log.d(TAG, "Received action: $action")
 
         when (action) {
+            SilenceScheduler.ACTION_MOSQUE_OBSERVE -> {
+                if (!PrefsManager.isEnabled(context) || !MosqueSilenceSettings.combined(context)) return
+                val prayer = intent.getStringExtra(SilenceScheduler.EXTRA_PRAYER)?.let { runCatching { Prayer.valueOf(it) }.getOrNull() } ?: return
+                val day = SilenceScheduler.prayerDayOf(intent) ?: return
+                val w = SilenceScheduler.windowOf(context, prayer, day) ?: return
+                val now = SilenceScheduler.now()
+                if (SilenceScheduler.isDismissed(context, prayer, day) || now >= w.start ||
+                    now.toEpochMilli() < MosquePeriods.earlyStart(w)) return
+                val scope = MosquePeriods.from(listOf(w), now.toEpochMilli())
+                if (scope.observation != null) MosqueSilenceMonitor.reconcile(context, canStart = true)
+            }
             "com.tunisianprayertimes.ACTION_SILENCE" -> {
+                if (!PrefsManager.isEnabled(context)) return
                 val prayerName = intent.getStringExtra("extra_prayer") ?: "UNKNOWN"
                 val prayer = runCatching { Prayer.valueOf(prayerName) }.getOrNull()
                 if (prayer != null && !PrefsManager.isPrayerSilenceEnabled(context, prayer)) {
@@ -49,22 +61,22 @@ class SilenceReceiver : BroadcastReceiver() {
                     Log.d(TAG, "User already dismissed silence for $prayerName, skipping")
                     return
                 }
-                Log.d(TAG, "Silencing phone for $prayerName")
+                Log.d(TAG, "Handling the silence window for $prayerName")
                 PrefsManager.clearAutoSilenceDismissed(context)
                 if (MosqueSilenceSettings.combined(context)) {
                     // Exact, user-requested existing window callback: legal bounded FGS start route.
-                    MosqueSilenceMonitor.reconcile(context, canStart = true)
+                    MosqueSilenceMonitor.reconcile(context, canStart = true, burst = true)
                 } else {
                     SilenceModeController.enableAutoSilence(context, prayer)
                 }
                 // Update delegation from cached location in the background,
                 // so the next reschedule uses the correct prayer times. Android gives
                 // no location here without the background-location permission (6.8).
-                if (PrefsManager.isAutoLocationUpdateEnabled(context) && DelegationLocator.canLocateFromBackground(context)) {
+                if (DelegationLocator.canUpdateTravelInBackground(context)) {
                     val pendingResult = goAsync()
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            if (DelegationLocator.updateDelegationFromLastLocation(context)) {
+                            if (DelegationLocator.updatePlaceFromLastLocation(context, background = true) == DelegationLocator.FixOutcome.CHANGED) {
                                 Log.d(TAG, "Delegation updated at prayer $prayerName, rescheduling")
                                 SilenceScheduler.scheduleAll(context)
                             }
@@ -79,11 +91,13 @@ class SilenceReceiver : BroadcastReceiver() {
             "com.tunisianprayertimes.ACTION_UNSILENCE" -> {
                 val prayerName = intent.getStringExtra("extra_prayer") ?: "UNKNOWN"
                 Log.d(TAG, "Restoring normal mode after $prayerName")
+                if (MosqueSilenceSettings.combined(context)) {
+                    // Recompute current prayer coverage, including any overlapping observation period.
+                    MosqueSilenceMonitor.reconcile(context)
+                    return
+                }
                 if (MosqueSilenceSettings.usesOwnedRules(context)) {
-                    if (MosqueSilenceSettings.combined(context)) {
-                        // May continue only on another actual, non-dismissed containing window.
-                        MosqueSilenceMonitor.reconcile(context)
-                    } else if (!SilenceScheduler.isOtherSilenceWindowActive(context,
+                    if (!SilenceScheduler.isOtherSilenceWindowActive(context,
                             runCatching { Prayer.valueOf(prayerName) }.getOrNull(), SilenceScheduler.prayerDayOf(intent))) {
                         SilenceCoordinator.releaseAuto(context)
                     }
@@ -109,7 +123,9 @@ class SilenceReceiver : BroadcastReceiver() {
                         return
                     }
                     SilenceModeController.disableAutoSilence(context)
-                } else if (SilenceStatus.isPhoneSilenced(context) && !WakeAlarmScheduler.isSilenceUntilAlarmActive(context)) {
+                } else if (SilenceStatus.isPhoneSilenced(context) &&
+                    !WakeAlarmScheduler.isSilenceUntilAlarmActive(context) &&
+                    !PrefsManager.wasAutoSilenceSkippedForAndroidAuto(context) && !AndroidAutoConnection.isProjected(context)) {
                     // Flag was already cleared (manual toggle, scheduleAll, etc.)
                     // but the phone is still silenced — force normal so DND is never
                     // left on permanently. A ringer mode the user chose is left as it
@@ -127,7 +143,7 @@ class SilenceReceiver : BroadcastReceiver() {
             "com.tunisianprayertimes.ACTION_DELEGATION_CHECK" -> {
                 val prayerName = intent.getStringExtra("extra_prayer") ?: "UNKNOWN"
                 Log.d(TAG, "Checking delegation before $prayerName")
-                if (PrefsManager.isAutoLocationUpdateEnabled(context) && DelegationLocator.canLocateFromBackground(context)) {
+                if (DelegationLocator.canUpdateTravelInBackground(context)) {
                     val pendingResult = goAsync()
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
@@ -142,11 +158,11 @@ class SilenceReceiver : BroadcastReceiver() {
             }
             "com.tunisianprayertimes.ACTION_RESCHEDULE" -> {
                 Log.d(TAG, "Rescheduling alarms")
-                if (PrefsManager.isAutoLocationUpdateEnabled(context) && DelegationLocator.canLocateFromBackground(context)) {
+                if (DelegationLocator.canUpdateTravelInBackground(context)) {
                     val pendingResult = goAsync()
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            if (DelegationLocator.updateDelegationFromLastLocation(context)) {
+                            if (DelegationLocator.updatePlaceFromLastLocation(context, background = true) == DelegationLocator.FixOutcome.CHANGED) {
                                 Log.d(TAG, "Delegation updated before reschedule")
                             }
                             SilenceScheduler.scheduleAll(context)
@@ -165,10 +181,7 @@ class SilenceReceiver : BroadcastReceiver() {
     }
 
     internal suspend fun checkDelegationBeforePrayer(context: Context, prayerName: String): Boolean {
-        if (!PrefsManager.isAutoLocationUpdateEnabled(context) || !DelegationLocator.hasLocationPermission(context)) {
-            return false
-        }
-        if (!DelegationLocator.updateDelegationFromCurrentLocation(context)) {
+        if (DelegationLocator.updatePlaceFromCurrentLocation(context, background = true) != DelegationLocator.FixOutcome.CHANGED) {
             return false
         }
 

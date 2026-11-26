@@ -31,7 +31,7 @@ internal fun DhikrGoalRaiseSheet(current: Int, fridayGoal: Boolean, onRaise: (go
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = AdhkarSurface, unfocusedContainerColor = AdhkarSurface,
         focusedBorderColor = p.primary.copy(alpha = .6f), unfocusedBorderColor = AdhkarBorder)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = p.background, modifier = Modifier.testTag("adhkar_raise_goal_sheet")) {
         DhikrSheetHeader("زيادة الهدف", onDismiss)
         Column(Modifier.verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding()

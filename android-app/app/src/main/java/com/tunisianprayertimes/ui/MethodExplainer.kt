@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -13,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -25,12 +25,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.MethodPresentation
 import com.tunisianprayertimes.OfficialZoneAssets
 import com.tunisianprayertimes.PrayerTimesRepository
+import com.tunisianprayertimes.R
 import com.tunisianprayertimes.engine.EventStatus
 import com.tunisianprayertimes.engine.HorizonModel
 import com.tunisianprayertimes.engine.SunModel
@@ -89,9 +91,9 @@ internal fun MethodExplainerSheet(place: PrayerPlace.Coordinates, choice: Prayer
             }
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
-            Modifier.fillMaxWidth().quranSheetHeight().navigationBarsPadding().testTag("method_explainer")
+            Modifier.fillMaxWidth().fillMaxHeight().navigationBarsPadding().testTag("method_explainer")
                 .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -141,6 +143,7 @@ internal fun MethodExplainerSheet(place: PrayerPlace.Coordinates, choice: Prayer
             }
             HorizontalDivider()
             ParameterRow("المصدر", MethodPresentation.source(method))
+            Text(stringResource(R.string.prayer_method_app_provenance), fontSize = 13.sp, lineHeight = 19.sp, color = TextMuted)
             // GeoNames' licence asks for credit where its data is shown: the place names and points abroad (CC BY 4.0).
             ParameterRow("أسماء الأماكن", "GeoNames (CC BY 4.0)، والأسماء العربية الناقصة من Wikidata (CC0)")
         }

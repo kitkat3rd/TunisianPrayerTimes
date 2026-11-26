@@ -57,14 +57,24 @@ class MethodPresentationTest {
     }
 
     @Test
-    fun parametersAndSignedMinutesStayLeftToRight() {
-        assertEquals("⁦18° · 17°⁩", MethodPresentation.parameters(PrayerMethods.MWL))
+    fun labelledParametersShowFajrOnTheRightAndIshaOnTheLeft() {
+        fun checkParameters(id: String, fajr: String, isha: String) {
+            val shown = shownInArabic(MethodPresentation.parameters(method(id))).replace('\u00a0', ' ')
+            assertEquals(id, "$isha ${"العشاء".reversed()} · $fajr ${"الفجر".reversed()}", shown)
+        }
+
+        checkParameters("diyanet_eu", "18°", "16°")
+        checkParameters("mwl", "18°", "17°")
+        checkParameters("egyptian", "19.5°", "17.5°")
+        checkParameters("gmp", "18°", "د 87")
+        checkParameters("be_sunrise_90", "د 90", "18°")
+        checkParameters("ecfr_90", "د 90", "د 90")
+    }
+
+    @Test
+    fun signedMinutesStayLeftToRight() {
         assertEquals("⁦−3⁩", MethodPresentation.signedMinutes(-3))
         assertEquals("⁦+5⁩", MethodPresentation.signedMinutes(5))
-        // Shown in the Arabic sheet: minutes keep their order (2026-10-19, ECFR's showed «90 د 90 · د»).
-        assertEquals("18° · 17°", shownInArabic(MethodPresentation.parameters(PrayerMethods.MWL)))
-        assertEquals("90 د · 90 د", shownInArabic(MethodPresentation.parameters(method("ecfr_90"))))
-        assertEquals("18° · 87 د", shownInArabic(MethodPresentation.parameters(method("gmp"))))
     }
 
     /** [text] as an RTL line displays it, left to right, by the Unicode bidi algorithm; the isolate marks dropped. */

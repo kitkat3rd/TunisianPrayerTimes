@@ -185,6 +185,7 @@ internal fun SettingsScreen(
     onTyping: () -> Unit = {},
     /** Today's prayers as the wall runs them (Ramadan's changes, a fixed time moved), beside the iqamah rules. */
     todayEvents: Map<Prayer, PrayerEvent> = emptyMap(),
+    todayPrayerTimes: DayPrayerTimes? = null,
     /** Ramadan's changes from the USB file or the phone, shown under their prayer; [onRamadanCleared] removes one. */
     ramadanOverrides: Map<Prayer, PrayerOverride> = emptyMap(),
     onRamadanCleared: (Prayer) -> Unit = {},
@@ -264,17 +265,19 @@ internal fun SettingsScreen(
             SettingsPage.Iqamah -> AdminPage(
                 title = TvStrings.SECTION_IQAMAH,
                 aside = TvStrings.DURATION_NOTE,
-                hints = listOf(TvStrings.HINT_SAVED_AT_ONCE, TvStrings.HINT_BACK_TO_SETTINGS),
+                hints = listOf(TvStrings.HINT_EDIT_IQAMAH, TvStrings.HINT_BACK_TO_SETTINGS),
             ) {
                 IqamahTable(
                     configs = iqamahConfigs,
                     onChanged = onIqamahChanged,
                     modifier = Modifier.weight(1f),
                     today = todayEvents,
+                    prayerTimes = todayPrayerTimes,
                     ramadan = ramadanOverrides,
                     onRamadanCleared = onRamadanCleared,
                     adhanScreenMinutes = adhanScreenMinutes,
                     onAdhanScreenMinutesChanged = onAdhanScreenMinutesChanged,
+                    onEditorInteraction = onTyping,
                 )
             }
             SettingsPage.Dates -> IslamicDatesSection(today = today)

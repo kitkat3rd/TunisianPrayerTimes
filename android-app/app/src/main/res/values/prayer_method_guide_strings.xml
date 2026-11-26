@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="prayer_method_app_provenance">في تونس، يحسب التطبيق المواقيت على الهاتف وفق جداول المعهد الوطني للرصد الجوي المنشورة على ‎meteo.tn‎. هذا التطبيق مستقل وليس تابعًا لأي جهة حكومية ولا يمثلها.</string>
     <string name="prayer_method_guide_context">%1$s · %2$s · توقيت تونس</string>
     <string name="prayer_method_guide_intro_title">نقرأ حركة الشمس، ثم نحسب الوقت</string>
     <string name="prayer_method_guide_intro_body">لكل وقت علامة مرتبطة بالشمس أو بالظل. يحسب التطبيق متى تحدث هذه العلامة في المكان واليوم المختارين.</string>

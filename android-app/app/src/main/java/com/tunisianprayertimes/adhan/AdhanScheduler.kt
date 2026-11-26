@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import com.tunisianprayertimes.MainActivityPendingIntents
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.PrayerTimesRepository.PrayerOccurrence
@@ -93,7 +94,8 @@ object AdhanScheduler {
         // A warning that came late would be worse than none: only with exact alarms.
         val warns = AdhanSettings.warnsBefore(app) && canScheduleExact(alarms)
         val armed = HashSet<Int>()
-        if (enabled.isNotEmpty()) {
+        // A restored switch is retained while the user chooses a city. Fall through to cancel stale slots.
+        if (enabled.isNotEmpty() && PrefsManager.canUsePlaceForAutomation(app)) {
             val place = PrayerTimesRepository.place(app)
             val today = now.atZone(place.zone).toLocalDate()
             // Only the time windows are known ahead; a mosque silence begins when the user arrives.

@@ -70,7 +70,7 @@ object DhikrReminderScheduler {
     private val NB = 160.toChar().toString() // no-break space
     /** Why a nudge was put off by a minute or two without giving up its slot. */
     private val POSTPONED_REASONS = setOf("spacing", "retry")
-    @Volatile private var scheduleScan: Pair<List<Any>, DhikrPeriodProblem?>? = null
+    @Volatile private var scheduleScan: Pair<List<Any?>, DhikrPeriodProblem?>? = null
     private val laterDate = DateTimeFormatter.ofPattern("d MMMM", Locale.forLanguageTag("ar-TN-u-nu-latn"))
     private const val OVERNIGHT_HINT = " إذا كانت الفترة ليلية، فعّل «تنتهي في اليوم التالي»."
 
@@ -163,7 +163,10 @@ object DhikrReminderScheduler {
     }
     fun validate(context: Context, rule: DhikrReminder, today: LocalDate = LocalDate.now()): String? {
         structuralError(context, rule)?.let { return it }
-        scheduleProblem(context, rule, today)?.let { return it.message }
+        // A held reminder can still be switched off before a city is chosen.
+        if (rule.enabled || !rule.usesPrayerTimes() || PrefsManager.canUsePlaceForAutomation(context)) {
+            scheduleProblem(context, rule, today)?.let { return it.message }
+        }
         val periods = rule.intervals().map(DhikrInterval::scheduleIdentity).toSet()
         val duplicate = DhikrRepository(context).state.value.reminders.any {
             // A collection rule's dhikrId is only a representative entry; the collection identifies it.
@@ -179,13 +182,16 @@ object DhikrReminderScheduler {
      * day of the coming year; clock-only periods repeat unchanged and need only the coming days.
      */
     private fun scheduleProblem(context: Context, rule: DhikrReminder, today: LocalDate): DhikrPeriodProblem? {
+        val placeReady = PrefsManager.canUsePlaceForAutomation(context)
+        if (rule.usesPrayerTimes() && !placeReady) {
+            return DhikrPeriodProblem(context.getString(com.tunisianprayertimes.R.string.prayer_feature_place_required), emptySet())
+        }
         // The editor validates on every change; only a changed schedule is scanned again.
-        val key = listOf(PrayerTimesRepository.timesKey(context), ZoneId.systemDefault(), today, rule.daysOfWeek, rule.intervals(),
+        val key = listOf(if (placeReady) PrayerTimesRepository.timesKey(context) else null, ZoneId.systemDefault(), today, rule.daysOfWeek, rule.intervals(),
             rule.collection ?: "")
         scheduleScan?.takeIf { it.first == key }?.let { return it.second }
         // A clock time can drift out of a collection's occasion as the prayers move: scan the year for those too.
-        val clockOnly = rule.collection !in occasionCollections &&
-            rule.intervals().all { it.start.kind == DhikrTimeKind.FIXED && it.end.kind == DhikrTimeKind.FIXED }
+        val clockOnly = !rule.usesPrayerTimes() && (!placeReady || rule.collection !in occasionCollections)
         val several = rule.intervals().size > 1
         var available = false
         // Weekdays whose periods already worked on an earlier date of the scan.
@@ -457,6 +463,7 @@ object DhikrReminderScheduler {
             return date.atStartOfDay().plusMinutes((time.minuteOfDay + time.offsetMinutes).toLong())
                 .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         }
+        if (!PrefsManager.canUsePlaceForAutomation(context)) return null
         val event = TimeEvent.entries[time.kind.ordinal - 1]
         val lastYear = PrayerTimesRepository.SUPPORTED_YEARS.last
         val at = if (date.year <= lastYear) {
@@ -491,7 +498,8 @@ object DhikrReminderScheduler {
         ensureChannel(app)
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val repo = DhikrRepository(app)
-        val rules = repo.state.value.reminders
+        val allRules = repo.state.value.reminders
+        val rules = if (PrefsManager.canUsePlaceForAutomation(app)) allRules else allRules.filterNot { it.usesPrayerTimes() }
         // Small intervals create many consumed-nudge records; keep only the recent week.
         val doneCutoff = nowMillis - 7L * 24 * 60 * 60_000
         val staleDone = prefs.all.entries.filter { (key, value) ->
@@ -656,6 +664,11 @@ object DhikrReminderScheduler {
         val ruleId = event.optString("rule")
         val stored = prefs.getString("event:" + ruleId, null) ?: return@synchronized
         if (stored != event.toString() || prefs.contains("done:" + event.optString("eventId"))) return@synchronized
+        val rule = repo.state.value.reminders.find { it.id == ruleId && it.enabled }
+        if (rule?.usesPrayerTimes() == true && !PrefsManager.canUsePlaceForAutomation(context)) {
+            refresh(context, nowMillis = now)
+            return@synchronized
+        }
         if (now < event.optLong("at")) {
             // An OEM or an already dispatched legacy PendingIntent may arrive before the
             // event it carries. It must not consume a nudge that has not happened yet.
@@ -663,7 +676,6 @@ object DhikrReminderScheduler {
             scheduleDelivery(context, ruleId, event)
             return@synchronized
         }
-        val rule = repo.state.value.reminders.find { it.id == ruleId && it.enabled }
         val window = rule?.let { currentRule -> runCatching {
             val resolved = resolveWindows(context, currentRule, LocalDate.parse(event.getString("date")))
             if (event.has("windowStart")) resolved.firstOrNull { it.startMillis == event.optLong("windowStart") }

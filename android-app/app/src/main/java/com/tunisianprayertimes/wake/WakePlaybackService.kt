@@ -369,7 +369,7 @@ class WakePlaybackService : Service() {
     private fun notificationIdFor(eventId: String): Int = eventId.hashCode() and 0x7fffffff
 
     companion object {
-        private const val CHANNEL_ID = "tunisianprayertimes.wake.playback.silent"
+        internal const val CHANNEL_ID = "tunisianprayertimes.wake.playback.silent"
 
         const val ACTION_REFRESH_FOR_CURRENT =
             "com.tunisianprayertimes.action.REFRESH_FOR_CURRENT"

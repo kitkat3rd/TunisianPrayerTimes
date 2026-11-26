@@ -22,6 +22,7 @@ import com.tunisianprayertimes.FastingVerdict
 import com.tunisianprayertimes.MainActivity
 import com.tunisianprayertimes.MainTabNavigation
 import com.tunisianprayertimes.PlaceResolution
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.PrayerWakeConfig
@@ -100,9 +101,11 @@ object FastingReminder {
 
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean("enabled", false)
 
-    fun setEnabled(context: Context, enabled: Boolean) {
+    fun setEnabled(context: Context, enabled: Boolean): Boolean {
+        if (enabled && !PrefsManager.hasConfirmedPlace(context)) return false
         prefs(context).edit().putBoolean("enabled", enabled).remove("paused_until_day").apply()
         refreshLater(context)
+        return true
     }
 
     /** The fasts a reader can be reminded of; Tasu'a goes with Ashura, as the Prophet meant to fast both (Muslim 1134). */
@@ -332,6 +335,7 @@ object FastingReminder {
     /** What the card says: the next reminder, and why an earlier eve has none. */
     fun statusLines(context: Context, now: Instant = Instant.now()): List<String> {
         if (!isEnabled(context)) return listOf("نذكّرك إن شئت بعد صلاة المغرب في الليلة التي قبل يوم الصيام.")
+        if (!PrefsManager.canUsePlaceForAutomation(context)) return listOf("أكّد مدينتك لتصلك تذكيرات الصيام بعد المغرب.")
         val eves = upcoming(context, now, count = 12)
         val today = now.atZone(zone(context)).toLocalDate()
         // Held only by a month not announced yet, with days left for the announcement: not a refusal.
@@ -401,6 +405,7 @@ object FastingReminder {
      * in another language lays it out left to right.
      */
     fun post(context: Context, eve: Eve, now: Instant = Instant.now(), suhoorAt: Instant? = null, quiet: Boolean = false) {
+        if (!PrefsManager.canUsePlaceForAutomation(context)) return
         val fajr = eve.fajr ?: return
         if (now >= fajr) return
         val manager = channel(context) ?: return
@@ -440,7 +445,7 @@ object FastingReminder {
             val options = suhoorOptions(fajr, now)
             if (own == null && options.isNotEmpty()) {
                 // Chosen once in the app, with alarm access granted and still in time; from then on one tap here.
-                val action = if (suhoorChosen(context) && suhoorMinutes(context) in options &&
+                val action = if (PrefsManager.hasConfirmedPlace(context) && suhoorChosen(context) && suhoorMinutes(context) in options &&
                     WakeAlarmScheduler.canScheduleExactAlarms(context)
                 ) {
                     broadcast(context, ACTION_SUHOOR, 2)
@@ -484,17 +489,19 @@ object FastingReminder {
         val backup = alarmIntent(app, backup = true)
         alarms.cancel(exact)
         alarms.cancel(backup)
-        withdrawStale(app, now)
+        val placeReady = PrefsManager.canUsePlaceForAutomation(app)
+        if (placeReady) withdrawStale(app, now) else cancelNotification(app)
+        val canRemind = placeReady && isEnabled(app)
         runCatching {
             val work = WorkManager.getInstance(app)
-            if (isEnabled(app)) {
+            if (canRemind) {
                 work.enqueueUniquePeriodicWork(REPAIR_WORK, ExistingPeriodicWorkPolicy.KEEP,
                     PeriodicWorkRequestBuilder<FastingRepairWorker>(12, TimeUnit.HOURS).build())
             } else {
                 work.cancelUniqueWork(REPAIR_WORK)
             }
         }.onFailure { Log.w("FastingReminder", "Could not update the repair work", it) }
-        if (!isEnabled(app)) return
+        if (!canRemind) return
         val eves = upcoming(app, now, count = 12)
         // Due while its alarm waited (held by the system, a boot, a place set late): still owed until Fajr.
         val due = eves.firstOrNull()?.takeIf { it.reminds && now >= it.remindAt!! && now < it.fajr!! }
@@ -593,9 +600,10 @@ object FastingReminder {
 
     /**
      * The one-off suhoor alarm for [eve], with the reader's minutes and insistence, named in the Alarms tab.
-     * False when those minutes no longer fit before Fajr tonight.
+     * Requires a confirmed place and enough time before Fajr tonight.
      */
     fun setSuhoor(context: Context, eve: Eve, now: Instant = Instant.now()): Boolean {
+        if (!PrefsManager.hasConfirmedPlace(context)) return false
         val fajr = eve.fajr ?: return false
         val minutes = suhoorMinutes(context)
         if (minutes !in suhoorOptions(fajr, now)) return false

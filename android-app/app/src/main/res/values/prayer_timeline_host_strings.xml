@@ -1,5 +1,5 @@
 <resources>
-    <string name="prayer_timeline_subtitle">الذهبي للأذان، والشريط للإسكات. اسحبه لتعديل الفترة.</string>
+    <string name="prayer_timeline_subtitle">العلامة الذهبية لوقت الأذان. اسحب أحد طرفَي شريط الإسكات، أو اضغط وقت البداية أو النهاية لتعديله.</string>
     <string name="prayer_timeline_undo">تراجع</string>
     <string name="prayer_timeline_saved">تم تعديل فترة الإسكات</string>
     <string name="prayer_timeline_invalid_window">نهاية الإسكات تسبق بدايته. اضغط على الأوقات لتعديل الفترة.</string>

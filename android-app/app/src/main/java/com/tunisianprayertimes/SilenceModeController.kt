@@ -65,6 +65,7 @@ object SilenceModeController {
     // receivers (main thread) and the screens' re-plans (a worker) may both change it.
     @Synchronized
     fun enableAutoSilence(context: Context, prayer: Prayer? = null): Boolean {
+        if (!PrefsManager.isEnabled(context)) return false
         if (MosqueSilenceSettings.mode(context) == null) {
             if (MosqueSilenceSettings.usesOwnedRules(context)) SilenceCoordinator.releaseAuto(context)
             return false
@@ -75,6 +76,10 @@ object SilenceModeController {
             return SilenceCoordinator.autoActive(context)
         }
         if (MosqueSilenceSettings.usesOwnedRules(context)) return SilenceCoordinator.enableTime(context)
+        if (AndroidAutoConnection.isProjected(context)) {
+            pauseLegacyAutoSilenceForAndroidAuto(context)
+            return false
+        }
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!notificationManager.isNotificationPolicyAccessGranted) return false
 
@@ -150,6 +155,23 @@ object SilenceModeController {
         return true
     }
 
+    @Synchronized
+    internal fun reconcileAndroidAutoSilence(context: Context) {
+        if (!PrefsManager.isAutoSilenceActive(context) || !AndroidAutoConnection.isProjected(context)) return
+        if (MosqueSilenceSettings.usesOwnedRules(context)) {
+            SilenceCoordinator.releaseAutoRules(context)
+            refreshDhikrReminders(context)
+        } else {
+            pauseLegacyAutoSilenceForAndroidAuto(context)
+        }
+    }
+
+    private fun pauseLegacyAutoSilenceForAndroidAuto(context: Context) {
+        // A skipped window can end after the head unit disconnects; its end has no DND to restore.
+        PrefsManager.markAutoSilenceSkippedForAndroidAuto(context)
+        disableAutoSilence(context)
+    }
+
     /** An awake check borrows the current silence; it does not dismiss the prayer occurrence. */
     @Synchronized
     internal fun pauseAutoSilenceForAwakeCheck(context: Context): Boolean {
@@ -157,7 +179,7 @@ object SilenceModeController {
         if (!PrefsManager.isAutoSilenceActive(context) || PrefsManager.isManualSilenceActive(context)) return false
         isAutoSilencePausedForAwakeCheck = true
         val lifted = if (MosqueSilenceSettings.usesOwnedRules(context)) {
-            SilenceCoordinator.pauseAutoForAwakeCheck(context)
+            SilenceCoordinator.releaseAutoRules(context)
         } else {
             disableAutoSilence(context)
         }

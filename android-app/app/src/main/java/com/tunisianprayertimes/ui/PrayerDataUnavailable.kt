@@ -28,6 +28,7 @@ internal fun PrayerDataUnavailable(
     isToday: Boolean,
     onReturnToToday: () -> Unit,
     onChooseLocation: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -54,6 +55,15 @@ internal fun PrayerDataUnavailable(
                 colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
             ) {
                 Text(stringResource(R.string.date_go_back_today), textAlign = TextAlign.Center)
+            }
+        }
+        if (isToday) {
+            Button(
+                onClick = onRetry,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("prayer_data_retry"),
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+            ) {
+                Text(stringResource(R.string.today_retry_timetable))
             }
         }
         OutlinedButton(

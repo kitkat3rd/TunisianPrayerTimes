@@ -16,7 +16,7 @@ object TvStrings {
     const val SETUP_SELECT_GOUVERNORAT = "اختر الولاية"
     const val SETUP_SELECT_DELEGATION = "اختر المعتمدية"
     const val SETUP_IQAMAH_TITLE = "إعداد أوقات الإقامة"
-    const val SETUP_IQAMAH_SUBTITLE = "حدّد مدة الانتظار بعد الأذان للصلوات اليومية والجمعة، ووقت صلاة العيد بالدقائق بعد الشروق"
+    const val HINT_EDIT_IQAMAH = "اضغط OK على وقت الإقامة لتعديله"
     const val SETUP_MOSQUE_NAME = "اسم المسجد (اختياري)"
     const val SETUP_MOSQUE_HINT = "مثال: مسجد الفتح"
     const val NEXT = "التالي"

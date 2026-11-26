@@ -59,7 +59,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -225,6 +224,7 @@ fun WakeEditorSheet(
     silenceConflictResolverContent: @Composable (WakeSilenceConflictSummary) -> Unit = {},
     onDismissRequest: () -> Unit,
     onSave: (PrayerWakeConfig) -> Unit,
+    onPlaceRequired: (PrayerWakeConfig) -> Unit = {},
     onEditSilenceWindowRequest: (PrayerWakeConfig, WakeSilenceConflictSummary) -> Unit = { _, _ -> },
     onCancelSilenceWindowEdit: () -> Unit = {},
     onDelete: (() -> Unit)? = null,
@@ -439,6 +439,12 @@ fun WakeEditorSheet(
     }
 
     fun saveDraftConfig() {
+        if (draftConfig.enabled && draftConfig.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE &&
+            !PrefsManager.hasConfirmedPlace(context)
+        ) {
+            onPlaceRequired(draftConfig)
+            return
+        }
         val configToSave = resolveOneTimeWakeTrigger(context, delegationId, draftConfig)
         val latestWarning = computeWakeDraftSilenceWarning(context, delegationId, configToSave)
         val recurringConflict = latestWarning?.conflict?.takeIf {
@@ -624,6 +630,9 @@ fun WakeEditorSheet(
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (draftConfig.enabled && (draftConfig.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE || PrefsManager.hasConfirmedPlace(context))) {
+                        WakeAlarmAccessNotice(activity, saved = false)
+                    }
                     val heroAnchorAtMillis = heroTimes.anchorAtMillis
                     val heroEffectivePrayer = heroTimes.anchorEffectivePrayer
                     WakeEditorHeroCard(
@@ -1027,7 +1036,7 @@ private fun WakeModePickerSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color.White,
@@ -3278,7 +3287,7 @@ private fun WakeRingtonePickerSheet(
     }
     val customChosen = selected == RingtonePreset.CUSTOM && !customRingtoneUri.isNullOrBlank()
 
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color.White,

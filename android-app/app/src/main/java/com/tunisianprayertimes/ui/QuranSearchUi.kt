@@ -45,7 +45,6 @@ import com.tunisianprayertimes.quran.QuranSearchHit
 import com.tunisianprayertimes.quran.QuranSearchKind
 import com.tunisianprayertimes.quran.QuranSearchResult
 import com.tunisianprayertimes.quran.QuranVerseReference
-import com.tunisianprayertimes.quran.quranMatchRanges
 import com.tunisianprayertimes.quran.quranGoTo
 import com.tunisianprayertimes.quran.quranNameKey
 import com.tunisianprayertimes.ui.theme.*
@@ -233,8 +232,8 @@ internal fun QuranSearchSheet(
         search.results.groupingBy { it.surahName }.eachCount().entries
             .sortedWith(compareBy({ -it.value }, { it.key })).take(12)
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
-        Column(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp)) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
             QuranPanelHeader("البحث في القرآن", onDismiss)
             OutlinedTextField(
                 value = search.query, onValueChange = ::updateQuery,
@@ -385,8 +384,7 @@ private fun QuranSearchResultRow(result: QuranSearchResult, query: String, onCli
     // The words that matched wear the colour the verse gets on the page. They are found in the bundled text and
     // shown in the mushaf's spelling, word for word.
     val text = remember(result, query) {
-        val matched = if (result.kind == QuranSearchKind.Reference) emptyList()
-            else quranMatchRanges(result.text, query, similar = result.kind == QuranSearchKind.Similar)
+        val matched = result.matchRanges(query)
         buildAnnotatedString {
             var offset = 0
             val tokens = result.text.split(' ')

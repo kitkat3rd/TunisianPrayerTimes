@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -44,9 +45,15 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.OfficialIslamicDates
+import com.tunisianprayertimes.OffsetDirection
+import com.tunisianprayertimes.Prayer
+import com.tunisianprayertimes.PrayerWakeConfig
+import com.tunisianprayertimes.PrayerWakeSubAlarm
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.RamadanOverrideChecker.RamadanOverride
 import com.tunisianprayertimes.TunisianHijriCalendar
+import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
+import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -110,6 +117,37 @@ class HijriCalendarUiTest {
         compose.runOnIdle { lifecycleOwner.registry.currentState = Lifecycle.State.CREATED }
         compose.waitForIdle()
         storeField.set(null, previousStore)
+    }
+
+    @Test
+    fun nextAlarmCardShowsBothDatesForAnExtraRingAfterMidnight() {
+        fontScale = 1.2f
+        RuntimeEnvironment.setFontScale(fontScale)
+        publishDates(includeFitr = false)
+        val midnight = calendarDateMillis(fitr)
+        val minute = 60_000L
+        val alarm = PrayerWakeConfig(
+            prayer = Prayer.FAJR,
+            enabled = true,
+            subAlarms = listOf(PrayerWakeSubAlarm("extra", 10, OffsetDirection.AFTER)),
+        )
+        val alarmNow = WakeAlarmNow(
+            occurrenceAtMillis = midnight - 5 * minute,
+            nextRing = WakeAlarmScheduler.Ring(midnight + 5 * minute, isExtra = true),
+            inProgress = true,
+        )
+        show {
+            TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
+                Box(Modifier.width(312.dp)) {
+                    WakeNextAlarmPanel(alarm, alarmNow, nowMillis = midnight - minute)
+                }
+            }
+        }
+        val hijri = assertCompleteText("30 رمضان 1447 هـ", singleLine = true)
+        val gregorian = assertCompleteText("الجمعة 20 مارس", singleLine = true)
+        assertTrue("The Hijri date appears above the Gregorian date", hijri.bottom <= gregorian.top)
+        compose.runOnIdle { publishDates(includeFitr = true) }
+        assertCompleteText("1 شوال 1447 هـ", singleLine = true)
     }
 
     @Test
@@ -363,13 +401,14 @@ class HijriCalendarUiTest {
             substring = true,
         ))
 
-    private fun assertCompleteText(label: String) {
+    private fun assertCompleteText(label: String, singleLine: Boolean = false): Rect {
         val node = compose.onNodeWithText(label, useUnmergedTree = true).assertIsDisplayed()
+        val visibleBounds = node.fetchSemanticsNode().boundsInRoot
         val results = mutableListOf<TextLayoutResult>()
         node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
         assertTrue("Text must have a measured layout: $label", results.isNotEmpty())
         results.forEach { layout ->
-            val visibleBounds = node.fetchSemanticsNode().boundsInRoot
+            if (singleLine) assertEquals("Keep the date on one line: $label", 1, layout.lineCount)
             assertTrue("Ancestor must not clip the date horizontally: $label", visibleBounds.width >= layout.size.width - 1f)
             assertTrue("Ancestor must not clip the date vertically: $label", visibleBounds.height >= layout.size.height - 1f)
             assertFalse("Text height must grow to fit: $label", layout.didOverflowHeight)
@@ -395,6 +434,7 @@ class HijriCalendarUiTest {
                 assertTrue("Date glyphs must stay inside the right edge: $diagnostic", right <= layout.size.width + 1f)
             }
         }
+        return visibleBounds
     }
 
     private fun text(id: Int, vararg args: Any): String =

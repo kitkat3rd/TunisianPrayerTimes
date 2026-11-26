@@ -2,7 +2,6 @@ package com.tunisianprayertimes
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -141,26 +140,10 @@ object DelegationLocator {
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
             PackageManager.PERMISSION_GRANTED)
 
-    /**
-     * Whether the background location request is still to be offered: auto-location on, the location granted for
-     * the app's screens only, Android 10 or later.
-     */
-    fun needsBackgroundLocationPermission(context: Context): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && PrefsManager.isAutoLocationUpdateEnabled(context) &&
-            hasLocationPermission(context) && !hasBackgroundLocationPermission(context)
-
-    /**
-     * Whether a fix asked for now, from an alarm, a receiver or a job, can come: Android refuses it to an app granted
-     * the location for its screens only while none of them is in front (seen on a Pixel 6, 2026-10-25: the app-op
-     * history logs «Reject [bg]» and the request returns nothing). Without it a background check only wakes the phone.
-     */
-    fun canLocateFromBackground(context: Context): Boolean =
-        hasBackgroundLocationPermission(context) || (hasLocationPermission(context) && isAppInFront())
-
-    private fun isAppInFront(): Boolean = runCatching {
-        ActivityManager.RunningAppProcessInfo().also(ActivityManager::getMyMemoryState).importance <=
-            ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-    }.getOrDefault(false)
+    /** Scheduled fixes require the travel choice even when Android location access was granted for a mosque. */
+    fun canUpdateTravelInBackground(context: Context): Boolean =
+        PrefsManager.isAutoLocationUpdateEnabled(context) && PrefsManager.isBackgroundTravelEnabled(context) &&
+            PrefsManager.canUsePlaceForAutomation(context) && hasBackgroundLocationPermission(context)
 
     suspend fun detectCurrentLocation(context: Context): Location? {
         val permissionState = locationPermissionState(context)
@@ -203,8 +186,8 @@ object DelegationLocator {
         updatePlaceFromLastLocation(context) == FixOutcome.CHANGED
 
     /** [updateDelegationFromLastLocation], telling a missing fix apart from an unchanged place (6.8's travel rule). */
-    suspend fun updatePlaceFromLastLocation(context: Context): FixOutcome =
-        updateDelegationFromLocation(context) { permissionState ->
+    suspend fun updatePlaceFromLastLocation(context: Context, background: Boolean = false): FixOutcome =
+        updateDelegationFromLocation(context, background) { permissionState ->
             locationProvider.findRecentLocation(context, permissionState)
         }
 
@@ -217,15 +200,19 @@ object DelegationLocator {
         updatePlaceFromCurrentLocation(context) == FixOutcome.CHANGED
 
     /** [updateDelegationFromCurrentLocation], telling a missing fix apart from an unchanged place. */
-    suspend fun updatePlaceFromCurrentLocation(context: Context): FixOutcome =
-        updateDelegationFromLocation(context) { permissionState ->
+    suspend fun updatePlaceFromCurrentLocation(context: Context, background: Boolean = false): FixOutcome =
+        updateDelegationFromLocation(context, background) { permissionState ->
             locationProvider.findFreshLocation(context, permissionState)
         }
 
     private suspend fun updateDelegationFromLocation(
         context: Context,
+        background: Boolean,
         locationSource: suspend (LocationPermissionState) -> Location?
     ): FixOutcome {
+        fun travelStillEnabled(): Boolean = if (background) canUpdateTravelInBackground(context)
+            else PrefsManager.isAutoLocationUpdateEnabled(context) && PrefsManager.canUsePlaceForAutomation(context)
+        if (!travelStillEnabled()) return FixOutcome.NO_FIX
         val permissionState = locationPermissionState(context)
         if (!permissionState.hasAny) return FixOutcome.NO_FIX
 
@@ -242,6 +229,7 @@ object DelegationLocator {
         val result = withContext(Dispatchers.IO) {
             resolveGpsLocation(context, location.latitude, location.longitude, accuracyMeters)
         }
+        if (!travelStillEnabled()) return FixOutcome.NO_FIX
         val saved = PrefsManager.getPlace(context)
         val savedLabel = PrefsManager.getPlaceNameSnapshot(context)
         return when (result) {
@@ -262,6 +250,7 @@ object DelegationLocator {
                     }
                 }
                 if (!store) return FixOutcome.UNCHANGED
+                if (!travelStillEnabled()) return FixOutcome.NO_FIX
                 PrefsManager.setPlace(context, result.place, result.label, fromGps = true)
                 PlaceResolution.onPlaceChanged(context, saved, result.place, savedLabel, result.label)
                 FixOutcome.CHANGED

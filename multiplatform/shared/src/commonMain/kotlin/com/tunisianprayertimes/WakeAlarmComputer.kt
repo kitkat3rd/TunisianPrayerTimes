@@ -111,7 +111,7 @@ object WakeAlarmComputer {
         if (!config.enabled) return emptyList()
 
         if (config.mainAlarm.mode == WakeMainAlarmMode.FROM_NOW || config.repeatMode == WakeRepeatMode.ONCE) {
-            val mainOccurrence = oneOffMainOccurrence(config)
+            val mainOccurrence = oneOffMainOccurrence(config, prayerDays)
                 ?: firstScheduledMainOccurrence(config, prayerDays)
                 ?: return emptyList()
             if (config.mainAlarm.oneOffTriggerAtMillis > 0L && !prayerDaysContain(mainOccurrence.triggerAtMillis, prayerDays)) {
@@ -196,8 +196,12 @@ object WakeAlarmComputer {
         }
     }
 
-    private fun oneOffMainOccurrence(config: PrayerWakeConfig): MainOccurrence? {
+    private fun oneOffMainOccurrence(config: PrayerWakeConfig, prayerDays: List<PrayerDayContext>): MainOccurrence? {
         val triggerAtMillis = config.mainAlarm.oneOffTriggerAtMillis.takeIf { it > 0L } ?: return null
+        // A saved Friday alarm occupies the Dhuhr slot, but its alert should still name Jumu'a.
+        if (config.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE && config.prayer == Prayer.DHUHR) {
+            firstScheduledMainOccurrence(config, prayerDays) { it.triggerAtMillis == triggerAtMillis }?.let { return it }
+        }
         return MainOccurrence(
             triggerAtMillis = triggerAtMillis,
             effectivePrayer = config.prayer,
@@ -208,7 +212,7 @@ object WakeAlarmComputer {
         now: Calendar,
         config: PrayerWakeConfig,
         prayerDays: List<PrayerDayContext>,
-    ): MainOccurrence? = oneOffMainOccurrence(config)
+    ): MainOccurrence? = oneOffMainOccurrence(config, prayerDays)
         ?: firstScheduledMainOccurrence(config, prayerDays) { occurrence -> occurrence.triggerAtMillis > now.timeInMillis }
 
     private fun firstScheduledMainOccurrence(

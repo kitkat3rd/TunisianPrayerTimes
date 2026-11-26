@@ -567,6 +567,10 @@ object WakeAlarmScheduler {
 		return canScheduleExactAlarms(alarmManager)
 	}
 
+	internal fun scheduledMainTriggerAt(context: Context, alarmId: String): Long =
+		context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
+			.getLong(KEY_TRIGGER_PREFIX + wakeMainEventId(alarmId), 0L)
+
 	/** A delivered broadcast can be replaced with the next recurrence during refresh. */
 	fun markDelivered(context: Context, payload: WakeTriggerPayload) {
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
@@ -597,6 +601,8 @@ object WakeAlarmScheduler {
 	) {
 		val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 		val previousEventIds = scheduledEventIds(context)
+		val placeReady = PrefsManager.canUsePlaceForAutomation(context)
+		val eligibleConfigs = configs.filter { placeReady || it.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE }
 		val scopedEventIds = if (onlyAlarmId == null) previousEventIds else {
 			previousEventIds.filterTo(mutableSetOf()) { eventId ->
 				wakeAlarmIdFromEventId(eventId) == onlyAlarmId
@@ -605,7 +611,7 @@ object WakeAlarmScheduler {
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
 		val preservedDueEventIds = if (onlyAlarmId != null) emptySet() else scopedEventIds.filterTo(mutableSetOf()) { eventId ->
 			val alarmId = wakeAlarmIdFromEventId(eventId)
-			val config = configs.firstOrNull { candidate -> candidate.id == alarmId }
+			val config = eligibleConfigs.firstOrNull { candidate -> candidate.id == alarmId }
 			val triggerAtMillis = prefs.getLong(KEY_TRIGGER_PREFIX + eventId, 0L)
 			val occurrenceAtMillis = prefs.getLong(KEY_OCCURRENCE_PREFIX + eventId, 0L)
 			config?.enabled == true &&
@@ -624,7 +630,7 @@ object WakeAlarmScheduler {
 			return
 		}
 
-		val enabledConfigs = configs.filter { config ->
+		val enabledConfigs = eligibleConfigs.filter { config ->
 			(onlyAlarmId == null || config.id == onlyAlarmId) &&
 				config.hasFutureWakeTriggers(now.timeInMillis)
 		}
@@ -973,7 +979,7 @@ object WakeAlarmScheduler {
 		now: Calendar,
 		offsets: IntRange,
 	): List<WakeAlarmComputer.PrayerDayContext> {
-		val place = PrayerTimesRepository.place(context)
+		val place = if (PrefsManager.canUsePlaceForAutomation(context)) PrayerTimesRepository.place(context) else null
 		return offsets.map { dayOffset ->
 			val date = (now.clone() as Calendar).apply {
 				add(Calendar.DAY_OF_YEAR, dayOffset)
@@ -982,9 +988,9 @@ object WakeAlarmScheduler {
 			val friday = localDate.dayOfWeek == DayOfWeek.FRIDAY
 			WakeAlarmComputer.PrayerDayContext(
 				date = date,
-				prayerDay = PrayerTimesRepository.prayerDay(context, localDate, place),
+				prayerDay = place?.let { PrayerTimesRepository.prayerDay(context, localDate, it) },
 				isFriday = friday,
-				jumua = if (friday) PrayerTimesRepository.jumuaTime(context, localDate, place) else null,
+				jumua = if (friday && place != null) PrayerTimesRepository.jumuaTime(context, localDate, place) else null,
 			)
 		}
 	}

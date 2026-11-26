@@ -74,12 +74,8 @@ class SilenceVerifyWorker(
             // No outside-Tunisia gate (principle 7, D20): a place abroad keeps its silences.
             refreshResult = "success"
             // A job runs with no screen open: without the background-location permission Android refuses the fix (6.8).
-            if (PrefsManager.isAutoLocationUpdateEnabled(applicationContext) &&
-                DelegationLocator.canLocateFromBackground(applicationContext)
-            ) {
-                if (DelegationLocator.updateDelegationFromCurrentLocation(applicationContext)) {
-                    Log.d(TAG, "Delegation updated, rescheduling alarms")
-                }
+            if (DelegationLocator.updatePlaceFromCurrentLocation(applicationContext, background = true) == DelegationLocator.FixOutcome.CHANGED) {
+                Log.d(TAG, "Delegation updated, rescheduling alarms")
             }
             SilenceScheduler.scheduleAll(applicationContext)
         }

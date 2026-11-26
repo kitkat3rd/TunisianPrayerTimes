@@ -145,6 +145,7 @@ class NeighborhoodPickerInstrumentedTest {
         coordinate = 36.810562 to 10.146875
         pressGpsAndExpect("بوشوشة")
         coordinate = 36.805274 to 10.126553
+        PrefsManager.setAutoLocationUpdateEnabled(context, true)
         assertFalse(runBlocking { DelegationLocator.updateDelegationFromLastLocation(context) })
         compose.waitUntil(5_000) { PrefsManager.getLocationSelection(context).name == "خزندار" }
         compose.onNode(hasText("خزندار") and hasAnyAncestor(hasTestTag(TestTags.LOCATION_PICKER))).assertIsDisplayed()
@@ -170,6 +171,7 @@ class NeighborhoodPickerInstrumentedTest {
         compose.onNodeWithTag("prayer_time_DHUHR").performScrollTo().assertIsDisplayed().assertTextEquals(initialTime)
 
         coordinate = destination
+        PrefsManager.setAutoLocationUpdateEnabled(context, true)
         assertTrue(runBlocking { DelegationLocator.updateDelegationFromLastLocation(context) })
         compose.waitUntil(5_000) {
             compose.onAllNodes(hasTestTag("prayer_time_DHUHR") and hasText(destinationTime))

@@ -35,6 +35,15 @@ class HeldPrayersAndFallbackTest {
     }
 
     @Test
+    fun freshDhuhrDefaultsToOnePmAndAnExistingDelayStillLoads() {
+        assertEquals(IqamahRule.FixedTime(LocalTime.of(13, 0)), prefs.schedule.settings(Prayer.DHUHR).iqamah)
+        assertEquals(10, prefs.schedule.fallbackMinutes(Prayer.DHUHR))
+
+        prefs.setIqamahConfig(Prayer.DHUHR, IqamahConfig(delayMinutes = 10))
+        assertEquals(IqamahRule.AfterAdhan(10), PrefsManager(store).schedule.settings(Prayer.DHUHR).iqamah)
+    }
+
+    @Test
     fun aFixedTimeFallsBackToTheMinutesTheMosqueKeptBehindIt() {
         // Isha at +15, then a winter 19:00: the +15 stays behind the fixed time.
         prefs.setIqamahConfig(Prayer.ISHA, IqamahConfig(delayMinutes = 15, salahMinutes = 10))

@@ -38,19 +38,23 @@ import kotlin.math.abs
  */
 @Composable
 internal fun PrayerTimeMarkers(prayerName: String, anchor: PrayerTimelineAnchor) {
-    val shift = prayerDayOffset(anchor.minutes)
+    PrayerTimeMarkers(prayerName, anchor.prayer.name, prayerDayOffset(anchor.minutes), anchor.estimated, anchor.rule)
+}
+
+@Composable
+internal fun PrayerTimeMarkers(prayerName: String, key: String, shift: Int, estimated: Boolean, rule: RuleName?) {
     if (shift != 0) {
-        MarkerChip(stringResource(if (shift < 0) R.string.marker_before_midnight else R.string.marker_after_midnight), "marker_day_${anchor.prayer.name}")
+        MarkerChip(stringResource(if (shift < 0) R.string.marker_before_midnight else R.string.marker_after_midnight), "marker_day_$key")
     }
-    if (anchor.estimated) {
+    if (estimated) {
         var explain by remember { mutableStateOf(false) }
-        MarkerChip(stringResource(R.string.marker_estimated), "marker_estimated_${anchor.prayer.name}", onClick = { explain = true })
+        MarkerChip(stringResource(R.string.marker_estimated), "marker_estimated_$key", onClick = { explain = true })
         if (explain) {
             val context = LocalContext.current
             AlertDialog(
                 onDismissRequest = { explain = false },
                 confirmButton = { TextButton(onClick = { explain = false }) { Text(stringResource(R.string.marker_ok)) } },
-                text = { Text(estimatedExplanation(context, prayerName, anchor.rule), fontSize = 15.sp, lineHeight = 22.sp) },
+                text = { Text(estimatedExplanation(context, prayerName, rule), fontSize = 15.sp, lineHeight = 22.sp) },
             )
         }
     }

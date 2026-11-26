@@ -16,7 +16,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -90,6 +90,7 @@ internal fun PrayerSilenceEditorSheet(
 ) {
     val focusManager = LocalFocusManager.current
     val start = endpoint == SilenceEndpoint.START
+    var showWindowHelp by rememberSaveable { mutableStateOf(false) }
     val initialWindow = resolvePrayerTimelineWindow(anchor, config)
     val initialResolved = if (start) initialWindow.startMinutes else initialWindow.endMinutes
     val initialOffset = anchor.offsetAt(initialResolved)
@@ -144,7 +145,7 @@ internal fun PrayerSilenceEditorSheet(
         if (start) R.string.prayer_silence_start_group else R.string.prayer_silence_end_group,
     )
 
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Color.White,
@@ -167,6 +168,14 @@ internal fun PrayerSilenceEditorSheet(
                         color = TextMuted,
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
+                    )
+                    TextButton(onClick = { showWindowHelp = !showWindowHelp }) {
+                        Text(stringResource(if (showWindowHelp) R.string.prayer_editor_hide_help else R.string.prayer_editor_window_help))
+                    }
+                    if (showWindowHelp) Text(
+                        stringResource(R.string.prayer_editor_window_help_detail),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextMuted,
                     )
                 }
                 EndpointRuleEditor(

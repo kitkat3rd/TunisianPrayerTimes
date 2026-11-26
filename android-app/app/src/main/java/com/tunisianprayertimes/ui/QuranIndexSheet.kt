@@ -76,8 +76,8 @@ internal fun QuranIndexSheet(
     val surahName = { n: Int -> catalog.surahs.getOrNull(n - 1)?.name.orEmpty() }
     // With large text, all above the tabs would leave the list a sliver: it scrolls away with the list then.
     val collapse = rememberCollapsingHeaderState()
-    ModalBottomSheet(onDismissRequest = actions::dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
-        CollapsingHeaderColumn(collapse, Modifier.fillMaxWidth().quranSheetHeight(), header = {
+    AppModalBottomSheet(onDismissRequest = actions::dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+        CollapsingHeaderColumn(collapse, Modifier.fillMaxWidth().fillMaxHeight(), header = {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("الفهرس", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
@@ -120,7 +120,7 @@ internal fun QuranIndexSheet(
             }
             TextButton(
                 onClick = actions::search,
-                modifier = Modifier.align(Alignment.End).padding(horizontal = 16.dp, vertical = 6.dp).testTag("quran_index_search"),
+                modifier = Modifier.align(Alignment.Start).padding(horizontal = 16.dp, vertical = 6.dp).testTag("quran_index_search"),
             ) {
                 Icon(painterResource(R.drawable.ic_adhkar_search), null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))

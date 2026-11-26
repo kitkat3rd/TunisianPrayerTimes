@@ -9,7 +9,7 @@ import kotlin.math.sqrt
 internal data class MosqueCoordinate(val longitude: Double, val latitude: Double)
 
 /** A validated GeoJSON polygon; the first ring is the exterior and the rest are holes. */
-internal class MosquePolygon(private val rings: List<List<MosqueCoordinate>>) {
+internal class MosquePolygon(internal val rings: List<List<MosqueCoordinate>>) {
     private val exterior = rings.first()
     private val minLongitude = exterior.minOf { it.longitude }
     private val maxLongitude = exterior.maxOf { it.longitude }

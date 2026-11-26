@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import com.tunisianprayertimes.PrefsManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -230,6 +231,8 @@ internal fun HifzPlanDialog(
     onDismiss: () -> Unit,
 ) {
     var chosenPlan by rememberSaveable(stateSaver = HifzPlanDraftSaver) { mutableStateOf(HifzPlan(pace, times, oncePerDay)) }
+    val context = LocalContext.current
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
     // Keep the open editor alongside its draft, above the dialog's separate composition.
     val customTimes = rememberSaveable { mutableStateOf(false) }
     val chosenPace = chosenPlan.pace
@@ -308,14 +311,20 @@ internal fun HifzPlanDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onChange(chosenPlan)
-                    onDismiss()
+                    if (settings.reminder && (shown.prayers - (times ?: settings.times).prayers).isNotEmpty() &&
+                        !PrefsManager.hasConfirmedPlace(context)) {
+                        placeRequired = true
+                    } else {
+                        onChange(chosenPlan)
+                        onDismiss()
+                    }
                 },
                 modifier = Modifier.testTag("hifz_plan_done"),
             ) { Text("تم") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } },
     )
+    if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
 }
 
 /**
@@ -695,8 +704,8 @@ internal fun HifzRecordSheet(
     LaunchedEffect(choiceKey) {
         if (choice == HifzSlipChoice.Word) { withFrameNanos {}; scroll.animateScrollTo(scroll.maxValue) }
     }
-    ModalBottomSheet(onDismissRequest = close, sheetState = sheetState, containerColor = BgCream) {
-        BoxWithConstraints(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp).testTag("hifz_record_sheet")) {
+    AppModalBottomSheet(onDismissRequest = close, sheetState = sheetState, containerColor = BgCream) {
+        BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp).testTag("hifz_record_sheet")) {
         val room = maxHeight
         Column(Modifier.fillMaxSize()) {
             Column(Modifier.weight(1f).verticalScroll(scroll).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1210,7 +1219,7 @@ internal fun HifzFixSheet(
     var forward by remember { mutableStateOf(true) }
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val step: (Int) -> Unit = { delta -> forward = delta > 0; onStep(delta) }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         AnimatedContent(
             targetState = point.id,
             transitionSpec = {
@@ -1316,7 +1325,7 @@ private fun HifzFixContent(
     var editKey by rememberSaveable(point.id) { mutableStateOf(false) }
     // A swipe goes on through the notebook.
     val swipe = position?.let { (index, count) -> Modifier.hifzStepSwipe(canBack = index > 0, canNext = index < count - 1, onStep = onStep) } ?: Modifier
-    BoxWithConstraints(Modifier.fillMaxWidth().quranSheetHeight().then(swipe)) {
+    BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight().then(swipe)) {
     val room = maxHeight
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -1836,9 +1845,11 @@ internal fun hifzListDetail(point: HifzPoint, today: Long, due: Boolean, next: S
 @Composable
 internal fun HifzReminderSettingsControls(settings: HifzSettings, onChange: (HifzSettings) -> Unit) {
     var quietClock by rememberSaveable { mutableStateOf<String?>(null) }
-    if (settings.reminder) {
+    if (settings.reminder || !PrefsManager.hasConfirmedPlace(LocalContext.current)) {
         Text("أوقاتك المفضّلة", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
         HifzTimesChoice(settings.times) { onChange(settings.copy(times = it)) }
+    }
+    if (settings.reminder) {
         Text("المواعيد المختارة: ${HifzReminder.timesPhrase(settings.times)}. نتبعها للمواضع التي تتبع الإعدادات وللمراجعات المتباعدة.",
             fontSize = 12.sp, color = TextMuted)
         HifzPolicyCount(
@@ -1922,20 +1933,27 @@ internal fun HifzTimesChoice(
     val preset = HifzTimesPreset.of(times)
     // A choice shows at once, and the next tap builds on it, before the save comes back with it.
     var shown by remember { mutableStateOf(times) }
+    val context = LocalContext.current
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(times) { shown = times }
-    fun change(next: HifzTimes) {
+    val localCustom = rememberSaveable { mutableStateOf(open && preset == null) }
+    var custom by (customState ?: localCustom)
+    fun change(next: HifzTimes, presetSelected: Boolean = false) {
         if (next.none) return
+        if ((next.prayers - shown.prayers).isNotEmpty() && !PrefsManager.hasConfirmedPlace(context)) {
+            placeRequired = true
+            return
+        }
+        if (presetSelected) custom = false
         shown = next
         onChange(next)
     }
     // The reader's own times stay open while they are edited, also when they come to match a quick choice.
-    val localCustom = rememberSaveable { mutableStateOf(open && preset == null) }
-    var custom by (customState ?: localCustom)
     // Start with the preferred single slot; extra slots are an explicit choice.
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         HifzTimesPreset.entries.forEach { option ->
             FilterChip(
-                selected = !custom && HifzTimesPreset.of(shown) == option, onClick = { custom = false; change(option.times) },
+                selected = !custom && HifzTimesPreset.of(shown) == option, onClick = { change(option.times, presetSelected = true) },
                 label = { Text(option.label) }, colors = colors, modifier = Modifier.testTag("hifz_times_${option.key}"),
             )
         }
@@ -1946,7 +1964,8 @@ internal fun HifzTimesChoice(
             modifier = Modifier.testTag("hifz_times_custom"),
         )
     }
-    if (custom) HifzTimesEditor(shown, ::change)
+    if (custom) HifzTimesEditor(shown) { change(it) }
+    if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
 }
 
 /** «مخصص»: after which prayers and at which clock times, so as many reminders a day as the reader wants. */

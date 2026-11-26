@@ -747,14 +747,14 @@ internal fun HifzReviewSheet(
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = confirm)
     // Closed only once it is hidden: a Back the sheet refused shows what was answered, with «تابع الآن».
-    ModalBottomSheet(onDismissRequest = { if (!sheetState.isVisible) actions.dismiss() }, sheetState = sheetState, containerColor = BgCream) {
+    AppModalBottomSheet(onDismissRequest = { if (!sheetState.isVisible) actions.dismiss() }, sheetState = sheetState, containerColor = BgCream) {
         // Back, predictive or not, stops on what was answered first, without leaving the sheet shrunk.
         BackHandler(enabled = !state.atEnd(queue) && state.graded > 0) { state.requestEnd(queue, actions) }
         // A swipe goes to the next card or back, as the arrows do.
         val swipe = Modifier.hifzStepSwipe(canBack = state.canStepBack(queue), canNext = state.canStepForward(queue)) { delta ->
             if (state.settled()) state.step(queue, actions, delta)
         }
-        BoxWithConstraints(Modifier.fillMaxWidth().quranSheetHeight().padding(horizontal = 16.dp).then(swipe).testTag("hifz_review")) {
+        BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp).then(swipe).testTag("hifz_review")) {
           Column(Modifier.fillMaxSize()) {
             HifzReviewTitle(state, queue, point, actions)
             sessionFeedback()

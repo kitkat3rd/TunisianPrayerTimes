@@ -31,6 +31,7 @@ import com.tunisianprayertimes.tv.ui.settings.stepEveryMinutes
 import com.tunisianprayertimes.tv.ui.settings.stepSlideSeconds
 import com.tunisianprayertimes.tv.ui.settings.title
 import com.tunisianprayertimes.tv.ui.setup.IqamahConfigsSaver
+import com.tunisianprayertimes.tv.ui.setup.iqamahAnchor
 import com.tunisianprayertimes.tv.ui.setup.iqamahText
 import com.tunisianprayertimes.tv.ui.setup.ramadanText
 import com.tunisianprayertimes.tv.ui.setup.shiftFixed
@@ -155,6 +156,8 @@ class AdminPagesTest {
         assertEquals(5, rows.size)
         assertEquals(listOf(TvStrings.FAJR, "05:01", "—"), rows.first())
         assertEquals(listOf(TvStrings.ISHA, "19:20", "—"), rows.last())
+        assertEquals(LocalTime.of(12, 10), day.iqamahAnchor(Prayer.JOMOAA))
+        assertEquals(LocalTime.of(6, 28), day.iqamahAnchor(Prayer.AID_ADHA))
     }
 
     @Test
@@ -174,13 +177,12 @@ class AdminPagesTest {
     fun theRemoteSwitchesARuleBetweenMinutesAndAFixedTime() {
         // A winter fixed time goes back to the minutes it had, and returns as it was.
         val winter = IqamahConfig(mode = IqamahMode.FIXED_TIME, delayMinutes = 15, fixedHour = 19, fixedMinute = 30)
-        val minutes = winter.switched(LocalTime.of(21, 45))!!
+        val minutes = winter.switched(LocalTime.of(21, 45))
         assertEquals("بعد الأذان 15 د", iqamahText(minutes))
         assertEquals(winter, minutes.switched(LocalTime.of(21, 45)))
         // Never fixed before: it starts where the minutes put it after today's adhan.
-        assertEquals("الساعة 20:00", iqamahText(IqamahConfig(delayMinutes = 15).switched(LocalTime.of(19, 45))!!))
-        // Nothing to start from (an Eid off its day): not offered.
-        assertNull(IqamahConfig(delayMinutes = 30).switched(null))
+        assertEquals("الساعة 20:00", iqamahText(IqamahConfig(delayMinutes = 15).switched(LocalTime.of(19, 45))))
+        assertEquals("الساعة 12:00", iqamahText(IqamahConfig(delayMinutes = 30).switched(null)))
     }
 
     @Test

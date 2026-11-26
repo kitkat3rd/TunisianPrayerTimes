@@ -496,8 +496,9 @@ class SilenceSchedulerIntegrationTest {
         PrefsManager.setDelayMode(context, Prayer.FAJR, DelayMode.MINUTES)
         PrefsManager.setDelayMinutes(context, Prayer.FAJR, 0)
 
-        // "now" is 05:30 — outside the original 10-min window, inside the new fixed-time window
+        // Use a summer prayer day when Fajr is before 05:30, as in this regression.
         val now = Calendar.getInstance().apply {
+            set(2026, Calendar.JUNE, 1)
             set(Calendar.HOUR_OF_DAY, 5)
             set(Calendar.MINUTE, 30)
             set(Calendar.SECOND, 0)

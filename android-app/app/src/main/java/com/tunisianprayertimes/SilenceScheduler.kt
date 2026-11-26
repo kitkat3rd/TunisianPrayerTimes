@@ -1,8 +1,5 @@
 package com.tunisianprayertimes
 
-import com.tunisianprayertimes.mosque.MosqueSilenceSettings
-import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
-
 import android.app.AlarmManager
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -11,6 +8,9 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import com.tunisianprayertimes.mosque.MosquePeriods
+import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
+import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.place.PrayerPlace
 import com.tunisianprayertimes.silence.SilenceDay
 import com.tunisianprayertimes.silence.SilenceRule
@@ -35,6 +35,7 @@ object SilenceScheduler {
     private const val TAG = "SilenceScheduler"
     private const val ACTION_SILENCE = "com.tunisianprayertimes.ACTION_SILENCE"
     private const val ACTION_UNSILENCE = "com.tunisianprayertimes.ACTION_UNSILENCE"
+    internal const val ACTION_MOSQUE_OBSERVE = "com.tunisianprayertimes.ACTION_MOSQUE_OBSERVE"
     private const val ACTION_DELEGATION_CHECK = "com.tunisianprayertimes.ACTION_DELEGATION_CHECK"
     private const val ACTION_RESCHEDULE = "com.tunisianprayertimes.ACTION_RESCHEDULE"
     internal const val EXTRA_PRAYER = "extra_prayer"
@@ -212,6 +213,15 @@ object SilenceScheduler {
             armed += occurrence
             val start = window.start.toEpochMilli()
             val end = window.end.toEpochMilli()
+            if (MosqueSilenceSettings.combined(context) && !isDismissed(context, window.prayer, window.prayerDay, window)) {
+                val early = MosquePeriods.earlyStart(window)
+                if (early > nowMillis && early < start) {
+                    val alarms = context.getSystemService(AlarmManager::class.java)
+                    if (Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms())
+                        alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, early,
+                            createPendingIntent(context, ACTION_MOSQUE_OBSERVE, window.prayer, window.prayerDay))
+                } else cancelPrayerAlarm(context, ACTION_MOSQUE_OBSERVE, window.prayer, window.prayerDay)
+            } else cancelPrayerAlarm(context, ACTION_MOSQUE_OBSERVE, window.prayer, window.prayerDay)
             scheduleDelegationCheckIfNeeded(context, nowMillis, window)
             if (nowMillis in start until end) {
                 currentlyInSilenceWindow = true
@@ -249,8 +259,8 @@ object SilenceScheduler {
         // Not in any window: restore the previous ringer state if auto-silence was on (a missed end alarm).
         // While auto-silence is on and a window starts within the tolerance, a place change likely shifted
         // the window slightly: keep the phone silenced.
-        if (!currentlyInSilenceWindow) {
-            val imminentWindow = !MosqueSilenceSettings.combined(context) && allowDelegationBridge && PrefsManager.isAutoSilenceActive(context) &&
+        if (!currentlyInSilenceWindow && !MosqueSilenceSettings.combined(context)) {
+            val imminentWindow = allowDelegationBridge && PrefsManager.isAutoSilenceActive(context) &&
                 earliestUpcomingSilenceMs - nowMillis <= MAX_DELEGATION_SHIFT_MS
             if (!imminentWindow) {
                 if (SilenceModeController.disableAutoSilence(context)) {
@@ -270,7 +280,7 @@ object SilenceScheduler {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         for (prayer in Prayer.entries) {
             for (slot in 0 until DAY_SLOTS) {
-                for (action in listOf(ACTION_SILENCE, ACTION_UNSILENCE, ACTION_DELEGATION_CHECK)) cancelCode(context, action, requestCode(action, prayer, slot))
+                for (action in listOf(ACTION_SILENCE, ACTION_UNSILENCE, ACTION_DELEGATION_CHECK, ACTION_MOSQUE_OBSERVE)) cancelCode(context, action, requestCode(action, prayer, slot))
             }
         }
         cancelLegacyAlarms(context)
@@ -310,9 +320,7 @@ object SilenceScheduler {
      */
     private fun scheduleDelegationCheckIfNeeded(context: Context, nowMillis: Long, window: SilenceWindow) {
         val adhan = window.adhan.toEpochMilli()
-        if (adhan <= nowMillis || !PrefsManager.isAutoLocationUpdateEnabled(context) ||
-            !DelegationLocator.hasBackgroundLocationPermission(context)
-        ) {
+        if (adhan <= nowMillis || !DelegationLocator.canUpdateTravelInBackground(context)) {
             cancelPrayerAlarm(context, ACTION_DELEGATION_CHECK, window.prayer, window.prayerDay)
             return
         }
@@ -352,6 +360,7 @@ object SilenceScheduler {
     private fun cancelPrayerAlarms(context: Context, prayer: Prayer, day: LocalDate) {
         cancelPrayerAlarm(context, ACTION_SILENCE, prayer, day)
         cancelPrayerAlarm(context, ACTION_UNSILENCE, prayer, day)
+        cancelPrayerAlarm(context, ACTION_MOSQUE_OBSERVE, prayer, day)
         cancelPrayerAlarm(context, ACTION_DELEGATION_CHECK, prayer, day)
     }
 
@@ -371,6 +380,7 @@ object SilenceScheduler {
     internal fun requestCode(action: String, prayer: Prayer, slot: Int): Int = when (action) {
         ACTION_SILENCE -> SLOT_CODE_BASE + (prayer.ordinal * 2) * DAY_SLOTS + slot
         ACTION_UNSILENCE -> SLOT_CODE_BASE + (prayer.ordinal * 2 + 1) * DAY_SLOTS + slot
+        ACTION_MOSQUE_OBSERVE -> 82_000 + prayer.ordinal * DAY_SLOTS + slot
         ACTION_DELEGATION_CHECK -> DELEGATION_CHECK_REQUEST_CODE_BASE + prayer.ordinal * DAY_SLOTS + slot
         else -> error("no request code for $action")
     }

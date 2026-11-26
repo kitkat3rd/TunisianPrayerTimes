@@ -78,6 +78,51 @@ class QuranSearchTest {
     }
 
     @Test
+    fun adjacentLettersMayBeSwapped_andTheHitOpensTheMatchingFragment() {
+        for (query in listOf("نستيعن", "نستعيين", "نستعن")) {
+            val result = catalog.search(query).first()
+            assertEquals(query, QuranSearchHit(2, listOf(QuranVerseReference(1, 4))), result.hit)
+            assertEquals(query, QuranSearchKind.Similar, result.kind)
+            assertEquals(listOf("نَسْتَعِينُ"), quranMatchRanges(result.text, query, similar = true).map { result.text.substring(it) })
+        }
+    }
+
+    @Test
+    fun anExtraOrMissingSpace_matchesAndHighlightsWholeSourceWords() {
+        for ((query, expected) in listOf("الحيالقيوم" to listOf("الْحَيُّ", "الْقَيُّومُ"), "القي وم" to listOf("الْقَيُّومُ"))) {
+            val result = catalog.search(query).first()
+            assertEquals(query, listOf(QuranVerseReference(2, 255)), result.verses)
+            assertEquals(query, QuranSearchKind.Similar, result.kind)
+            assertEquals(expected, quranMatchRanges(result.text, query, similar = true).map { result.text.substring(it) })
+        }
+    }
+
+    @Test
+    fun shortWordsCanBeCorrectedInAPhraseIncludingAcrossVerses() {
+        assertEquals(listOf(QuranVerseReference(1, 1)), catalog.search("لله رت العالمين").first().verses)
+        val result = catalog.search("الرحيم مك").first()
+        assertEquals(listOf(QuranVerseReference(1, 2), QuranVerseReference(1, 3)), result.verses)
+        assertEquals(QuranSearchKind.Similar, result.kind)
+        assertEquals(listOf("الرَّحِيمِ", "مَٰلِكِ"), quranMatchRanges(result.text, "الرحيم مك", similar = true).map { result.text.substring(it) })
+    }
+
+    @Test
+    fun exactPhraseThenNearPhraseThenScatteredNearMatches_withNoReusedWords() {
+        // These miniature entries isolate ranking, including a repeated query term in the last entry.
+        val ranked = QuranCatalog(emptyList(), listOf(QuranSurah(1, "اختبار", 1)), listOf(
+            QuranSearchEntry(1, 1, "الرحيم هو الرحمن", 1),
+            QuranSearchEntry(1, 2, "الرحمن الرحيم", 2),
+            QuranSearchEntry(1, 3, "الرحمن الرحمي", 3),
+            QuranSearchEntry(1, 4, "الرحمن هو", 4),
+        ))
+        val results = ranked.search("الرحمن الرحمي")
+        assertEquals(listOf(3, 2, 1), results.map { it.verses.single().ayah })
+        assertEquals(listOf(QuranSearchKind.Phrase, QuranSearchKind.Similar, QuranSearchKind.Similar), results.map { it.kind })
+        assertTrue(ranked.search("الرحمن الرحمن").none { it.verses.single().ayah == 4 })
+        assertTrue(ranked.search("الرحمن الرحمت").none { it.verses.single().ayah == 4 })
+    }
+
+    @Test
     fun shortWordsAreNeverGuessed() {
         assertTrue(catalog.search("كتب").isEmpty())
     }
@@ -144,6 +189,9 @@ class QuranSearchTest {
 
     @Test
     fun editDistance_isBoundedByWhatTheWordForgives() {
+        assertEquals(0, withinEdits("القيوم", "القيوم", 1))
+        assertEquals(1, withinEdits("القيوم", "القويم", 1))
+        assertEquals(2, withinEdits("المستغفرين", "المتسغفرون", 2))
         assertEquals(1, withinEdits("القيوم", "القيوب", 1))
         assertEquals(0, withinEdits("الله", "الله", 0))
         assertNull(withinEdits("القيوم", "القيام", 0))

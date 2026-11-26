@@ -24,6 +24,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -50,15 +51,14 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Plays one adhan. Started by its alarm, it goes to the foreground at once, then decides off the main thread whether
- * the adhan sounds ([AdhanDecision]); if not, a quiet notice says the time has come and why there was no sound.
+ * the adhan sounds ([AdhanDecision]). A silenced phone still shows the voice waveform for the recording's duration.
  *
  * The adhan sounds at the ring volume: the level the side keys set when nothing plays, whose zero is the phone's silent
- * or vibrate mode. At zero it does not start, and the quiet notice says so. While it sounds (owner, 2026-11-16), one
+ * or vibrate mode. At zero only the waveform runs. While it sounds (owner, 2026-11-16), one
  * press of volume down mutes it and it plays on unheard; volume up brings it back at the level it had, and then
  * raises it as usual (screen on or off, through its media session). It stops at its end, at «إيقاف» or a swipe of its
- * notification, at a headset's button, when the phone turns silent, vibrate or Do Not Disturb, when an alarm starts
- * ringing, or when a call or another app takes the audio. App silence always takes priority; playback never changes
- * or postpones the silencer.
+ * notification, at a headset's button, when an alarm starts ringing, or when a call or another app takes the audio.
+ * If the phone is silenced during the adhan, the waveform continues from the same position with no audio.
  */
 class AdhanPlaybackService : Service() {
     private val main = Handler(Looper.getMainLooper())
@@ -69,8 +69,8 @@ class AdhanPlaybackService : Service() {
     /** The volumes while the adhan sounds: a key's step is measured against them. */
     private var volumes: List<Int>? = null
 
-    /** Volume down muted the adhan: it plays on, unheard, until volume up. */
-    private var muted = false
+    /** The level to restore when a muted recording becomes audible again. */
+    private var lastAudibleVolume = 1f
 
     /** The volumes before and just after the key that muted it, so that key's step can be put back. */
     private var muteStep: Pair<List<Int>, List<Int>>? = null
@@ -116,9 +116,9 @@ class AdhanPlaybackService : Service() {
                 if (player == null) {
                     if (current == null && warning == null) stopSelf(startId)
                 } else if (intent.getBooleanExtra(EXTRA_MUTED, true)) {
-                    setMuted(true)
+                    setPlaybackVolume(0f)
                 } else {
-                    unmuteAtFormerLevel()
+                    setVolumeFromPage(lastAudibleVolume)
                 }
             }
             ACTION_PLAY -> {
@@ -247,26 +247,30 @@ class AdhanPlaybackService : Service() {
         work.execute {
             val result = runCatching { prepare(app, occurrence) }
                 .onFailure { Log.w(TAG, "Could not prepare the adhan of $occurrence", it) }
-                .getOrElse { Prepared(Outcome.QUIET_SILENT_PHONE, null, failed = true) }
+                .getOrElse { Prepared(null) }
             main.post { onPrepared(token, occurrence, result) }
         }
     }
 
     private class Prepared(
-        val outcome: Outcome,
-        val player: MediaPlayer?,
-        val failed: Boolean = false,
+        val outcome: Outcome?,
+        val player: MediaPlayer? = null,
         val voice: AdhanVoice? = null,
+        val silentDurationMillis: Long = 0L,
     )
 
-    /** Off the main thread: the decision, then the player for an adhan allowed to sound. */
+    /** Off the main thread: prepare the audio player or time the silent display from the waveform samples. */
     private fun prepare(app: Context, occurrence: AdhanScheduler.Occurrence): Prepared {
         val outcome = decide(app, occurrence)
         Log.d(TAG, "Adhan of $occurrence: $outcome")
-        if (outcome != Outcome.PLAY) return Prepared(outcome, null)
+        if (outcome != Outcome.PLAY && !outcome.hasSilentWave()) return Prepared(outcome)
         val voice = AdhanSettings.voice(app, occurrence.prayer)
+        if (outcome != Outcome.PLAY) {
+            val duration = app.resources.openRawResource(voice.levelResId).use { it.readBytes().size * ADHAN_LEVEL_INTERVAL_MILLIS }
+            return Prepared(outcome, voice = voice, silentDurationMillis = duration)
+        }
         val prepared = MediaPlayer.create(app, voice.rawResId, audioAttributes(), 0)
-            ?: return Prepared(Outcome.QUIET_SILENT_PHONE, null, failed = true)
+            ?: return Prepared(null)
         return Prepared(outcome, prepared, voice = voice)
     }
 
@@ -280,34 +284,37 @@ class AdhanPlaybackService : Service() {
         }
         val playing = prepared.player
         if (playing == null) {
-            if (prepared.failed) showQuietNotice(occurrence, null) else showQuietNotice(occurrence, prepared.outcome)
+            showQuietNotice(occurrence, prepared.outcome, prepared.voice, durationMillis = prepared.silentDurationMillis)
             return
         }
-        if (!requestFocus()) {
+        if (!requestFocus(playing)) {
             // Android refuses the audio during a call, and may refuse it to a background app: say which.
             playing.release()
             showQuietNotice(occurrence, if (inCall(getSystemService(AudioManager::class.java))) Outcome.QUIET_IN_CALL else null)
             return
         }
         player = playing
-        playing.setOnCompletionListener { finish() }
+        playing.setOnCompletionListener { if (player === playing) finish() }
         playing.setOnErrorListener { _, what, extra ->
             Log.w(TAG, "Player error $what/$extra")
-            finish()
+            if (player === playing) finish()
             true
         }
-        watchForStop()
+        watchForStop(playing)
         // Preparation and focus acquisition can take time. Recheck after registering for changes so a silence
-        // that began in the meantime prevents playback, and later DND/ringer changes stop it.
+        // that began in the meantime prevents playback, and later DND/ringer changes stop the audio.
         val outcome = decide(this, occurrence)
         if (outcome != Outcome.PLAY) {
-            showQuietNotice(occurrence, outcome)
+            showQuietNotice(occurrence, outcome, prepared.voice, durationMillis = playing.duration.toLong())
             return
         }
         playing.start()
         // Open the page even without a warning; an already-open countdown changes in place.
         val openPage = alertState.value?.occurrence != occurrence
-        alertState.value = AdhanAlert(occurrence, sounding = true, voice = prepared.voice, startedAtMillis = System.currentTimeMillis())
+        alertState.value = AdhanAlert(
+            occurrence, sounding = true, voice = prepared.voice, startedAtUptimeMillis = SystemClock.uptimeMillis(),
+            onVolumeChange = { level -> if (token == generation) setVolumeFromPage(level) },
+        )
         goForeground(occurrence, fullScreen = openPage)
     }
 
@@ -315,26 +322,22 @@ class AdhanPlaybackService : Service() {
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (phoneQuiet(context)) {
-                Log.d(TAG, "Phone turned quiet: stopping the adhan")
-                finish()
-            }
+            if (phoneQuiet(context)) continueSilently()
         }
     }
 
-    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-            Log.d(TAG, "Audio focus lost ($change): stopping the adhan")
-            main.post { finish() }
-        }
+    private fun continueSilently() {
+        val playing = player ?: return
+        val shown = alertState.value ?: return
+        if (!shown.sounding || shown.occurrence != current) return
+        Log.d(TAG, "Phone turned quiet: continuing the adhan silently")
+        showQuietNotice(
+            shown.occurrence, Outcome.QUIET_SILENT_PHONE, shown.voice, shown.startedAtUptimeMillis, playing.duration.toLong(),
+        )
     }
 
-    /**
-     * Silent, vibrate or Do Not Disturb stops the adhan. Volume down mutes it and volume up brings it back. Until
-     * 2026-11-16 any volume key stopped it. The owner: "can a single sound decrease just mute the sound without
-     * stopping the adhan such as increasing it again we have the sound again?"
-     */
-    private fun watchForStop() {
+    /** System silence ends the audio. A volume key can mute or restore the current recording's gain. */
+    private fun watchForStop(playing: MediaPlayer) {
         volumes = currentVolumes()
         ContextCompat.registerReceiver(
             this, stateReceiver,
@@ -352,16 +355,17 @@ class AdhanPlaybackService : Service() {
                 val before = volumes ?: return
                 val now = currentVolumes()
                 if (now == before) return
+                if (phoneQuiet(this@AdhanPlaybackService)) {
+                    continueSilently()
+                    return
+                }
                 volumes = now
                 if (now.indices.any { now[it] < before[it] }) {
                     // The key's step stays while muted, so the step up that brings the sound back works even at
                     // full volume and returns to the same level.
-                    if (!muted) {
-                        setMuted(true)
-                        muteStep = before to now
-                    }
-                } else if (muted) {
-                    setMuted(false)
+                    if (setPlaybackVolume(0f)) muteStep = before to now
+                } else if (alertState.value?.muted == true) {
+                    setPlaybackVolume(lastAudibleVolume)
                 }
             }
         }
@@ -371,7 +375,7 @@ class AdhanPlaybackService : Service() {
         // listener alone would leave both sounding together.
         val callback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
-                if (alarmRinging(configs)) {
+                if (player === playing && alarmRinging(configs)) {
                     Log.d(TAG, "An alarm is ringing: stopping the adhan")
                     finish()
                 }
@@ -408,24 +412,29 @@ class AdhanPlaybackService : Service() {
         }
     }.onFailure { Log.w(TAG, "Could not open the adhan's media session", it) }.getOrNull()
 
-    /** The player goes silent or loud again; it keeps its place, its audio focus and its page. */
-    private fun setMuted(on: Boolean) {
-        val playing = player ?: return
-        if (muted == on) return
-        val level = if (on) 0f else 1f
-        runCatching { playing.setVolume(level, level) }.onFailure { Log.w(TAG, "Could not change the adhan's mute", it) }
-        muted = on
-        if (!on) muteStep = null
-        Log.d(TAG, if (on) "Volume down: adhan muted" else "Volume up: adhan heard again")
-        val shown = alertState.value
-        if (shown != null && shown.occurrence == current) alertState.value = shown.copy(muted = on)
+    /** Applies gain to this player while the recording continues at its current position. */
+    private fun setPlaybackVolume(level: Float): Boolean {
+        val playing = player ?: return false
+        val shown = alertState.value ?: return false
+        if (!shown.sounding || shown.occurrence != current || level !in 0f..1f || shown.volume == level) return false
+        runCatching { playing.setVolume(level, level) }.onFailure {
+            Log.w(TAG, "Could not change the adhan volume", it)
+            return false
+        }
+        if (level > 0f) {
+            lastAudibleVolume = level
+            muteStep = null
+        }
+        alertState.value = shown.copy(volume = level)
+        return true
     }
 
-    /** From the page, whose up key moves no volume: if a key outside the page muted it, its step is put back. */
-    private fun unmuteAtFormerLevel() {
+    /** Restore the ring step if an off-screen key muted the recording and the page makes it audible again. */
+    private fun setVolumeFromPage(level: Float) {
         val step = muteStep
-        setMuted(false)
-        if (step != null && currentVolumes() == step.second) restoreVolumes(step.first)
+        if (setPlaybackVolume(level) && level > 0f && step != null && currentVolumes() == step.second) {
+            restoreVolumes(step.first)
+        }
     }
 
     private fun currentVolumes(): List<Int> {
@@ -433,10 +442,19 @@ class AdhanPlaybackService : Service() {
         return VOLUME_STREAMS.map { audio.getStreamVolume(it) }
     }
 
-    private fun requestFocus(): Boolean {
+    private fun requestFocus(playing: MediaPlayer): Boolean {
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(audioAttributes())
-            .setOnAudioFocusChangeListener(focusListener, main)
+            .setOnAudioFocusChangeListener({ change ->
+                if (player === playing && (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)) {
+                    if (phoneQuiet(this)) {
+                        continueSilently()
+                    } else {
+                        Log.d(TAG, "Audio focus lost ($change): stopping the adhan")
+                        finish()
+                    }
+                }
+            }, main)
             .build()
         val granted = getSystemService(AudioManager::class.java).requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         if (granted) focusRequest = request
@@ -477,7 +495,7 @@ class AdhanPlaybackService : Service() {
         // An adhan that ends muted puts back the step of the key that muted it, unless the volume moved since.
         muteStep?.let { (before, after) -> if (currentVolumes() == after) restoreVolumes(before) }
         muteStep = null
-        muted = false
+        lastAudibleVolume = 1f
         playbackCallback?.let { callback ->
             runCatching { getSystemService(AudioManager::class.java).unregisterAudioPlaybackCallback(callback) }
         }
@@ -545,7 +563,13 @@ class AdhanPlaybackService : Service() {
         )
     }
 
-    private fun showQuietNotice(occurrence: AdhanScheduler.Occurrence, outcome: Outcome?) {
+    private fun showQuietNotice(
+        occurrence: AdhanScheduler.Occurrence,
+        outcome: Outcome?,
+        voice: AdhanVoice? = null,
+        startedAtUptimeMillis: Long = SystemClock.uptimeMillis(),
+        durationMillis: Long = 0L,
+    ) {
         val reason = quietReason(outcome)
         if (reason == null || outcome == Outcome.QUIET_LATE) {
             // A disabled/cancelled or very late adhan must not open a page. A slightly late one keeps its tray notice.
@@ -557,7 +581,11 @@ class AdhanPlaybackService : Service() {
         // Keep only the visual reminder: no player, audio focus or media session while the adhan is quiet.
         stopPlayback()
         current = occurrence
-        alertState.value = AdhanAlert(occurrence, sounding = false, countingDown = false, quietReasonResId = reason)
+        val animatedVoice = voice?.takeIf { outcome.hasSilentWave() && durationMillis > 0L }
+        alertState.value = AdhanAlert(
+            occurrence, sounding = false, voice = animatedVoice, startedAtUptimeMillis = startedAtUptimeMillis,
+            countingDown = false, quietReasonResId = reason,
+        )
         startForegroundWith(
             NotificationCompat.Builder(this, CHANNEL_PLAYING)
                 .setSmallIcon(R.drawable.ic_adhkar_mosque)
@@ -575,7 +603,11 @@ class AdhanPlaybackService : Service() {
                 .addAction(R.drawable.ic_stop, getString(R.string.adhan_close), stopIntent(this))
                 .build(),
         )
-        main.postDelayed(endQuietAlertLater, QUIET_ALERT_TIMEOUT_MILLIS)
+        if (animatedVoice != null) {
+            main.postAtTime(endQuietAlertLater, startedAtUptimeMillis + durationMillis)
+        } else {
+            main.postDelayed(endQuietAlertLater, QUIET_ALERT_TIMEOUT_MILLIS)
+        }
     }
 
     companion object {
@@ -610,9 +642,9 @@ class AdhanPlaybackService : Service() {
         private const val ACTION_MUTE = "com.tunisianprayertimes.adhan.ACTION_MUTE"
         private const val EXTRA_MUTED = "muted"
         private const val ACTION_STOP = "com.tunisianprayertimes.adhan.ACTION_STOP"
-        private const val CHANNEL_PLAYING = "adhan_playing"
-        private const val CHANNEL_QUIET = "adhan_quiet"
-        private const val CHANNEL_SOON = "adhan_soon"
+        internal const val CHANNEL_PLAYING = "adhan_playing"
+        internal const val CHANNEL_QUIET = "adhan_quiet"
+        internal const val CHANNEL_SOON = "adhan_soon"
         private const val NOTIFICATION_ID = 740401
         private const val WARNING_NOTIFICATION_ID = 740402
         private const val LATE_WARNING_GRACE_MILLIS = 2 * 60_000L
@@ -638,7 +670,7 @@ class AdhanPlaybackService : Service() {
         /** The quiet notice goes away once the prayer has surely begun. */
         private const val QUIET_NOTICE_TIMEOUT_MILLIS = 30 * 60_000L
 
-        /** A silent page must not keep the screen awake for the length of an unheard recording. */
+        /** Duration of a quiet reminder due to a call, a ringing alarm or a playback failure. */
         internal const val QUIET_ALERT_TIMEOUT_MILLIS = 30_000L
 
         private val VOLUME_STREAMS = listOf(
@@ -810,6 +842,9 @@ class AdhanPlaybackService : Service() {
             Outcome.PLAY, Outcome.NOTHING -> null
         }
 
+        private fun Outcome?.hasSilentWave(): Boolean =
+            this == Outcome.QUIET_SILENT_PHONE || this == Outcome.QUIET_PRAYER_SILENCE || this == Outcome.QUIET_ZERO_VOLUME
+
         /** The stream of [audioAttributes]: its volume is the adhan's volume. */
         internal const val ADHAN_STREAM = AudioManager.STREAM_RING
 
@@ -925,11 +960,15 @@ class AdhanPlaybackService : Service() {
 internal data class AdhanAlert(
     val occurrence: AdhanScheduler.Occurrence,
     val sounding: Boolean,
-    /** While sounding: the recording and when it started, so the page's waveform follows the voice. */
+    /** The recording and its start time while the waveform is active, including during silence. */
     val voice: AdhanVoice? = null,
-    val startedAtMillis: Long = 0L,
+    val startedAtUptimeMillis: Long = 0L,
     val countingDown: Boolean = !sounding,
     val quietReasonResId: Int? = null,
-    /** Sounding but muted by volume down: the recording runs on, unheard. */
-    val muted: Boolean = false,
-)
+    /** Player gain relative to the ring volume. Zero keeps the recording playing silently. */
+    val volume: Float = 1f,
+    /** The live recording's control, shared in-process with the alert activity on the main thread. */
+    val onVolumeChange: ((Float) -> Unit)? = null,
+) {
+    val muted: Boolean get() = volume == 0f
+}

@@ -10,10 +10,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import com.tunisianprayertimes.MainActivity
 import com.tunisianprayertimes.MainTabNavigation
+import com.tunisianprayertimes.adhkar.DeathRemembranceTexts
 import com.tunisianprayertimes.ui.DeathRemembranceNoticeCard
 import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
-import java.time.LocalDate
 import java.util.Locale
 
 /**
@@ -35,12 +35,7 @@ class DeathRemembranceActivity : AppCompatActivity() {
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
-        // The notification's day: the text changes at midnight, and the notification is gone by then.
-        val day = intent.getLongExtra(EXTRA_EPOCH_DAY, Long.MIN_VALUE)
-            .takeIf { epochDay -> epochDay != Long.MIN_VALUE }
-            ?.let(LocalDate::ofEpochDay)
-            ?: DeathReminder.today(this)
-        val item = DeathReminder.remembranceFor(day)
+        val item = readingFrom(intent) ?: DeathReminder.remembranceFor(DeathReminder.today(this))
         setContent {
             TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
                 DeathRemembranceNoticeCard(
@@ -62,6 +57,15 @@ class DeathRemembranceActivity : AppCompatActivity() {
     }
 
     companion object {
+        internal const val EXTRA_READING_ID = "com.tunisianprayertimes.remembrance.READING_ID"
         const val EXTRA_EPOCH_DAY = "com.tunisianprayertimes.remembrance.EPOCH_DAY"
+
+        private fun readingFrom(intent: Intent): DeathRemembranceTexts.Remembrance? {
+            val readings = DeathRemembranceTexts.ALL
+            intent.getStringExtra(EXTRA_READING_ID)?.let { id -> return readings.find { it.id == id } }
+            // Older notifications carried only the date of their reading in the original 28-day rotation.
+            val day = intent.getLongExtra(EXTRA_EPOCH_DAY, Long.MIN_VALUE)
+            return if (day == Long.MIN_VALUE) null else readings[day.mod(28)]
+        }
     }
 }

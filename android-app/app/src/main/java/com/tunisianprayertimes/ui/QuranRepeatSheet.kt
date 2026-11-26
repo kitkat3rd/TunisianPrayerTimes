@@ -62,7 +62,7 @@ internal fun QuranRepeatSheet(
         QuranRepeatRange(from, to, if (endless) null else count)
     } else null
 
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = BgCream,

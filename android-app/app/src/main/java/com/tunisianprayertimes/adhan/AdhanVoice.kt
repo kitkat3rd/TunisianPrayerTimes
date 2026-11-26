@@ -4,6 +4,9 @@ import androidx.annotation.RawRes
 import androidx.annotation.StringRes
 import com.tunisianprayertimes.R
 
+/** The interval between samples in the bundled waveform files. */
+internal const val ADHAN_LEVEL_INTERVAL_MILLIS = 50L
+
 /**
  * The adhan recordings bundled with the app, each for Fajr or for the other prayers, never both. The Fajr ones say
  * «الصلاة خير من النوم», which the five others lack (the owner listened to all of them, 2026-11-08), so Fajr offers

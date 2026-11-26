@@ -1126,6 +1126,8 @@ private fun TvApp(
             currentScreen == Screen.Setup -> {
                 SetupWizard(
                     gouvernorats = gouvernorats,
+                    today = today,
+                    loadPrayerTimes = { id, date -> loadDay(prayerRepo, id, date, formula) },
                     onUsbSetup = usbSetup?.let { found ->
                         {
                             usbFoundIsUndo = false
@@ -1259,6 +1261,7 @@ private fun TvApp(
                         iqamahConfigs = iqamahConfigs + (prayer to config)
                     },
                     todayEvents = todayEvents,
+                    todayPrayerTimes = todayTimes.takeIf { todayTimesFor == (delegationId to formula) },
                     ramadanOverrides = ramadanOverrides,
                     onRamadanCleared = { prayer ->
                         prefs.ramadanOverrides = ramadanOverrides - prayer

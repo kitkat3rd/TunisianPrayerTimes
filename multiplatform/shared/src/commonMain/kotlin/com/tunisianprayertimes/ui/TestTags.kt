@@ -52,8 +52,4 @@ object TestTags {
     fun wakeAlarmDeleteButton(alarmId: String) = "wake_alarm_delete_button_$alarmId"
     fun wakeAlarmSkipNextButton(alarmId: String) = "wake_alarm_skip_next_button_$alarmId"
 
-    const val ONBOARDING_NEXT = "onboarding_next"
-    const val ONBOARDING_PREV = "onboarding_prev"
-    const val ONBOARDING_START = "onboarding_start"
-    const val ONBOARDING_PROGRESS = "onboarding_progress"
 }

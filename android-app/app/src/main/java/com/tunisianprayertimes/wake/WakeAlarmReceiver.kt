@@ -7,7 +7,9 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tunisianprayertimes.AnalyticsTracker
 import com.tunisianprayertimes.ManualSilenceScheduler
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.SilenceStatus
+import com.tunisianprayertimes.WakeMainAlarmMode
 import com.tunisianprayertimes.isSuppressedWakeOccurrence
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +18,7 @@ import kotlinx.coroutines.launch
 class WakeAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val triggerPayload = intent.toWakeTriggerPayload() ?: return
+        if (triggerPayload.mainAlarmMode == WakeMainAlarmMode.PRAYER_RELATIVE && !PrefsManager.canUsePlaceForAutomation(context)) return
         WakeAlarmDeliveryTracker.begin(triggerPayload)
         WakeAlarmScheduler.markDelivered(context, triggerPayload)
         val pendingResult = goAsync()

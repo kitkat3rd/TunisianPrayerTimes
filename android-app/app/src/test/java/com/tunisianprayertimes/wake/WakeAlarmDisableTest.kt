@@ -49,6 +49,27 @@ class WakeAlarmDisableTest {
     }
 
     @Test
+    fun provisionalPlaceHoldsRelativeAlarmsWhileFixedAlarmsAndTimersRun() = runBlocking {
+        val relative = alarm("fajr").copy(mainAlarm = WakeMainAlarmConfig(mode = WakeMainAlarmMode.PRAYER_RELATIVE))
+        val timer = alarm("timer")
+        val fixed = alarm("clock").copy(mainAlarm = WakeMainAlarmConfig(mode = WakeMainAlarmMode.FIXED_TIME))
+        repository.saveWakeConfig(relative)
+        repository.saveWakeConfig(timer)
+        PrefsManager.initializeFirstRun(context)
+        PrefsManager.markFirstLaunchDone(context)
+        PrefsManager.setPlaceProvisional(context, true)
+        schedule(relative, timer, fixed)
+        assertTrue(wakeMainEventId(timer.id) in scheduledWakeIntents())
+        assertTrue(wakeMainEventId(fixed.id) in scheduledWakeIntents())
+        assertTrue(wakeMainEventId(relative.id) !in scheduledWakeIntents())
+        assertEquals(true, repository.getWakeAlarm(relative.id)?.enabled)
+
+        PrefsManager.setPlaceProvisional(context, false)
+        schedule(relative, timer, fixed)
+        assertTrue(wakeMainEventId(relative.id) in scheduledWakeIntents())
+    }
+
+    @Test
     fun disablingParentCancelsMainAndExtrasAndReenablingRestoresThem() {
         val parent = alarm("parent")
         schedule(parent)

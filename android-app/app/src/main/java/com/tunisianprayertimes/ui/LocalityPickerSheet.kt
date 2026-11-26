@@ -23,6 +23,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -92,6 +94,7 @@ internal fun LocalityPickerSheet(
     loading: Boolean = false,
     // The cities are still being prepared: a typed name that matches nothing in Tunisia waits for them.
     citiesLoading: Boolean = false,
+    onRetrySources: (() -> Unit)? = null,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -150,9 +153,10 @@ internal fun LocalityPickerSheet(
     // Only the cities found for what is typed now: until they come, the sheet waits rather than show another query's.
     val currentCities = cityResult?.takeIf { it.cities === cities && it.query == query }
     val cityGroups = currentCities?.groups.orEmpty()
-    val isSearchPending = loading || (!search.isEmpty && currentResult == null) ||
-        (!cities.isEmpty && currentCities == null && groups.isEmpty()) ||
-        (citiesLoading && query.isNotBlank() && groups.isEmpty())
+    val isSearchPending = groups.isEmpty() && cityGroups.isEmpty() && (
+        loading || (!search.isEmpty && currentResult == null) ||
+            (!cities.isEmpty && currentCities == null) || (citiesLoading && query.isNotBlank())
+    )
     // Best match first, wherever it is; a stable sort keeps Tunisia's governorates first at equal quality.
     val sections: List<PickerSection> = (groups + cityGroups).sortedBy { it.quality }
     LaunchedEffect(query, catalog) {
@@ -160,7 +164,7 @@ internal fun LocalityPickerSheet(
     }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = state,
         containerColor = Color.White,
@@ -172,22 +176,33 @@ internal fun LocalityPickerSheet(
                 shape = RoundedCornerShape(10.dp),
                 border = BorderStroke(1.dp, GoldLight),
             ) {
+                val searchLabel = stringResource(R.string.hint_search_delegation)
                 BasicTextField(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)
-                        .focusRequester(focusRequester).testTag("locality_search"),
+                        .focusRequester(focusRequester).testTag("locality_search")
+                        .semantics { contentDescription = searchLabel },
                     textStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 15.sp, color = TextDark, textAlign = TextAlign.Start),
                     singleLine = true,
                     decorationBox = { inner ->
                         if (query.isEmpty()) Text(
-                            stringResource(R.string.hint_search_delegation), fontSize = 15.sp, color = TextMuted,
+                            searchLabel, fontSize = 15.sp, color = TextMuted,
                         )
                         inner()
                     },
                 )
             }
             Spacer(Modifier.height(8.dp))
+            if (onRetrySources != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.first_run_catalog_error), modifier = Modifier.weight(1f), color = TextDark)
+                    TextButton(onClick = onRetrySources) { Text(stringResource(R.string.first_run_retry)) }
+                }
+            }
             if (isSearchPending) {
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(24.dp),

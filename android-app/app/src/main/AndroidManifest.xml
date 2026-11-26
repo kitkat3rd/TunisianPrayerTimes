@@ -42,6 +42,10 @@
     <!-- We don't use advertising; remove AD_ID added transitively by Firebase/Play Services -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove" />
 
+    <queries>
+        <provider android:authorities="androidx.car.app.connection" />
+    </queries>
+
     <!-- Gyroscope Maze wake-up challenge uses the device orientation sensor.
          Marked required=false so devices without a gyroscope are not filtered from the store;
          the game falls back gracefully when no orientation sensor is available. -->
@@ -54,6 +58,8 @@
     <application
         android:name=".TunisianPrayerTimesApplication"
         android:allowBackup="true"
+        android:backupAgent=".PrayerBackupAgent"
+        android:fullBackupOnly="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -81,11 +87,6 @@
             android:resource="@drawable/ic_tab_quran" />
 
         <activity
-            android:name=".OnboardingActivity"
-            android:exported="false"
-            android:theme="@style/Theme.TunisianPrayerTimes" />
-
-        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection">
@@ -94,6 +95,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".WakeShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.TunisianPrayerTimes.Card" />
 
         <activity
             android:name=".SilenceShortcutActivity"

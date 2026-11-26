@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -45,16 +46,19 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -79,7 +83,8 @@ import kotlin.math.sign
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun DhikrReader(
     activity: AppCompatActivity, state: DhikrState, session: DhikrSession, now: Long,
-    onDismiss: () -> Unit, onCount: (Int) -> Unit, onMove: (Int) -> Unit, onSkip: () -> Unit, onRemove: () -> Unit,
+    onDismiss: () -> Unit, onCount: (Int) -> Unit, onMove: (Int) -> Unit, onAdvance: () -> Unit,
+    onSkip: () -> Unit, onRemove: () -> Unit,
     onFavourite: () -> Unit, onCollections: () -> Unit,
     onEditCustom: () -> Unit, onDeleteCustom: () -> Unit,
     onAddToCollection: () -> Unit, onReorderCollection: () -> Unit,
@@ -146,6 +151,7 @@ import kotlin.math.sign
     }
     val canNavigate = session.itemIds.size > 1
     val currentIndex = session.index.coerceIn(0, session.itemIds.lastIndex)
+    val positionLabel = "الذكر " + latinNumber(currentIndex + 1) + " من " + latinNumber(session.itemIds.size)
     fun neighbour(step: Int) =
         if (canNavigate) state.findDhikr(session.itemIds[(currentIndex + step).mod(session.itemIds.size)]) else null
     val previousEntry = neighbour(-1)
@@ -163,13 +169,13 @@ import kotlin.math.sign
         (session.category == null || !complete)
     val canAdvanceOnTap = complete && canNavigate
     val canUndo = count > 0 && open
-    val sessionDone = session.itemIds.count { it in session.skippedIds || (session.counts[it] ?: 0) >= state.target(session, it) }
+    val finishedItems = session.itemIds.map { state.isItemFinished(session, it) }
     // The closing card thanks the reader once, when their own count or skip completes the reading with
     // at least one dhikr read: a list only skipped through earns nothing yet, a reading already earned
     // when it opens says nothing, nor does one undone and completed again. A raised goal is a new one:
     // reaching it earns the card again.
     val closing = closingKind(session, fromReminder = reminder != null)
-    val closingEarned = state.isComplete(session) &&
+    val closingEarned = finishedItems.all { it } &&
         session.itemIds.any { (session.counts[it] ?: 0) >= state.target(session, it) }
     var closingDue by rememberSaveable(session.id, target) { mutableStateOf(!closingEarned) }
     var closingCard by rememberSaveable(session.id) { mutableStateOf(false) }
@@ -189,7 +195,7 @@ import kotlin.math.sign
     }
     fun activateDhikr() {
         if (swipe.moving) return
-        if (canAdvanceOnTap) onMove(1) else countOnce()
+        if (canAdvanceOnTap) onAdvance() else countOnce()
     }
     // A long enough drag or a quick flick moves on (readerSwipeDirection); anything else returns the
     // current dhikr. The session changes only once the neighbour has slid fully into place.
@@ -328,7 +334,7 @@ import kotlin.math.sign
                     // Position belongs to the reading, not to the way it was opened; a lone dhikr has none.
                     if (session.itemIds.size > 1) Surface(shape = RoundedCornerShape(50), color = AdhkarSoftGreen,
                         modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text("الذكر " + latinNumber(currentIndex + 1) + " من " + latinNumber(session.itemIds.size),
+                        Text(positionLabel,
                             Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = p.muted, fontSize = 12.sp)
                     }
 
@@ -407,7 +413,7 @@ import kotlin.math.sign
                             size = 52, onClick = { if (!swipe.moving) onCount(-1) }, tag = "adhkar_undo")
                     }
 
-                    // Navigation is free and circular; the thin bar tracks session completion. A single dhikr has
+                    // Navigation is free and circular. A single dhikr has
                     // nowhere to go: once its reminder's goal is reached, the same row quietly offers to raise it,
                     // so the counter above never moves under a counting finger.
                     if (canRaiseGoal) Row(Modifier.fillMaxWidth().padding(top = 14.dp, start = 12.dp, end = 12.dp),
@@ -434,18 +440,14 @@ import kotlin.math.sign
                             DhikrIcon(R.drawable.ic_adhkar_next, tint = if (canNavigate) p.primary else p.muted, modifier = Modifier.size(18.dp))
                         }
                     }
-                    Box(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp)
-                        .height(4.dp).clip(RoundedCornerShape(2.dp)).background(AdhkarRingTrack)) {
-                        Box(Modifier.fillMaxHeight().fillMaxWidth(sessionDone.toFloat() / session.itemIds.size.coerceAtLeast(1))
-                            .clip(RoundedCornerShape(2.dp)).background(p.primary))
-                    }
+                    DhikrListProgress(finishedItems, currentIndex, positionLabel)
                 }
             }
             // This dialog covers the page and its snackbars: messages raised while reading show here.
             SnackbarHost(snackbar, Modifier.fillMaxSize().wrapContentSize(Alignment.BottomCenter)
                 .navigationBarsPadding().padding(16.dp))
         }
-        if (wordings) ModalBottomSheet(onDismissRequest = { wordings = false },
+        if (wordings) AppModalBottomSheet(onDismissRequest = { wordings = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = p.background) {
             DhikrSheetHeader("الصيغ الواردة") { wordings = false }
             Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 24.dp)
@@ -745,6 +747,36 @@ private fun ReaderToggleChip(icon: Int, description: String, label: String, tag:
             DhikrIcon(icon, description, tint = p.primary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(label, color = p.primary, fontSize = 13.sp, maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+@Composable
+private fun DhikrListProgress(finishedItems: List<Boolean>, currentIndex: Int, positionLabel: String) {
+    val primary = LocalAdhkarPalette.current.primary
+    val done = finishedItems.count { it }
+    val multiple = finishedItems.size > 1
+    Canvas(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+        .height(8.dp).testTag("adhkar_list_progress").semantics {
+            progressBarRangeInfo = ProgressBarRangeInfo(done.toFloat(), 0f..finishedItems.size.toFloat())
+            val completion = "تمّ " + latinNumber(done) + " من " + latinNumber(finishedItems.size)
+            stateDescription = if (multiple) "$positionLabel، $completion" else completion
+        }) {
+        val slotWidth = size.width / finishedItems.size
+        val gap = if (multiple) minOf(2.dp.toPx(), slotWidth / 4) else 0f
+        val segmentWidth = slotWidth - gap
+        val radius = CornerRadius(minOf(2.dp.toPx(), segmentWidth / 2))
+        finishedItems.forEachIndexed { index, finished ->
+            val active = multiple && index == currentIndex
+            val height = if (active) size.height else 4.dp.toPx()
+            val slot = if (layoutDirection == LayoutDirection.Rtl) finishedItems.lastIndex - index else index
+            val start = slot * slotWidth + gap / 2
+            val color = when {
+                finished -> primary
+                active -> primary.copy(alpha = 0.45f)
+                else -> AdhkarRingTrack
+            }
+            drawRoundRect(color, Offset(start, (size.height - height) / 2), Size(segmentWidth, height), radius)
         }
     }
 }

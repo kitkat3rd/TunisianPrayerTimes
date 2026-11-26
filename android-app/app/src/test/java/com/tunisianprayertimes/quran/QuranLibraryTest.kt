@@ -26,6 +26,21 @@ class QuranLibraryTest {
     private fun verse(surah: Int, ayah: Int) = QuranVerseReference(surah, ayah)
 
     @Test
+    fun typoTolerantSearchFindsThePassageInTheBundledQalounEdition() {
+        val catalog = QuranRepository.load(ApplicationProvider.getApplicationContext())
+        for ((query, ayah, wordCount) in listOf(
+            Triple("الحمدلله رب العالمين", 1, 4),
+            Triple("إياك نع بد", 4, 2),
+            Triple("اهدنا الصارط المستقيم", 5, 3),
+        )) {
+            val first = catalog.search(query).first()
+            assertEquals(query, QuranSearchHit(1, listOf(verse(1, ayah))), first.hit)
+            assertEquals(query, QuranSearchKind.Similar, first.kind)
+            assertEquals(query, first.text.split(' ').take(wordCount), first.matchRanges(query).map { first.text.substring(it) })
+        }
+    }
+
+    @Test
     fun divisions_matchTheSuppliedScan() {
         val source = JSONObject(File("src/main/assets/quran/divisions.json").readText())
         assertEquals("madani-later", source.getString("numbering"))

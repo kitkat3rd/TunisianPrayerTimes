@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="today_suggested_place">مواقيت مؤقّتة لمدينة %1$s</string>
+    <string name="today_unnamed_suggestion">نعرض مواقيت مؤقّتة للمنطقة المقترحة</string>
+    <string name="today_confirm_place">تأكيد %1$s</string>
+    <string name="today_change_place">تغيير المدينة</string>
+    <string name="today_inm_source">المعهد الوطني للرصد الجوي</string>
+    <string name="today_calculation_method">طريقة الحساب: %1$s</string>
+    <string name="today_suggested_method">الطريقة المقترحة: %1$s · اختيار الطريقة</string>
+    <string name="today_phone_clock">المواقيت بتوقيت هاتفك. توقيت المكان %1$s.</string>
+    <string name="today_retry_timetable">إعادة تحميل المواقيت</string>
+    <string name="today_optional_setup">إعدادات اختيارية</string>
+    <string name="today_setup_adhan">اختيار الأذان للصلوات</string>
+    <string name="today_dismiss_setup">إخفاء الاقتراح</string>
+    <string name="today_show_silence_editors">عرض إعدادات الإسكات لكل صلاة</string>
+    <string name="today_show_timetable">عرض المواقيت فقط</string>
+    <string name="today_time_missing">غير متاح</string>
+</resources>

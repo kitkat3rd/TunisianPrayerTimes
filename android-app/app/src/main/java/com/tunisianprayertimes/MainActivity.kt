@@ -12,6 +12,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,6 +20,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
 import com.tunisianprayertimes.ui.MainScreen
 import com.tunisianprayertimes.ui.theme.BgCream
 import com.tunisianprayertimes.ui.AppFontFamily
@@ -144,6 +147,8 @@ class MainActivity : AppCompatActivity() {
 
     @VisibleForTesting
     internal val tabRequests = MainTabRequests()
+    internal var firstRunAnalytics by mutableStateOf<FirstRunTimetableSession?>(null)
+        private set
 
     override fun attachBaseContext(newBase: Context) {
         val locale = Locale.forLanguageTag("ar-TN-u-nu-latn")
@@ -166,10 +171,13 @@ class MainActivity : AppCompatActivity() {
         )
         AnalyticsTracker.installRamadanOverrideReporter(this)
 
-        // On first launch, show onboarding tutorial
-        if (PrefsManager.isFirstLaunch(this)) {
-            startActivity(Intent(this, OnboardingActivity::class.java))
-        }
+        firstRunAnalytics = AnalyticsTracker.openFirstRunSession(
+            this,
+            freshOrdinaryLaunch = intent?.action == Intent.ACTION_MAIN &&
+                intent.hasCategory(Intent.CATEGORY_LAUNCHER) && tabRequests.current.destination == null &&
+                PrefsManager.isFirstLaunch(this) && PrefsManager.isFreshOnboarding(this),
+            savedInstanceState = savedInstanceState,
+        )
 
         setContent {
             val tabRequest = tabRequests.current
@@ -186,7 +194,11 @@ class MainActivity : AppCompatActivity() {
                         }
                         timesReady = true
                     }
-                    Box(Modifier.fillMaxSize().background(BgCream))
+                    Box(Modifier.fillMaxSize().background(BgCream), contentAlignment = Alignment.Center) {
+                        val city = PrefsManager.getPlaceNameSnapshot(this@MainActivity)
+                        Text(if (city.isNullOrBlank()) stringResource(R.string.first_run_preparing)
+                            else stringResource(R.string.first_run_preparing_city, city))
+                    }
                 } else {
                     MainScreen(
                         activity = this,
@@ -205,6 +217,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.hasExtra(MainTabNavigation.EXTRA_DESTINATION)) firstRunAnalytics = null
         setIntent(intent)
         tabRequests.onNewIntent(intent)
     }
@@ -212,6 +225,7 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         tabRequests.onSaveInstanceState(outState)
+        firstRunAnalytics?.save(outState)
     }
 
     override fun onResume() {

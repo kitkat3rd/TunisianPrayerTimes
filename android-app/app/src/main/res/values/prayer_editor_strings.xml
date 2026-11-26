@@ -1,6 +1,9 @@
 <resources>
     <string name="prayer_editor_title">إسكات %1$s</string>
     <string name="prayer_editor_daily_note">تتكرر هذه الإعدادات في مواعيد هذه الصلاة، ولا تخص التاريخ المعروض فقط.</string>
+    <string name="prayer_editor_window_help">كيف أضبط فترة الإسكات؟</string>
+    <string name="prayer_editor_hide_help">إخفاء الشرح</string>
+    <string name="prayer_editor_window_help_detail">في جدول الصلاة، اسحب أحد طرفَي الشريط أو اضغط وقت البداية أو النهاية لضبطه بدقّة. اربط الوقت بالأذان ليتغيّر معه كل يوم، أو اختر ساعة ثابتة. راجع الفترة أدناه ثم احفظ التعديل.</string>
     <string name="prayer_editor_preview">الفترة بعد التعديل</string>
     <string name="prayer_editor_preview_duration">المدة: %1$d دقيقة</string>
     <string name="prayer_editor_start">بداية الإسكات</string>

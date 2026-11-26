@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="shortcut_before_adhan">قبل الأذان بـ10 دقائق</string>
+    <string name="shortcut_before_adhan_long">أيقظني قبل الأذان القادم بـ10 دقائق</string>
+    <string name="shortcut_nap">قيلولة 20 دقيقة</string>
+    <string name="shortcut_before_prayer_title">قبل أذان %1$s</string>
+    <string name="shortcut_wake_confirmed">ضُبط منبّه «%1$s» على %2$s.</string>
+    <string name="shortcut_wake_too_late">فات موعد التنبيه قبل أذان %1$s بعشر دقائق.</string>
+    <string name="shortcut_wake_missing_prayer">تعذّر تحديد وقت الأذان القادم. تحقّق من الموقع في تبويب الصلاة.</string>
+    <string name="shortcut_wake_permission">اسمح بالمنبّهات الدقيقة ثم اضغط على الاختصار مجدّدًا.</string>
+    <string name="shortcut_wake_failed">تعذّر ضبط المنبّه. تحقّق من تبويب المنبّهات.</string>
     <string name="shortcut_silence">إسكات الهاتف</string>
     <string name="shortcut_unsilence">إيقاف الإسكات</string>
     <string name="shortcut_silence_30">إسكات لمدة 30 دقيقة</string>

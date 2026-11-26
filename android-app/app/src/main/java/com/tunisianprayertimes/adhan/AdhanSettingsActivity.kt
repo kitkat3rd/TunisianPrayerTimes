@@ -2,6 +2,7 @@ package com.tunisianprayertimes.adhan
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -54,6 +55,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,9 +72,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.tunisianprayertimes.MainActivityPendingIntents
 import com.tunisianprayertimes.Prayer
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.ui.AppFontFamily
+import com.tunisianprayertimes.ui.PrayerPlaceRequiredDialog
 import com.tunisianprayertimes.ui.PrayerSilencePalette
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.TextDark
@@ -104,13 +109,19 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
     var choosingFor by remember { mutableStateOf<Prayer?>(null) }
     var exactAllowed by remember { mutableStateOf(canScheduleExact(context)) }
     var notificationsAllowed by remember { mutableStateOf(notificationsEnabled(context)) }
+    var blockedChannels by remember { mutableStateOf(blockedAdhanChannels(context)) }
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
+    var placeAllowsDelivery by remember { mutableStateOf(PrefsManager.canUsePlaceForAutomation(context)) }
+    var notificationRequested by rememberSaveable { mutableStateOf(false) }
     var volumeZero by remember { mutableStateOf(AdhanPlaybackService.volumeZero(context)) }
     var warnsBefore by remember { mutableStateOf(AdhanSettings.warnsBefore(context)) }
     var fullScreenAllowed by remember { mutableStateOf(canUseFullScreen(context)) }
     LifecycleResumeEffect(Unit) {
         // Back from the system's settings: the permissions may have changed, and so may the alarms they allow.
         exactAllowed = canScheduleExact(context)
+        placeAllowsDelivery = PrefsManager.canUsePlaceForAutomation(context)
         notificationsAllowed = notificationsEnabled(context)
+        blockedChannels = blockedAdhanChannels(context)
         fullScreenAllowed = canUseFullScreen(context)
         volumeZero = AdhanPlaybackService.volumeZero(context)
         AdhanScheduler.refreshLater(context)
@@ -140,16 +151,31 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         notificationsAllowed = notificationsEnabled(context)
     }
-    fun askForNotifications() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+    fun askForNotificationsOnce() {
+        if (!notificationRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
+            notificationRequested = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            openSettings(context, Settings.ACTION_APP_NOTIFICATION_SETTINGS)
         }
     }
+    fun changeAdhan(prayer: Prayer?, on: Boolean) {
+        placeAllowsDelivery = PrefsManager.canUsePlaceForAutomation(context)
+        if (on && !PrefsManager.hasConfirmedPlace(context)) {
+            placeRequired = true
+            return
+        }
+        if (prayer == null) {
+            AdhanSettings.setAllEnabled(context, on)
+            enabled = AdhanSettings.prayers.associateWith { on }
+        } else {
+            AdhanSettings.setEnabled(context, prayer, on)
+            enabled = enabled + (prayer to on)
+        }
+        if (on) askForNotificationsOnce()
+    }
     val anyEnabled = enabled.values.any { it }
+    val configured = anyEnabled && placeAllowsDelivery
 
     Column(
         modifier = Modifier
@@ -179,11 +205,7 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 64.dp)
-                    .toggleable(value = allEnabled, role = Role.Switch) { on ->
-                        AdhanSettings.setAllEnabled(context, on)
-                        enabled = AdhanSettings.prayers.associateWith { on }
-                        if (on && !notificationsEnabled(context)) askForNotifications()
-                    },
+                    .toggleable(value = allEnabled, role = Role.Switch) { on -> changeAdhan(null, on) },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -228,33 +250,49 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
                 }
             }
             HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-            if (anyEnabled && volumeZero) {
+            if (anyEnabled && !placeAllowsDelivery) {
+                PermissionNotice(
+                    text = stringResource(R.string.adhan_waiting_for_place),
+                    action = stringResource(R.string.prayer_data_choose_location),
+                    onAction = { MainActivityPendingIntents.choosePlace(context).send() },
+                )
+            }
+            if (configured && volumeZero) {
                 PermissionNotice(
                     text = stringResource(R.string.adhan_volume_zero),
                     action = stringResource(R.string.adhan_set_volume),
                     onAction = { showVolumePanel(context) },
                 )
             }
-            if (anyEnabled && !fullScreenAllowed) {
+            if (configured && !notificationsAllowed) {
                 PermissionNotice(
-                    text = stringResource(R.string.adhan_full_screen_off),
+                    text = stringResource(R.string.adhan_notifications_off),
                     action = stringResource(R.string.adhan_allow),
-                    onAction = { openSettings(context, FULL_SCREEN_SETTINGS) },
+                    // App settings remain accessible after a permanent runtime refusal.
+                    onAction = { openSettings(context, Settings.ACTION_APP_NOTIFICATION_SETTINGS) },
                 )
+            } else if (configured) {
+                blockedChannels.filter { warnsBefore || it.id != AdhanPlaybackService.CHANNEL_SOON }.forEach { channel ->
+                    PermissionNotice(
+                        text = stringResource(R.string.adhan_channel_off, channel.name),
+                        action = stringResource(R.string.adhan_open_channel),
+                        onAction = { openSettings(context, Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, channel.id) },
+                    )
+                }
             }
-            if (anyEnabled && !exactAllowed) {
+            if (configured && !exactAllowed) {
+                val timing = stringResource(R.string.adhan_exact_alarms_off)
                 PermissionNotice(
-                    text = stringResource(R.string.adhan_exact_alarms_off),
+                    text = if (warnsBefore) timing + " " + stringResource(R.string.adhan_warning_needs_exact) else timing,
                     action = stringResource(R.string.adhan_allow),
                     onAction = { openSettings(context, Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM) },
                 )
             }
-            if (anyEnabled && !notificationsAllowed) {
+            if (configured && !fullScreenAllowed) {
                 PermissionNotice(
-                    text = stringResource(R.string.adhan_notifications_off),
+                    text = stringResource(R.string.adhan_full_screen_off),
                     action = stringResource(R.string.adhan_allow),
-                    // The system's page works even after the permission was refused for good.
-                    onAction = { openSettings(context, Settings.ACTION_APP_NOTIFICATION_SETTINGS) },
+                    onAction = { openSettings(context, FULL_SCREEN_SETTINGS) },
                 )
             }
             AdhanSettings.prayers.forEach { prayer ->
@@ -262,11 +300,7 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
                     prayer = prayer,
                     enabled = enabled.getValue(prayer),
                     voice = voices.getValue(prayer),
-                    onEnabledChange = { on ->
-                        AdhanSettings.setEnabled(context, prayer, on)
-                        enabled = enabled + (prayer to on)
-                        if (on && !notificationsEnabled(context)) askForNotifications()
-                    },
+                    onEnabledChange = { on -> changeAdhan(prayer, on) },
                     onChooseVoice = { choosingFor = prayer },
                 )
                 HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
@@ -274,6 +308,7 @@ private fun AdhanSettingsScreen(onBack: () -> Unit) {
         }
     }
 
+    if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
     choosingFor?.let { prayer ->
         AdhanVoiceDialog(
             prayer = prayer,
@@ -480,6 +515,13 @@ private fun canScheduleExact(context: Context): Boolean =
 
 private fun notificationsEnabled(context: Context): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled()
 
+private fun blockedAdhanChannels(context: Context): List<NotificationChannel> {
+    val manager = context.getSystemService(NotificationManager::class.java)
+    return listOf(AdhanPlaybackService.CHANNEL_PLAYING, AdhanPlaybackService.CHANNEL_QUIET, AdhanPlaybackService.CHANNEL_SOON)
+        .mapNotNull(manager::getNotificationChannel)
+        .filter { it.importance == NotificationManager.IMPORTANCE_NONE }
+}
+
 /** The countdown and prayer-time page need it from Android 14; before, every app has it. */
 private fun canUseFullScreen(context: Context): Boolean =
     Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
@@ -496,10 +538,14 @@ private fun showVolumePanel(context: Context) {
     }.onFailure { openSettings(context, Settings.ACTION_SOUND_SETTINGS) }
 }
 
-private fun openSettings(context: Context, action: String) {
+private fun openSettings(context: Context, action: String, channelId: String? = null) {
     val intent = Intent(action).apply {
         when (action) {
             Settings.ACTION_APP_NOTIFICATION_SETTINGS -> putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS -> {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+            }
             Settings.ACTION_SOUND_SETTINGS -> Unit
             else -> data = Uri.parse("package:${context.packageName}")
         }

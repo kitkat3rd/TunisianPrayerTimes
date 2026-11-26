@@ -2,8 +2,12 @@
 <resources>
     <!-- Prayer tab settings: entry to the prayer-time computation explainer -->
     <string name="prayer_method_entry_title">كيف تُحسب مواقيت الصلاة؟</string>
-    <string name="prayer_method_entry_example_title">مثال: كيف يحسب المعهد الوطني للرصد الجوي مواقيت تونس</string>
-    <string name="prayer_method_entry_subtitle">شرح مبسّط بالرسوم، مع مثال لكل وقت</string>
+    <string name="prayer_method_entry_example_title">مثال من مواقيت تونس</string>
+    <string name="prayer_settings_method">طريقة الحساب</string>
+    <string name="prayer_settings_choose_method">اختيار طريقة الحساب</string>
+    <string name="prayer_settings_exact_location">الحساب حسب موقعي الدقيق</string>
+    <string name="prayer_settings_about_calculation">عن الحساب</string>
+    <string name="prayer_settings_method_details">تفاصيل الطريقة الحالية</string>
 
     <!-- Explainer dialog -->
     <string name="prayer_method_example_note">مثال تفصيلي: مدينة تونس في أول الصيف (%1$s). وفي النهاية تجد نتيجة التاريخ المختار (%2$s) في %3$s، بتوقيت تونس.</string>

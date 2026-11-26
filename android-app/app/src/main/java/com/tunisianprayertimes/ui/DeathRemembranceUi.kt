@@ -33,7 +33,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -176,18 +175,17 @@ private fun RemembranceDisclosure(label: String, expanded: Boolean, onClick: () 
     }
 }
 
-/** The day's verse or hadith with its source, the day's good deed and optional reflection. */
+/** The same headline and suggestion as the notification, followed by the day's sourced reading. */
 @Composable
 private fun RemembranceReading(item: DeathRemembranceTexts.Remembrance) {
     var reflectionExpanded by remember(item.id) { mutableStateOf(false) }
-    Text(item.title, color = PrayerNameColor, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+    Text("اقتراح لليوم", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Text(item.headline, color = PrayerNameColor, fontSize = 18.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold,
         modifier = Modifier.fillMaxWidth().semantics { heading() })
+    Text(item.deed, color = GreenPrimaryDark, fontSize = 15.sp, lineHeight = 23.sp)
+    HorizontalDivider(color = Gold.copy(alpha = 0.18f))
     RemembranceText(item)
     RemembranceSource(item)
-    HorizontalDivider(color = Gold.copy(alpha = 0.18f))
-    Text("اقتراح لليوم", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.semantics { heading() })
-    Text(item.deed, color = GreenPrimaryDark, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, lineHeight = 22.sp)
     item.reflection?.let { reflection ->
         RemembranceDisclosure("سؤال للتأمل", reflectionExpanded, onClick = { reflectionExpanded = !reflectionExpanded })
         if (reflectionExpanded) {
@@ -228,16 +226,10 @@ internal fun DeathRemembranceNoticeCard(
                 .pointerInput(Unit) { detectTapGestures(onTap = {}) }
                 .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(painterResource(R.drawable.ic_hourglass), contentDescription = null, tint = Gold,
-                    modifier = Modifier.size(16.dp))
-                Text("ذكر الموت", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
             Column(
                 Modifier
                     .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(top = 8.dp),
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RemembranceReading(item)
@@ -325,7 +317,7 @@ private fun DeathRemembranceSheet(onDismiss: () -> Unit, onChanged: () -> Unit) 
     val enabled = remember(revision) { DeathReminder.isEnabled(context) }
     val frequency = remember(revision) { DeathReminder.frequency(context) }
     val pausedUntil = remember(revision) { DeathReminder.pausedUntil(context) }
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Color.White,

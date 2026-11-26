@@ -21,7 +21,11 @@
     <string name="adhan_voice_abdulmajeed_surayhi">عبد المجيد السريحي</string>
 
     <string name="adhan_allow">السماح</string>
-    <string name="adhan_exact_alarms_off">يحتاج الأذان إلى إذن التنبيهات الدقيقة ليُشغَّل في وقته.</string>
+    <string name="adhan_waiting_for_place">اختيارات الأذان محفوظة. اختر مدينتك لتبدأ جدولة الأذان في مواقيتها.</string>
+    <string name="adhan_exact_alarms_off">قد يتأخّر الأذان إذا كانت التنبيهات الدقيقة متوقفة. وإذا تأخّر أكثر من ثلاث دقائق يبقى صامتًا.</string>
+    <string name="adhan_warning_needs_exact">التنبيه قبل الأذان متوقف إلى أن تسمح بالتنبيهات الدقيقة.</string>
+    <string name="adhan_channel_off">إشعارات «%1$s» متوقفة في إعدادات الهاتف.</string>
+    <string name="adhan_open_channel">إعدادات الإشعار</string>
     <string name="adhan_notifications_off">الإشعارات متوقفة، فلن ترى زرّ إيقاف الأذان ولا إشعار دخول الوقت.</string>
     <string name="adhan_volume_zero">صوت الرنين الآن على الصفر، فلن يُسمع الأذان.</string>
     <string name="adhan_set_volume">ضبط الصوت</string>
@@ -29,6 +33,7 @@
     <string name="adhan_notification_title">أذان %1$s</string>
     <string name="adhan_notification_text">حان وقت صلاة %1$s</string>
     <string name="adhan_notification_stop">إيقاف</string>
+    <string name="adhan_playback_volume">مستوى صوت الأذان</string>
 
     <string name="adhan_quiet_title">حان وقت صلاة %1$s</string>
     <string name="adhan_quiet_silent_phone">لم يُشغَّل الأذان لأن الهاتف كان صامتًا.</string>
@@ -42,7 +47,7 @@
     <string name="adhan_channel_playing">الأذان</string>
     <string name="adhan_channel_playing_description">تنبيه الأذان بملء الشاشة، حتى حين يكون صامتًا.</string>
     <string name="adhan_warn_before">تنبيه قبل الأذان</string>
-    <string name="adhan_full_screen_off">يحتاج تنبيه الأذان إلى إذن العرض بملء الشاشة.</string>
+    <string name="adhan_full_screen_off">العرض بملء الشاشة اختياري. يمكنك سماع الأذان من دونه.</string>
     <string name="adhan_soon_title">أذان %1$s بعد لحظات</string>
     <string name="adhan_soon_text">لإلغائه، اضغط أحد زرَّي الصوت أو «إلغاء هذا الأذان».</string>
     <string name="adhan_soon_cancel">إلغاء هذا الأذان</string>

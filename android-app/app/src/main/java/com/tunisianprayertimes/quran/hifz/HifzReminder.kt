@@ -126,7 +126,8 @@ object HifzReminder {
         }
         val checksAsked = checksAsked(prefs, points)
         var candidate = prefs.getString("armed", null)?.let(::decodeSlot)?.takeIf {
-            it.at in (shown + 1)..now && hifzCanCatchUp(it.at, now) && askable.isNotEmpty() && after == maxOf(now, shown)
+            it.at in (shown + 1)..now && hifzCanCatchUp(it.at, now) && askable.isNotEmpty() && after == maxOf(now, shown) &&
+                (it.time is HifzWhen.At || PrefsManager.canUsePlaceForAutomation(app))
         }
         // Keep the selected slot's original timestamp; only the alarm's fire time is deferred. If a restriction
         // would make it over 90 minutes late, choose a later selected slot instead of ringing on restriction expiry.
@@ -312,6 +313,8 @@ object HifzReminder {
 
     /** [spansOf], kept a while: a fresh point's wait asks for them whenever it is shown. */
     private fun cachedSpans(context: Context, day: Long): List<HifzPrayerSpan> {
+        // This also keeps a fixed clock slot at its chosen hour while the city is only a suggestion.
+        if (!PrefsManager.canUsePlaceForAutomation(context)) return emptyList()
         val now = System.currentTimeMillis()
         val generation = synchronized(spanLock) {
             spanCache[day]?.takeIf { now - it.first in 0 until SPAN_CACHE_MS }?.let { return it.second }
@@ -387,7 +390,8 @@ object HifzReminder {
         val shown = prefs.getLong("shown_at", 0L).let { if (it > now + 2 * 60_000L) now else it }
         var candidate = prefs.getString("armed", null)?.let(::decodeSlot)?.takeIf {
             it.day >= fromDay && it.time in times && it.at > shown && now - it.at <= HifzCatchUpMs &&
-                !state.pausedToday && state.alertsToday < settings.dailyAlertLimit
+                !state.pausedToday && state.alertsToday < settings.dailyAlertLimit &&
+                (it.time is HifzWhen.At || PrefsManager.canUsePlaceForAutomation(context))
         }
         repeat(64) {
             val next = candidate ?: times.firstAfter(after, fromDay) { day, time -> slotAt(context, day, time) } ?: return null
@@ -711,7 +715,7 @@ object HifzReminder {
                 refreshLocked(app, now)
                 return
             }
-            if (at != null && at > now) {
+            if (at == null || at > now) {
                 prefs.edit().remove("armed").apply()
                 refreshLocked(app, now)
                 return

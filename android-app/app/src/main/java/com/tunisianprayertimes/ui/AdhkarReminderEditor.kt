@@ -55,6 +55,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.adhkar.*
 import java.time.*
 import kotlinx.coroutines.delay
@@ -106,6 +107,7 @@ import org.json.JSONObject
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saveAttempted by rememberSaveable(initial.id) { mutableStateOf(false) }
+    var placeRequired by rememberSaveable(initial.id) { mutableStateOf(false) }
     // Set once the save went through, so the sheet may hide although the form still differs from what it opened with.
     var closing by remember { mutableStateOf(false) }
     var cadenceDialog by rememberSaveable(initial.id) { mutableStateOf(false) }
@@ -225,8 +227,8 @@ import org.json.JSONObject
     // such occasion; any other dhikr gets back the period and cadence the form opened with.
     fun followDhikr(category: DhikrCategory?, wholeCollection: Boolean) {
         if (!scheduleFollowsDhikr) return
-        val suggested = if (category in dhikrTimedCategories) defaultDhikrReminder(selectedId, category, knownEntries, wholeCollection)
-            else original
+        val suggested = if (category in dhikrTimedCategories || selectedId == TAHLIL_DAILY_ID)
+            defaultDhikrReminder(selectedId, category, knownEntries, wholeCollection) else original
         intervalDraft = encodeIntervalDraft(suggested.intervals())
         cadence = suggested.cadence.name
     }
@@ -297,7 +299,7 @@ import org.json.JSONObject
         focusedContainerColor = AdhkarSurface, unfocusedContainerColor = AdhkarSurface,
         focusedBorderColor = p.primary.copy(alpha = .6f), unfocusedBorderColor = AdhkarBorder)
     // The sheet's own back handling dismisses even when the hide is vetoed, so back goes through requestClose.
-    ModalBottomSheet(onDismissRequest = { requestClose() }, sheetState = sheetState,
+    AppModalBottomSheet(onDismissRequest = { requestClose() }, sheetState = sheetState,
         properties = ModalBottomSheetProperties(shouldDismissOnBackPress = false),
         containerColor = p.background, modifier = Modifier.testTag("adhkar_reminder_editor")) {
         BackHandler { requestClose() }
@@ -413,7 +415,10 @@ import org.json.JSONObject
                 Text("خيارات التذكير", color = AdhkarHeading, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 AdhkarCard(Modifier.fillMaxWidth()) {
                     Column {
-                        ToggleRow("إشعارات التذكير", "تلقّي الإشعارات خلال الفترات المحددة", enabled) { enabled = it }
+                        ToggleRow("إشعارات التذكير", "تلقّي الإشعارات خلال الفترات المحددة", enabled) { on ->
+                            if (on && edited.usesPrayerTimes() && !PrefsManager.hasConfirmedPlace(activity)) placeRequired = true
+                            else enabled = on
+                        }
                         HorizontalDivider(color = AdhkarBorder)
                         ToggleRow("الاهتزاز", "اهتزاز عند وصول الإشعار", vibrate) { vibrate = it }
                         HorizontalDivider(color = AdhkarBorder)
@@ -510,7 +515,10 @@ import org.json.JSONObject
                         modifier = Modifier.testTag("adhkar_next_nudge"))
                 }
                 Button(onClick = {
-                    if (problem != null) {
+                    if (edited.enabled && edited.usesPrayerTimes() && !PrefsManager.hasConfirmedPlace(activity) &&
+                        DhikrReminderScheduler.structuralError(activity, edited) == null) {
+                        placeRequired = true
+                    } else if (problem != null) {
                         saveAttempted = true
                         if (collection == null && selectedEntry == null) scope.launch { formScroll.animateScrollTo(0) }
                     } else {
@@ -533,6 +541,7 @@ import org.json.JSONObject
             }
         }
     }
+    if (placeRequired) PrayerPlaceRequiredDialog(onDismiss = { placeRequired = false })
     intervals.getOrNull(timeDialogIndex)?.let { selected ->
         val previewDate = schedulePreview?.date ?: LocalDate.now()
         // A prayer turned into a clock time starts from where that prayer falls, to the nearest five

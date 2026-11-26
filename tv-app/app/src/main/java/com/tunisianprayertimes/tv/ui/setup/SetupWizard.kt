@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -29,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tunisianprayertimes.DayPrayerTimes
 import com.tunisianprayertimes.Delegation
 import com.tunisianprayertimes.Gouvernorat
 import com.tunisianprayertimes.Prayer
@@ -51,6 +53,7 @@ import com.tunisianprayertimes.tv.ui.theme.Medallion
 import com.tunisianprayertimes.tv.ui.theme.MedallionRule
 import com.tunisianprayertimes.tv.ui.theme.Midad
 import com.tunisianprayertimes.tv.ui.theme.midadStyle
+import java.time.LocalDate
 
 /** Location, delegation, iqamah, name. */
 private const val STEPS = 4
@@ -91,6 +94,8 @@ private const val CONFIG_VALUES = 8
 @Composable
 fun SetupWizard(
     gouvernorats: List<Gouvernorat>,
+    today: LocalDate,
+    loadPrayerTimes: suspend (Int, LocalDate) -> DayPrayerTimes?,
     onUsbSetup: (() -> Unit)? = null,
     onComplete: (
         gouvernoratId: Int,
@@ -152,15 +157,20 @@ fun SetupWizard(
             2 -> WizardStep(
                 step = 2,
                 title = TvStrings.SETUP_IQAMAH_TITLE,
-                subtitle = TvStrings.SETUP_IQAMAH_SUBTITLE,
+                subtitle = TvStrings.HINT_EDIT_IQAMAH,
                 aside = place,
                 onBack = { step = 1 },
                 onNext = { step = 3 },
             ) {
+                val id = selectedDelegation!!.id
+                val prayerTimes by produceState<DayPrayerTimes?>(null, id, today) {
+                    value = loadPrayerTimes(id, today)
+                }
                 IqamahTable(
                     configs = iqamahConfigs,
                     onChanged = { prayer, config -> iqamahConfigs = iqamahConfigs + (prayer to config) },
                     modifier = Modifier.weight(1f),
+                    prayerTimes = prayerTimes,
                 )
             }
             3 -> WizardStep(

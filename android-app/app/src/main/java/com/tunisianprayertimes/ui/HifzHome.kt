@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.quran.QuranCatalog
 import com.tunisianprayertimes.quran.QuranGoTo
 import com.tunisianprayertimes.quran.QuranVerseReference
@@ -218,9 +220,9 @@ internal fun HifzHomeSheet(
         notebook = true
     }
     val listScroll = if (notebook) notebookScroll else homeScroll
-    ModalBottomSheet(onDismissRequest = actions::dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+    AppModalBottomSheet(onDismissRequest = actions::dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         BackHandler(enabled = notebook) { returnHome() }
-        Column(Modifier.fillMaxWidth().quranSheetHeight().testTag("hifz_home")) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight().testTag("hifz_home")) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (notebook) IconButton(onClick = { returnHome() }, modifier = Modifier.testTag("hifz_notebook_back")) {
                     Icon(painterResource(R.drawable.ic_adhkar_back), "العودة إلى المراجعة", tint = GreenPrimaryDark)
@@ -587,7 +589,9 @@ internal fun HifzSettingsSheet(
     onResumeReminders: () -> Unit = {},
 ) {
     val scroll = rememberScrollState()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
+    val context = LocalContext.current
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
+    AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         Column(
             Modifier.fillMaxWidth().nestedScroll(rememberSheetScrollGuard(scroll)).verticalScroll(scroll)
                 .padding(horizontal = 16.dp).padding(bottom = 24.dp).testTag("hifz_settings_sheet"),
@@ -595,8 +599,15 @@ internal fun HifzSettingsSheet(
         ) {
             QuranPanelHeader("إعدادات المراجعة", onDismiss)
             HifzNotificationsWarning(listOfNotNull(HifzReminder.CHANNEL_ID.takeIf { settings.reminder }))
-            HifzSwitch("التذكير بالمراجعة", settings.reminder) { onChange(settings.copy(reminder = it)) }
+            HifzSwitch("التذكير بالمراجعة", settings.reminder) { enabled ->
+                if (enabled && settings.times.prayers.isNotEmpty() && !PrefsManager.hasConfirmedPlace(context)) {
+                    placeRequired = true
+                } else onChange(settings.copy(reminder = enabled))
+            }
             HifzReminderSettingsControls(settings, onChange)
+            if (settings.reminder && settings.times.prayers.isNotEmpty() && !PrefsManager.canUsePlaceForAutomation(context)) {
+                TextButton(onClick = { placeRequired = true }) { Text("أكّد مدينتك للتذكير بعد الصلاة") }
+            }
             if (settings.reminder && reminderControl != null) {
                 Text(when {
                     reminderControl.pausedToday -> "التنبيهات متوقفة لبقية اليوم؛ تعود غدًا في أوقاتك المختارة."
@@ -610,6 +621,7 @@ internal fun HifzSettingsSheet(
             }
         }
     }
+    if (placeRequired) PrayerPlaceRequiredDialog(onChoosingPlace = onDismiss) { placeRequired = false }
 }
 
 @Composable

@@ -59,7 +59,7 @@ internal fun HifzListenSheet(
     val settings = HifzListenSettings(times, endless, pause, mastered)
     val held = candidates.count { it.mastered }
     val heard = candidates.toHear(settings)
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = BgCream,

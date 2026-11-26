@@ -1,11 +1,14 @@
 package com.tunisianprayertimes.adhan
 
 import android.app.Application
+import android.app.AlarmManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.Prayer
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import java.time.LocalDate
+import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -13,12 +16,33 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [26], application = Application::class)
 class AdhanSettingsTest {
     private lateinit var context: Context
+
+    @Test
+    fun restoredAdhanWaitsForPlaceConfirmationAndClearsStaleSlotsWithoutLosingTheChoice() {
+        val settings = context.getSharedPreferences("adhan_settings", Context.MODE_PRIVATE)
+        settings.edit().putBoolean("enabled_FAJR", true).commit()
+        PrefsManager.initializeFirstRun(context)
+        val alarms = shadowOf(context.getSystemService(AlarmManager::class.java))
+        fun hasAdhan() = alarms.scheduledAlarms.any { shadowOf(it.operation).savedIntent.action == AdhanScheduler.ACTION_ADHAN }
+        val now = Instant.parse("2026-11-26T00:00:00Z")
+        AdhanScheduler.refresh(context, now)
+        assertFalse(hasAdhan())
+
+        PrefsManager.markFirstLaunchDone(context)
+        AdhanScheduler.refresh(context, now)
+        assertTrue(hasAdhan())
+        PrefsManager.setPlaceProvisional(context, true)
+        AdhanScheduler.refresh(context, now)
+        assertFalse(hasAdhan())
+        assertTrue(AdhanSettings.isEnabled(context, Prayer.FAJR))
+    }
 
     @Before
     fun setup() {

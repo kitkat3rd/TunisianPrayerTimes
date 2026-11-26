@@ -15,6 +15,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
@@ -37,6 +38,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -45,6 +47,21 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class HifzSheetsRestorationTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun addingAPrayerToAFixedReminderRequiresPlaceAndRetainsTheClockChoice() {
+        val app: Application = RuntimeEnvironment.getApplication()
+        com.tunisianprayertimes.PrefsManager.initializeFirstRun(app)
+        val clock = HifzTimes(minutes = setOf(600))
+        var updated: HifzTimes? = null
+        compose.setContent { AdhkarTheme { HifzTimesChoice(clock) { updated = it } } }
+        compose.onNodeWithTag("hifz_times_thrice").performClick()
+        compose.onNodeWithText(app.getString(com.tunisianprayertimes.R.string.prayer_feature_place_required)).assertExists()
+        compose.onNodeWithText(app.getString(com.tunisianprayertimes.R.string.jomoaa_time_cancel)).performClick()
+        compose.onNodeWithTag("hifz_times_custom").performClick()
+        compose.onNodeWithTag("hifz_times_time_600").assertExists()
+        assertNull(updated)
+    }
 
     @Test
     fun reminderPaceAndPresetStayDraftsAcrossRestorationUntilSaved() {

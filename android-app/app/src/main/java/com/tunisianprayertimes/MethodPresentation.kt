@@ -5,7 +5,6 @@ import com.tunisianprayertimes.method.IshaRule
 import com.tunisianprayertimes.method.PrayerMethod
 import com.tunisianprayertimes.place.MappedZone
 import com.tunisianprayertimes.place.PrayerPlace
-import java.util.Locale
 
 /**
  * One chip per method (A6, plan 6.11), owner 2026-10-20: «either it is official or it is falakia». «رسمية» where the
@@ -18,7 +17,7 @@ enum class MethodChip(val labelAr: String) {
 
 /**
  * How a method is named and labelled on the phone (plan 6.11): Tunisian Arabic names (D19), the authority's name
- * first for a profile, the angles in an LTR isolate, the chip of A6 and the wording of the zone line.
+ * first for a profile, the Fajr and Isha parameters, the chip of A6 and the wording of the zone line.
  */
 object MethodPresentation {
     private const val LRI = "⁦"
@@ -162,7 +161,7 @@ object MethodPresentation {
     /** Every method the app names, for the source-scan test. */
     val namedIds: Set<String> get() = NAMES.keys
 
-    /** The angles or intervals of a method in an LTR isolate: `18° · 17°`, `90 د · 17°`. */
+    /** Read from the right: Fajr first, then Isha. Keep each label and its value on the same line. */
     fun parameters(method: PrayerMethod): String {
         val fajr = when (val f = method.fajr) {
             is FajrRule.Angle -> degrees(f.degrees)
@@ -172,20 +171,18 @@ object MethodPresentation {
             is IshaRule.Angle -> degrees(i.degrees)
             is IshaRule.MinutesAfter -> minutes(i.minutes)
         }
-        return "$LRI$fajr · $isha$PDI"
+        return "${RLI}الفجر\u00a0$fajr · العشاء\u00a0$isha$PDI"
     }
 
-    /**
-     * Minutes inside the parameters' LTR isolate: the Arabic «د» in an RTL isolate of its own, which the isolate around it
-     * sees as one neutral. Bare, the letter turned the rest of the line around: «90 د · 90 د» showed «90 د 90 · د».
-     */
-    private fun minutes(value: Int): String = "$value $RLI" + "د" + PDI
+    private fun minutes(value: Int): String = "$value\u00a0د"
 
     /** The row of «طريقة الحساب»: the name, then its parameters. */
     fun summary(method: PrayerMethod): String = name(method.id) + " · " + parameters(method)
 
-    private fun degrees(value: Double): String =
-        if (value % 1.0 == 0.0) "${value.toInt()}°" else String.format(Locale.US, "%s°", value.toBigDecimal().stripTrailingZeros().toPlainString())
+    private fun degrees(value: Double): String {
+        val number = value.toBigDecimal().stripTrailingZeros().toPlainString()
+        return "$LRI$number°$PDI"
+    }
 
     /** A signed minute value in an LTR isolate with U+2212 (6.11): «⁦−3⁩», «⁦+5⁩». */
     fun signedMinutes(value: Int): String = LRI + (if (value < 0) MINUS + (-value) else "+$value") + PDI

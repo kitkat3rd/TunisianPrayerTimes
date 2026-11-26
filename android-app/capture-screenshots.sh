@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 #
-# Capture Play Store screenshots from the Android app.
-# Captures onboarding, main, and qibla screens on both phone and tablet.
-#
-# Prerequisites:
-#   - Two emulators running (phone on 5554, tablet on 5556)
-#   - App installed on both (debug or release)
-#
+# Capture Play Store screenshots from the installed phone and tablet apps.
+# A fresh install shows the place question. An established install starts at Today.
+# Requires adb, Python 3, and a running device for each selected serial.
 set -euo pipefail
 
-export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+if [ -n "${ANDROID_HOME:-}" ]; then
+    sdk_dir="$ANDROID_HOME"
+    if command -v cygpath >/dev/null; then sdk_dir=$(cygpath -u "$sdk_dir"); fi
+    export PATH="$sdk_dir/platform-tools:$PATH"
+elif [ -d "$HOME/Library/Android/sdk/platform-tools" ]; then
+    export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+fi
+# Android component names and on-device paths are arguments to adb, including in Git Bash.
+export MSYS2_ARG_CONV_EXCL='*'
 
-OUT_DIR="$(cd "$(dirname "$0")" && pwd)/screenshots"
+OUT_DIR="${OUT_DIR:-$(cd "$(dirname "$0")" && pwd)/screenshots}"
 mkdir -p "$OUT_DIR"
-
 PHONE_SERIAL="${PHONE_SERIAL:-emulator-5554}"
 PHONE_PREFIX="${PHONE_PREFIX:-phone}"
 TABLET_SERIAL="${TABLET_SERIAL:-emulator-5556}"
@@ -22,361 +24,169 @@ TABLET_PREFIX="${TABLET_PREFIX:-tablet}"
 CAPTURE_PHONE="${CAPTURE_PHONE:-1}"
 CAPTURE_TABLET="${CAPTURE_TABLET:-1}"
 
-# ── Detect which package is installed ──────────────────────────────────────
+if command -v python3 >/dev/null && python3 -c 'import xml.etree.ElementTree' 2>/dev/null; then
+    PYTHON=python3
+else
+    PYTHON=python
+    "$PYTHON" -c 'import xml.etree.ElementTree; import sys; assert sys.version_info.major == 3'
+fi
+
 detect_package() {
-    local serial="$1"
-
-    if [ -n "${SCREENSHOT_PACKAGE:-}" ]; then
-        if adb -s "$serial" shell pm list packages 2>/dev/null | grep -q "^package:${SCREENSHOT_PACKAGE}$"; then
-            echo "$SCREENSHOT_PACKAGE"
+    local serial="$1" installed pkg
+    installed=$(adb -s "$serial" shell pm list packages com.tunisianprayertimes | tr -d '\r')
+    local candidates=(com.tunisianprayertimes.dev com.tunisianprayertimes)
+    if [ -n "${SCREENSHOT_PACKAGE:-}" ]; then candidates=("$SCREENSHOT_PACKAGE"); fi
+    for pkg in "${candidates[@]}"; do
+        if grep -Fxq "package:$pkg" <<< "$installed"; then
+            echo "$pkg"
             return 0
         fi
-        echo "ERROR: Requested package '$SCREENSHOT_PACKAGE' is not installed on $serial" >&2
-        return 1
-    fi
-
-    if adb -s "$serial" shell pm list packages 2>/dev/null | grep -q "^package:com.tunisianprayertimes.dev$"; then
-        echo "com.tunisianprayertimes.dev"
-    elif adb -s "$serial" shell pm list packages 2>/dev/null | grep -q "^package:com.tunisianprayertimes$"; then
-        echo "com.tunisianprayertimes"
-    else
-        echo "ERROR: App not installed on $serial" >&2
-        return 1
-    fi
-}
-
-# ── Take a screenshot and pull it ─────────────────────────────────────────
-capture() {
-    local serial="$1" name="$2"
-    local remote="/sdcard/screenshot.png"
-    adb -s "$serial" shell screencap -p "$remote"
-    adb -s "$serial" pull "$remote" "$OUT_DIR/$name" >/dev/null 2>&1
-    adb -s "$serial" shell rm "$remote"
-    echo "  ✓ $name"
-}
-
-# ── Wait for UI to stabilise ──────────────────────────────────────────────
-wait_ui() {
-    sleep 2
-}
-
-ui_contains_text() {
-    local serial="$1" text="$2"
-    local dump="/sdcard/window_dump.xml"
-
-    adb -s "$serial" shell uiautomator dump "$dump" >/dev/null 2>&1 || return 1
-    local xml
-    xml=$(adb -s "$serial" shell cat "$dump" 2>/dev/null)
-    adb -s "$serial" shell rm "$dump" 2>/dev/null || true
-
-    echo "$xml" | grep -q "$text"
-}
-
-wait_for_text() {
-    local serial="$1" text="$2" attempts="${3:-12}"
-
-    for _ in $(seq 1 "$attempts"); do
-        if ui_contains_text "$serial" "$text"; then
-            return 0
-        fi
-        sleep 1
     done
-
+    echo "No matching installed package on $serial." >&2
     return 1
 }
 
-# ── Grant DND, alarm and battery permissions programmatically ─────────────
-grant_permissions() {
-    local serial="$1" pkg="$2"
-    # Grant DND access (notification policy)
-    adb -s "$serial" shell cmd notification allow_dnd "$pkg" 2>/dev/null || true
-    # Grant exact alarm permission (Android 12+)
-    adb -s "$serial" shell appops set "$pkg" SCHEDULE_EXACT_ALARM allow 2>/dev/null || true
-    # Whitelist from battery optimization
-    adb -s "$serial" shell dumpsys deviceidle whitelist +"$pkg" 2>/dev/null || true
-    # Grant READ_PHONE_STATE
-    adb -s "$serial" shell pm grant "$pkg" android.permission.READ_PHONE_STATE 2>/dev/null || true
-    # Grant location so the qibla screenshot can compute the compass state directly
-    adb -s "$serial" shell pm grant "$pkg" android.permission.ACCESS_FINE_LOCATION 2>/dev/null || true
-    adb -s "$serial" shell pm grant "$pkg" android.permission.ACCESS_COARSE_LOCATION 2>/dev/null || true
+capture() {
+    local serial="$1" name="$2" file
+    file=$(mktemp "$OUT_DIR/.capture.XXXXXX")
+    if ! adb -s "$serial" exec-out screencap -p > "$file" || [ ! -s "$file" ]; then
+        rm -f "$file"
+        return 1
+    fi
+    mv -f "$file" "$OUT_DIR/$name"
+    echo "  ✓ $name"
 }
 
-# ── Seed a stable Tunis location for qibla screenshots ───────────────────
-prepare_qibla_location() {
-    local serial="$1"
-    adb -s "$serial" shell cmd location set-location-enabled true 2>/dev/null || true
-    adb -s "$serial" shell appops set com.android.shell android:mock_location allow 2>/dev/null || \
-        adb -s "$serial" shell appops set com.android.shell MOCK_LOCATION allow 2>/dev/null || true
+# Look up the actual accessible node, within the app's window only. Each key has
+# a visible-label fallback for installs that don't export Compose test tags.
+# Output is the matched key and the centre of the node's current visible bounds.
+find_node() {
+    local serial="$1" pkg="$2"
+    shift 2
+    local dump="/data/local/tmp/tpt-capture-$$.xml"
+    adb -s "$serial" shell "uiautomator dump $dump >/dev/null && cat $dump && rm -f $dump" |
+        "$PYTHON" -c '
+import re
+import sys
+import xml.etree.ElementTree as ET
 
-    for provider in gps network; do
-        adb -s "$serial" shell cmd location providers add-test-provider "$provider" >/dev/null 2>&1 || \
-            adb -s "$serial" shell cmd location providers add-test-provider "$provider" android.hardware.location.gps true true true false 1 1 >/dev/null 2>&1 || true
-        adb -s "$serial" shell cmd location providers set-test-provider-enabled "$provider" true >/dev/null 2>&1 || true
-        adb -s "$serial" shell cmd location providers set-test-provider-location "$provider" --location 36.8065,10.1815 >/dev/null 2>&1 || true
-    done
-
-    # adb emu geo fix expects longitude latitude altitude.
-    adb -s "$serial" emu geo fix 10.1815 36.8065 0 >/dev/null 2>&1 || true
+try:
+    root = ET.fromstring(sys.stdin.buffer.read())
+except ET.ParseError:
+    sys.exit(1)
+package, *keys = sys.argv[1:]
+labels = {
+    "start": "مواقيت الصلاة في منطقتك",
+    "manual": "اختيار مدينة",
+    "picker": "ابحث عن مدينة أو حيّ…",
+    "today": "الصلاة القادمة",
+    "prayers": "الصلاة",
+    "worship": "عباداتي",
+}
+tags = {"manual": "onboarding_location_pick", "picker": "locality_search"}
+place_sources = ("حسب الموقع المختار", "حسب آخر موقع معروف", "حسب موقعك الحالي")
+for key in keys:
+    for node in root.iter("node"):
+        a = node.attrib
+        if a.get("package") != package or a.get("visible-to-user") == "false":
+            continue
+        label, desc = a.get("text", ""), a.get("content-desc", "")
+        tag = a.get("resource-id", "").rsplit("/", 1)[-1]
+        if key == "row":
+            matches = a.get("enabled") == "true" and a.get("clickable") == "true" and (
+                tag.startswith(("locality_row_", "city_row_")) or a.get("checkable") == "true"
+                or a.get("class") == "android.widget.RadioButton"
+            )
+        elif key == "direction":
+            matches = label.startswith(place_sources) or desc.startswith(place_sources)
+        else:
+            matches = labels[key] in (label, desc) or (key in tags and tag == tags[key])
+        if matches:
+            bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", a.get("bounds", ""))
+            if bounds:
+                left, top, right, bottom = map(int, bounds.groups())
+                if right > left and bottom > top:
+                    print(key, (left + right) // 2, (top + bottom) // 2)
+                    sys.exit(0)
+sys.exit(1)
+' "$pkg" "$@"
 }
 
-mark_onboarding_finished() {
-    local serial="$1" pkg="$2"
-    adb -s "$serial" shell "run-as $pkg sh -c 'cd /data/data/$pkg && mkdir -p shared_prefs && printf \"%s\\n\" \"<?xml version=\\\"1.0\\\" encoding=\\\"utf-8\\\" standalone=\\\"yes\\\" ?>\" \"<map>\" \"    <boolean name=\\\"first_launch_done\\\" value=\\\"true\\\" />\" \"</map>\" > shared_prefs/prayer_silence_prefs.xml'" >/dev/null 2>&1
-}
-
-activity_is_onboarding() {
-    local serial="$1" pkg="$2"
-    adb -s "$serial" shell dumpsys activity top 2>/dev/null | grep -q "$pkg/com.tunisianprayertimes.OnboardingActivity"
-}
-
-open_main_screen_after_onboarding() {
-    local serial="$1" pkg="$2"
-
-    tap_start_button "$serial"
-    wait_ui
-    wait_ui
-
-    if activity_is_onboarding "$serial" "$pkg"; then
-        echo "  → Start tap did not finish onboarding; marking first launch complete"
-        if mark_onboarding_finished "$serial" "$pkg"; then
-            adb -s "$serial" shell am force-stop "$pkg" >/dev/null 2>&1 || true
-            adb -s "$serial" shell am start -n "$pkg/com.tunisianprayertimes.MainActivity" >/dev/null 2>&1
-            wait_for_text "$serial" "مواقيت الصلاة" 15 || wait_ui
-        else
-            echo "  ⚠ Could not mark onboarding complete with run-as; screenshots may remain on onboarding"
+wait_node() {
+    local serial="$1" pkg="$2" attempt node
+    shift 2
+    for ((attempt=0; attempt<8; attempt++)); do
+        if node=$(find_node "$serial" "$pkg" "$@"); then
+            printf '%s\n' "$node"
+            return 0
         fi
-    fi
-}
-
-# ── Tap the "Next" / "Start" button using uiautomator ────────────────────
-# Finds the button by its test tag (content-desc) or text, then taps its center.
-tap_button() {
-    local serial="$1" tag="$2"
-    local dump="/sdcard/window_dump.xml"
-
-    # Dump UI hierarchy
-    adb -s "$serial" shell uiautomator dump "$dump" 2>/dev/null
-    local xml
-    xml=$(adb -s "$serial" shell cat "$dump" 2>/dev/null)
-    adb -s "$serial" shell rm "$dump" 2>/dev/null || true
-
-    # Convert XML to one-node-per-line for easier parsing
-    local nodes
-    nodes=$(echo "$xml" | sed 's/></>\n</g')
-
-    # Try to find node with matching content-desc or text
-    local bounds_raw
-    bounds_raw=$(echo "$nodes" | grep "content-desc=\"[^\"]*${tag}" | head -1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p' || true)
-
-    if [ -z "$bounds_raw" ]; then
-        bounds_raw=$(echo "$nodes" | grep "text=\"${tag}\"" | head -1 | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p' || true)
-    fi
-
-    if [ -z "$bounds_raw" ]; then
-        echo "  ⚠ Could not find button '$tag' – skipping tap"
-        return 1
-    fi
-
-    # Parse bounds and compute center
-    local x1 y1 x2 y2
-    read -r x1 y1 x2 y2 <<< "$bounds_raw"
-
-    local cx=$(( (x1 + x2) / 2 ))
-    local cy=$(( (y1 + y2) / 2 ))
-
-    adb -s "$serial" shell input tap "$cx" "$cy"
-}
-
-# ── Navigate onboarding using text-based button search ────────────────────
-tap_next_button() {
-    local serial="$1"
-    if tap_button "$serial" "التالي" || tap_button "$serial" "onboarding_next"; then
-        return 0
-    fi
-
-    # Some physical devices expose the Compose button bounds without text.
-    # RTL layout places the primary Next button on the left half.
-    local w h
-    w=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f1)
-    h=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f2)
-    echo "  → Tapping Next button by coordinate fallback"
-    adb -s "$serial" shell input tap $(( w / 3 )) $(( h * 5 / 6 ))
-}
-
-tap_start_button() {
-    local serial="$1"
-    if tap_button "$serial" "ابدأ" || tap_button "$serial" "onboarding_start"; then
-        return 0
-    fi
-
-    # RTL layout puts the primary Start button on the left half.
-    local w h
-    w=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f1)
-    h=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f2)
-    echo "  → Tapping Start button by coordinate fallback"
-    adb -s "$serial" shell input tap $(( w / 3 )) $(( h * 5 / 6 ))
-}
-
-tap_qibla_tab() {
-    local serial="$1"
-    local dump="/sdcard/window_dump.xml"
-    adb -s "$serial" shell uiautomator dump "$dump" >/dev/null 2>&1 || true
-    local xml nodes bounds_raw
-    xml=$(adb -s "$serial" shell cat "$dump" 2>/dev/null || true)
-    adb -s "$serial" shell rm "$dump" 2>/dev/null || true
-    nodes=$(echo "$xml" | sed 's/></>\n</g')
-
-    # The tab label/icon nodes are often not clickable themselves in Compose.
-    # Tap the wider bottom-navigation parent hit target around the qibla label.
-    local h bottom_threshold
-    h=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f2)
-    bottom_threshold=$(( h * 3 / 4 ))
-    bounds_raw=$(echo "$nodes" | grep 'clickable="true"' | sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p' | awk -v threshold="$bottom_threshold" '$2 > threshold { print }' | sort -n | head -1 || true)
-    if [ -n "$bounds_raw" ]; then
-        local x1 y1 x2 y2
-        read -r x1 y1 x2 y2 <<< "$bounds_raw"
-        adb -s "$serial" shell input tap $(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))
-        return 0
-    fi
-
-    local w
-    w=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f1)
-    echo "  → Tapping Qibla tab by coordinate fallback"
-    adb -s "$serial" shell input tap $(( w / 6 )) $(( h * 93 / 100 ))
-}
-
-tap_qibla_compute_button() {
-    local serial="$1"
-    if tap_button "$serial" "إحسب اتجاه القبلة"; then
-        return 0
-    fi
-
-    echo "  → No Qibla compute button found; waiting for automatic Qibla state"
-}
-
-capture_qibla_screen() {
-    local serial="$1" prefix="$2"
-
-    echo "  Opening Qibla screen..."
-    prepare_qibla_location "$serial"
-    tap_qibla_tab "$serial"
-    if ! wait_for_text "$serial" "اتجاه القبلة" 10; then
-        echo "  → Qibla tab did not open; retrying by coordinate fallback"
-        local w h
-        w=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f1)
-        h=$(adb -s "$serial" shell wm size | sed 's/.*: //' | cut -dx -f2)
-        adb -s "$serial" shell input tap $(( w / 6 )) $(( h * 93 / 100 ))
-        wait_for_text "$serial" "اتجاه القبلة" 10
-    fi
-
-    echo "  Computing Qibla direction..."
-    tap_qibla_compute_button "$serial"
-    if ! wait_for_text "$serial" "حسب موقعك الحالي" 30; then
-        echo "  ✗ Qibla did not reach active current-location state; refusing to capture disabled screen" >&2
-        return 1
-    fi
-
-    capture "$serial" "${prefix}-qibla.png"
-}
-
-# ── Capture all screens for one device ────────────────────────────────────
-capture_device() {
-    local serial="$1" prefix="$2"
-    local pkg
-    pkg=$(detect_package "$serial")
-
-    echo ""
-    echo "━━━ Capturing on $serial ($prefix) — package: $pkg ━━━"
-    rm -f \
-        "$OUT_DIR/${prefix}-main-screen.png" \
-        "$OUT_DIR/${prefix}-qibla.png" \
-        "$OUT_DIR/${prefix}-onboarding-"*.png
-
-    # 1. Clear app data to trigger fresh onboarding
-    echo "  Clearing app data..."
-    adb -s "$serial" shell pm clear "$pkg" >/dev/null 2>&1
-
-    # 2. Launch the app first (onboarding appears)
-    echo "  Launching app..."
-    adb -s "$serial" shell am start -n "$pkg/com.tunisianprayertimes.MainActivity" >/dev/null 2>&1
-    wait_ui
-
-    # 3. Grant permissions while app is running
-    echo "  Granting permissions..."
-    grant_permissions "$serial" "$pkg"
-
-    # 4. Capture onboarding steps 0..5 (welcome through wake alarm)
-    local step_names=("welcome" "silence-period" "drag-endpoints" "endpoint-rules" "jomoaa" "wake-alarm")
-    for i in 0 1 2 3 4 5; do
-        wait_ui
-        capture "$serial" "${prefix}-onboarding-${i}-${step_names[$i]}.png"
-        tap_next_button "$serial"
         sleep 1
     done
-
-    # 5. Permissions auto-advances when granted — home+resume triggers refresh → Ready
-    adb -s "$serial" shell input keyevent KEYCODE_HOME
-    sleep 1
-    adb -s "$serial" shell am start -n "$pkg/com.tunisianprayertimes.MainActivity" >/dev/null 2>&1
-    sleep 3
-
-    # 6. Capture Ready step
-    wait_ui
-    capture "$serial" "${prefix}-onboarding-6-ready.png"
-
-    # 7. Tap "Start" → main screen
-    open_main_screen_after_onboarding "$serial" "$pkg"
-    wait_for_text "$serial" "مواقيت الصلاة" 15 || wait_ui
-
-    # 8. Capture main screen
-    capture "$serial" "${prefix}-main-screen.png"
-
-    # 9. Capture qibla after computing direction so the compass is active
-    capture_qibla_screen "$serial" "$prefix"
-
-    echo "  Done with $prefix!"
+    echo "No visible $* control in $pkg on $serial." >&2
+    return 1
 }
 
-# ── Main ──────────────────────────────────────────────────────────────────
-echo "╔══════════════════════════════════════════════╗"
-echo "║  Tunisian Prayer Times – Screenshot Capture  ║"
-echo "╚══════════════════════════════════════════════╝"
+tap_node() {
+    local serial="$1" node="$2" key x y
+    read -r key x y <<< "$node"
+    adb -s "$serial" shell input tap "$x" "$y"
+}
 
-# Check connected devices
-DEVICES=$(adb devices | grep -c "device$" || true)
-if [ "$DEVICES" -lt 1 ]; then
-    echo "ERROR: No emulators connected. Start your emulators first."
+capture_device() {
+    local serial="$1" prefix="$2" pkg first manual row worship
+    pkg=$(detect_package "$serial")
+    echo "Capturing $pkg on $serial."
+    adb -s "$serial" shell am start -W -n "$pkg/com.tunisianprayertimes.MainActivity" >/dev/null
+    first=$(wait_node "$serial" "$pkg" start picker today prayers)
+
+    case "${first%% *}" in
+        start)
+            capture "$serial" "${prefix}-onboarding-place.png"
+            manual=$(wait_node "$serial" "$pkg" manual)
+            tap_node "$serial" "$manual"
+            ;;
+        prayers)
+            # A running, configured app may have reopened another tab.
+            tap_node "$serial" "$first"
+            ;;
+    esac
+    if [[ $first == start\ * || $first == picker\ * ]]; then
+        wait_node "$serial" "$pkg" picker >/dev/null
+        row=$(wait_node "$serial" "$pkg" row)
+        capture "$serial" "${prefix}-onboarding-city-picker.png"
+        tap_node "$serial" "$row"
+    fi
+    wait_node "$serial" "$pkg" today >/dev/null
+    capture "$serial" "${prefix}-main-screen.png"
+
+    # The compass can use the selected locality or an existing device fix.
+    # An unavailable direction is not a publishable compass screenshot.
+    worship=$(wait_node "$serial" "$pkg" worship)
+    tap_node "$serial" "$worship"
+    if wait_node "$serial" "$pkg" direction >/dev/null; then
+        capture "$serial" "${prefix}-qibla.png"
+    else
+        echo "  Skipping Qibla screenshot because a location is unavailable on $serial." >&2
+    fi
+}
+
+devices=$(adb devices | tr -d '\r')
+pids=()
+capture_if_connected() {
+    local enabled="$1" serial="$2" prefix="$3"
+    if [[ $enabled != 0 ]] && awk -v id="$serial" '$1==id && $2=="device" { found=1 } END { exit !found }' <<< "$devices"; then
+        capture_device "$serial" "$prefix" &
+        pids+=($!)
+    fi
+}
+capture_if_connected "$CAPTURE_PHONE" "$PHONE_SERIAL" "$PHONE_PREFIX"
+capture_if_connected "$CAPTURE_TABLET" "$TABLET_SERIAL" "$TABLET_PREFIX"
+if (( ${#pids[@]} == 0 )); then
+    echo "No selected device is connected." >&2
     exit 1
 fi
-
-echo "Output directory: $OUT_DIR"
-echo "Connected devices: $DEVICES"
-
-# Capture phone and tablet in parallel
-PIDS=()
-
-if [ "$CAPTURE_PHONE" != "0" ] && adb devices | grep -q "^${PHONE_SERIAL}[[:space:]]"; then
-    capture_device "$PHONE_SERIAL" "$PHONE_PREFIX" &
-    PIDS+=($!)
-else
-    echo "⚠ Phone emulator ($PHONE_SERIAL) not found or disabled, skipping"
-fi
-
-if [ "$CAPTURE_TABLET" != "0" ] && adb devices | grep -q "^${TABLET_SERIAL}[[:space:]]"; then
-    capture_device "$TABLET_SERIAL" "$TABLET_PREFIX" &
-    PIDS+=($!)
-else
-    echo "⚠ Tablet emulator ($TABLET_SERIAL) not found or disabled, skipping"
-fi
-
-# Wait for all captures to finish
-FAILED=false
-for pid in "${PIDS[@]}"; do
-    if ! wait "$pid"; then
-        FAILED=true
-    fi
+status=0
+for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
 done
-
-echo ""
-echo "━━━ All screenshots saved to: $OUT_DIR ━━━"
-ls -la "$OUT_DIR"/*.png 2>/dev/null || echo "(no files)"
+exit "$status"

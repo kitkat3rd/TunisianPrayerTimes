@@ -121,6 +121,7 @@ class AlarmCoverageTest {
         grantCoarseLocationPermission()
         PrefsManager.setEnabled(context, true)
         PrefsManager.setAutoLocationUpdateEnabled(context, true)
+        PrefsManager.setBackgroundTravelEnabled(context, true)
         val now = calendarAt(2026, Calendar.MAY, 21, 1, 0)
 
         SilenceScheduler.scheduleAllInternal(context, now)

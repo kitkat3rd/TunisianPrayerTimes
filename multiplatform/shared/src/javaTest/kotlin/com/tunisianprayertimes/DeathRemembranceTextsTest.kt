@@ -28,6 +28,7 @@ class DeathRemembranceTextsTest {
         "muslim_2877" to "33b23b795195e442b3d2ddd10cc5f8e7658f72598aced444de3f3912adfafbad",
         "bukhari_6412" to "d7688aae0c68990a7677c312415a5a93678b4000a5db9e5e499089f0dae70f27",
         "muslim_963" to "ddda4e20c26759d5756fd23c0ff874a58235d9bd9d88bcaa754dc38883edf55e",
+        "muslim_976b" to "20d57cf45b54e09ab64318942c04d72c7322ef73ee37104eab967e928626de0e",
     )
 
     @Test
@@ -47,20 +48,19 @@ class DeathRemembranceTextsTest {
         val all = DeathRemembranceTexts.ALL
         (all + all.first()).zipWithNext().forEach { (a, b) -> assertTrue(a.quran != b.quran, "${a.id} ${b.id}") }
         assertEquals(all, all.indices.map { DeathRemembranceTexts.forDay(1_000L * all.size + it) })
-        // The notification's title: the prophetic words alone, as the source vowels them.
-        val bare = DeathRemembranceTexts.anchorWords.filterNot { it in 'ً'..'ْ' }
-        assertEquals("أكثروا ذكر هاذم اللذات", bare)
+        assertEquals(all.last(), DeathRemembranceTexts.forDay(-1))
+        assertEquals(all.size, all.map { it.headline }.distinct().size)
     }
 
     @Test
     fun wordsAreWrittenTheAppsWay() {
         DeathRemembranceTexts.ALL.forEach { item ->
-            val written = item.reference + item.deed + item.text + item.title + item.reflection.orEmpty() + item.sourceNote.orEmpty()
+            val written = item.reference + item.deed + item.text + item.headline + item.reflection.orEmpty() + item.sourceNote.orEmpty()
             assertTrue(written.none { it in '٠'..'٩' || it in '۰'..'۹' }, "${item.id}: Western digits only")
             assertTrue('ـ' !in written, "${item.id}: no tatweel")
             assertTrue(item.deed.endsWith("."), "${item.id}: the deed is a sentence")
             assertTrue(item.reference.isNotBlank(), item.id)
-            assertTrue(item.title.isNotBlank(), item.id)
+            assertTrue(item.headline.startsWith("الموت: ") && item.headline.substringAfter(": ").isNotBlank(), item.id)
             item.reflection?.let { assertTrue(it.isNotBlank() && it.endsWith("؟"), item.id) }
             if (!item.quran) assertTrue(item.sourceUrl?.startsWith("https://") == true, item.id)
         }

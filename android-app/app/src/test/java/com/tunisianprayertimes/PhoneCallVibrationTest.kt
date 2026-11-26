@@ -111,6 +111,14 @@ class PhoneCallVibrationTest {
     }
 
     @Test
+    fun ringingWithFeedbackOffDoesNotRecordACallEvenWithPermission() {
+        PrefsManager.setCallEndVibrationEnabled(context, false)
+        SilenceModeController.setManualSilent(context)
+        phoneReceiver.onReceive(context, ringtingIntent())
+        assertFalse(PrefsManager.consumeCallReceivedDuringSilence(context))
+    }
+
+    @Test
     fun ringing_whenNoSilenceActive_doesNotSetCallFlag() {
         assertFalse(PrefsManager.isAutoSilenceActive(context))
         assertFalse(PrefsManager.isManualSilenceActive(context))

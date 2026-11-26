@@ -49,6 +49,7 @@ class SilenceReceiverTest {
         grantLocationPermission()
         PrefsManager.setEnabled(context, true)
         PrefsManager.setAutoLocationUpdateEnabled(context, true)
+        PrefsManager.setBackgroundTravelEnabled(context, true)
         PrefsManager.setDelegationId(context, 386)
         DelegationLocator.locationProvider = FakeLocationProvider(mouroujLocation())
 

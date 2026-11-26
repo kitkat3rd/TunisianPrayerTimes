@@ -51,6 +51,20 @@ class DelegationLocatorTest {
     }
 
     @Test
+    fun aFixReturningAfterBackgroundTravelIsTurnedOffKeepsTheSelectedPlace() = runBlocking {
+        PrefsManager.setDelegationId(context, 386)
+        PrefsManager.setBackgroundTravelEnabled(context, true)
+        DelegationLocator.locationProvider = object : DelegationLocationProvider by FakeLocationProvider(null) {
+            override suspend fun findRecentLocation(context: Context, permissionState: LocationPermissionState): Location {
+                PrefsManager.setBackgroundTravelEnabled(context, false)
+                return mouroujLocation()
+            }
+        }
+        assertEquals(DelegationLocator.FixOutcome.NO_FIX, DelegationLocator.updatePlaceFromLastLocation(context, background = true))
+        assertEquals(386, PrefsManager.getDelegationId(context))
+    }
+
+    @Test
     fun `silent update ignores stale location`() = runBlocking {
         PrefsManager.setDelegationId(context, 386)
         DelegationLocator.locationProvider = FakeLocationProvider(
@@ -149,14 +163,16 @@ class DelegationLocatorTest {
             context, fine.latitude, fine.longitude, fine.accuracy.toDouble()
         )
             as DelegationLocationResult.Success
-        assertEquals("النصر 2", result.locality?.name)
+        assertEquals("osm:relation:7115049", result.locality?.id)
     }
 
     @Test
     fun `GPS returns neighborhood label and independently nearest timetable`() {
         val result = DelegationLocator.resolveGpsLocation(context, 36.8428, 10.1465, accuracyMeters = 5.0)
             as DelegationLocationResult.Success
-        assertEquals("المنزه 9 أ", result.locality?.name)
+        val catalogRow = LocalityRepository.loadAll(context).single { it.id == "osm:relation:7201547" }
+        assertEquals(catalogRow.id, result.locality?.id)
+        assertEquals(catalogRow.name, result.locality?.name)
         assertEquals(GouvernoratRepository.findNearestDelegation(context, 36.8428, 10.1465)?.id, result.delegation.id)
         assertEquals(result.delegation.id, result.locality?.delegationId)
     }
@@ -165,10 +181,14 @@ class DelegationLocatorTest {
     fun `GPS button obtains a named polygon from device coordinates`() = runBlocking {
         DelegationLocator.locationProvider = FakeLocationProvider(testLocation(36.8640, 10.1647))
         val result = DelegationLocator.detectNearestDelegation(context) as DelegationLocationResult.Success
-        assertEquals("النصر 2", result.locality?.name)
+        val catalogRow = LocalityRepository.loadAll(context).single { it.id == "osm:relation:7115049" }
+        assertEquals(catalogRow.id, result.locality?.id)
+        assertEquals(catalogRow.name, result.locality?.name)
         PrefsManager.setGpsLocation(context, result)
-        assertEquals("النصر 2", PrefsManager.getLocationSelection(context).name)
-        assertTrue(PrefsManager.getLocationSelection(context).fromGps)
+        val saved = PrefsManager.getLocationSelection(context)
+        assertEquals(catalogRow.id, saved.localityId)
+        assertEquals(catalogRow.name, saved.name)
+        assertTrue(saved.fromGps)
     }
 
     @Test

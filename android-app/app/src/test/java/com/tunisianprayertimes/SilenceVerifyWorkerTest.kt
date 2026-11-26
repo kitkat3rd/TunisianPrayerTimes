@@ -56,6 +56,29 @@ class SilenceVerifyWorkerTest {
     }
 
     @Test
+    fun queuedTravelWorkerAfterOptOutDoesNotStartALocationLookup() = runBlocking {
+        Shadows.shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        PrefsManager.setAutoLocationUpdateEnabled(context, true)
+        PrefsManager.setBackgroundTravelEnabled(context, true)
+        val worker = TestListenableWorkerBuilder<TravelPlaceWorker>(context).build()
+        var lookups = 0
+        val provider = DelegationLocator.locationProvider
+        DelegationLocator.locationProvider = object : DelegationLocationProvider by provider {
+            override suspend fun findFreshLocation(context: Context, permissionState: LocationPermissionState): android.location.Location? {
+                lookups++
+                return null
+            }
+        }
+        try {
+            PrefsManager.setBackgroundTravelEnabled(context, false)
+            assertEquals(ListenableWorker.Result.success(), worker.doWork())
+            assertEquals(0, lookups)
+        } finally {
+            DelegationLocator.locationProvider = provider
+        }
+    }
+
+    @Test
     fun enqueue_doesNotThrow() {
         // Should not throw even when called multiple times
         SilenceVerifyWorker.enqueue(context)

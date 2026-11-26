@@ -25,10 +25,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 class TravelPlaceWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext
-        val outcome = runCatching { DelegationLocator.updatePlaceFromCurrentLocation(app) }
+        if (!DelegationLocator.canUpdateTravelInBackground(app)) return Result.success()
+        val outcome = runCatching { DelegationLocator.updatePlaceFromCurrentLocation(app, background = true) }
             .onFailure { Log.w(TAG, "No fresh fix after a time-zone change", it) }
             .getOrDefault(DelegationLocator.FixOutcome.NO_FIX)
-        if (outcome == DelegationLocator.FixOutcome.NO_FIX && placeZoneDiffers(app)) notifyChoosePlace(app)
+        if (outcome == DelegationLocator.FixOutcome.NO_FIX && DelegationLocator.canUpdateTravelInBackground(app) &&
+            placeZoneDiffers(app)) notifyChoosePlace(app)
         return Result.success()
     }
 
@@ -41,12 +43,13 @@ class TravelPlaceWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         /** The receiver's half (6.8): a quick last-location fix, or this job when none comes in time. */
         suspend fun checkAfterZoneChange(context: Context) {
-            if (!PrefsManager.isAutoLocationUpdateEnabled(context) || !DelegationLocator.hasLocationPermission(context)) return
-            if (!DelegationLocator.canLocateFromBackground(context)) {
+            if (!PrefsManager.isAutoLocationUpdateEnabled(context) || !PrefsManager.isBackgroundTravelEnabled(context) ||
+                !PrefsManager.canUsePlaceForAutomation(context)) return
+            if (!DelegationLocator.hasBackgroundLocationPermission(context)) {
                 if (placeZoneDiffers(context)) notifyChoosePlace(context)
                 return
             }
-            val outcome = withTimeoutOrNull(FAST_FIX_MS) { DelegationLocator.updatePlaceFromLastLocation(context) }
+            val outcome = withTimeoutOrNull(FAST_FIX_MS) { DelegationLocator.updatePlaceFromLastLocation(context, background = true) }
             if (outcome == null || outcome == DelegationLocator.FixOutcome.NO_FIX) enqueue(context)
         }
 

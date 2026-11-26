@@ -33,6 +33,13 @@ data class SavedLocationSelection(
     val manualReferenceId: String? = null,
 )
 
+sealed interface FirstRunPlaceChoice {
+    data class Local(val locality: Locality) : FirstRunPlaceChoice
+    data class Gps(val result: DelegationLocationResult.Success) : FirstRunPlaceChoice
+    data class Abroad(val place: PrayerPlace.Coordinates, val label: String?, val fromGps: Boolean) : FirstRunPlaceChoice
+    data class Browse(val place: PrayerPlace, val label: String?) : FirstRunPlaceChoice
+}
+
 object PrefsManager {
     private const val PREFS_NAME = "prayer_silence_prefs"
     private const val KEY_DELEGATION_ID = "delegation_id"
@@ -43,9 +50,13 @@ object PrefsManager {
     private const val KEY_MANUAL_REFERENCE_ID = "manual_reference_id"
     private const val KEY_ENABLED = "silence_enabled"
     private const val KEY_FIRST_LAUNCH = "first_launch_done"
+    private const val KEY_FIRST_RUN_DEFAULTS_INITIALIZED = "place_onboarding_defaults_initialized"
+    private const val KEY_FRESH_ONBOARDING = "fresh_place_onboarding"
+    private const val KEY_FIRST_RUN_SETUP_SUGGESTED = "suggest_prayer_setup"
     private const val KEY_AUTO_SILENCE_ACTIVE = "auto_silence_active"
     private const val KEY_AUTO_SILENCE_PREVIOUS_RINGER_MODE = "auto_silence_previous_ringer_mode"
     private const val KEY_AUTO_SILENCE_PREVIOUS_INTERRUPTION_FILTER = "auto_silence_previous_interruption_filter"
+    private const val KEY_ANDROID_AUTO_SKIPPED_SILENCE = "android_auto_skipped_silence"
     private const val KEY_MANUAL_SILENCE_ACTIVE = "manual_silence_active"
     private const val KEY_MANUAL_SILENCE_PREVIOUS_RINGER_MODE = "manual_silence_previous_ringer_mode"
     private const val KEY_MANUAL_SILENCE_PREVIOUS_INTERRUPTION_FILTER = "manual_silence_previous_interruption_filter"
@@ -57,7 +68,7 @@ object PrefsManager {
     private const val KEY_CALL_RECEIVED_DURING_SILENCE = "call_received_during_silence"
     private const val KEY_CALL_END_VIBRATION_ENABLED = "call_end_vibration_enabled"
     private const val KEY_AUTO_LOCATION_UPDATE = "auto_location_update"
-    private const val KEY_BACKGROUND_LOCATION_OFFERED = "background_location_offered"
+    private const val KEY_BACKGROUND_TRAVEL_ENABLED = "background_travel_enabled"
     private const val KEY_AUTO_SILENCE_DISMISSED_UNTIL_MILLIS = "auto_silence_dismissed_until_millis"
     private const val KEY_AUTO_SILENCE_DISMISSED_PRAYER = "auto_silence_dismissed_prayer"
     private const val KEY_QIBLA_METHOD = "qibla_method"
@@ -167,7 +178,16 @@ object PrefsManager {
         fromGps: Boolean,
         provisional: Boolean = false,
     ) {
-        val edit = prefs(context).edit()
+        prefs(context).edit().putCoordinates(place, label, fromGps, provisional).apply()
+    }
+
+    private fun SharedPreferences.Editor.putCoordinates(
+        place: PrayerPlace.Coordinates,
+        label: String?,
+        fromGps: Boolean,
+        provisional: Boolean,
+    ): SharedPreferences.Editor {
+        val edit = this
             .putString(KEY_PLACE_KIND, PLACE_KIND_COORDINATES)
             .putInt(KEY_PLACE_LAT_E5, place.latE5)
             .putInt(KEY_PLACE_LNG_E5, place.lngE5)
@@ -183,7 +203,7 @@ object PrefsManager {
         putOrRemove(KEY_PLACE_NAME_SNAPSHOT, label)
         place.elevationM?.let { edit.putInt(KEY_PLACE_ELEVATION_M, it) } ?: edit.remove(KEY_PLACE_ELEVATION_M)
         place.catalogueId?.let { edit.putLong(KEY_PLACE_CATALOGUE_ID, it) } ?: edit.remove(KEY_PLACE_CATALOGUE_ID)
-        edit.apply()
+        return edit
     }
 
     /** The method choice of a place's country (6.4), `method_choice_<CC>`; null until one is stored. */
@@ -257,17 +277,22 @@ object PrefsManager {
         }
 
     fun setLocality(context: Context, locality: Locality) {
-        prefs(context).edit()
-            .removePlaceAbroad()
-            .remove(KEY_PLACE_PROVISIONAL)
-            .putInt(KEY_DELEGATION_ID, locality.delegationId)
-            .putString(KEY_LOCALITY_ID, locality.id)
-            .putString(KEY_LOCALITY_NAME, locality.name)
-            .putString(KEY_LOCALITY_KIND, locality.kind)
-            .putBoolean(KEY_LOCATION_FROM_GPS, false)
-            .putString(KEY_MANUAL_REFERENCE_ID, locality.manualReferenceId)
-            .apply()
+        prefs(context).edit().putTunisianPlace(locality.delegationId, locality, fromGps = false).apply()
     }
+
+    private fun SharedPreferences.Editor.putTunisianPlace(
+        delegationId: Int,
+        locality: Locality?,
+        fromGps: Boolean,
+    ): SharedPreferences.Editor =
+        removePlaceAbroad()
+            .remove(KEY_PLACE_PROVISIONAL)
+            .putInt(KEY_DELEGATION_ID, delegationId)
+            .putString(KEY_LOCALITY_ID, locality?.id)
+            .putString(KEY_LOCALITY_NAME, locality?.name)
+            .putString(KEY_LOCALITY_KIND, locality?.kind)
+            .putBoolean(KEY_LOCATION_FROM_GPS, fromGps)
+            .putString(KEY_MANUAL_REFERENCE_ID, if (fromGps) null else locality?.manualReferenceId)
 
     fun clearLocality(context: Context) {
         prefs(context).edit().remove(KEY_LOCALITY_ID).remove(KEY_LOCALITY_NAME)
@@ -276,16 +301,7 @@ object PrefsManager {
 
     /** The label and the timetable are independent results of the same GPS fix. */
     fun setGpsLocation(context: Context, result: DelegationLocationResult.Success) {
-        prefs(context).edit()
-            .removePlaceAbroad()
-            .remove(KEY_PLACE_PROVISIONAL)
-            .putInt(KEY_DELEGATION_ID, result.delegation.id)
-            .putString(KEY_LOCALITY_ID, result.locality?.id)
-            .putString(KEY_LOCALITY_NAME, result.locality?.name)
-            .putString(KEY_LOCALITY_KIND, result.locality?.kind)
-            .putBoolean(KEY_LOCATION_FROM_GPS, true)
-            .remove(KEY_MANUAL_REFERENCE_ID)
-            .apply()
+        prefs(context).edit().putTunisianPlace(result.delegation.id, result.locality, fromGps = true).apply()
     }
 
     fun getLocationSelection(context: Context): SavedLocationSelection {
@@ -327,7 +343,7 @@ object PrefsManager {
     fun observeLocationSelection(context: Context, onChanged: () -> Unit): () -> Unit {
         val settings = prefs(context)
         val keys = setOf(KEY_DELEGATION_ID, KEY_LOCALITY_ID, KEY_LOCALITY_NAME, KEY_LOCALITY_KIND, KEY_LOCATION_FROM_GPS, KEY_MANUAL_REFERENCE_ID) +
-            PLACE_KEYS + KEY_PLACE_PROVISIONAL
+            PLACE_KEYS + KEY_PLACE_PROVISIONAL + KEY_FIRST_LAUNCH
         // One save changes several keys in one apply(), and the listener is called once per key,
         // all in one pass on the main thread. Post one callback for the whole batch instead.
         val mainHandler = Handler(Looper.getMainLooper())
@@ -345,12 +361,108 @@ object PrefsManager {
         }
     }
 
-    fun isEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean(KEY_ENABLED, true)
-    }
+    fun isAutomaticSilenceRequested(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, true)
+
+    /** Operational master switch used by receivers, the planner and the mosque monitor. */
+    fun isEnabled(context: Context): Boolean = isAutomaticSilenceRequested(context) && canUsePlaceForAutomation(context)
 
     fun isFirstLaunch(context: Context): Boolean {
         return !prefs(context).getBoolean(KEY_FIRST_LAUNCH, false)
+    }
+
+    /** Run before process startup work. This device-local file is deliberately excluded from backups.
+     * Other feature stores may have been restored. Their choices are independent and are never reset here.
+     */
+    internal fun initializeFirstRun(context: Context) {
+        val settings = prefs(context)
+        if (settings.getBoolean(KEY_FIRST_RUN_DEFAULTS_INITIALIZED, false)) return
+        val edit = settings.edit().putBoolean(KEY_FIRST_RUN_DEFAULTS_INITIALIZED, true)
+        initializeBackgroundTravel(settings, edit, context)
+        if (!settings.getBoolean(KEY_FIRST_LAUNCH, false)) {
+            // A restored install has a negative marker from the backup agent, even when this preference
+            // file was absent from its backup. A partial old tour or an in-place upgrade is also excluded.
+            val fresh = settings.all.isEmpty() && runCatching {
+                @Suppress("DEPRECATION")
+                val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                info.firstInstallTime > 0 && info.firstInstallTime == info.lastUpdateTime &&
+                    !hasRecoveredFeatureChoices(context)
+            }.getOrDefault(false)
+            edit.putBoolean(KEY_FRESH_ONBOARDING, fresh).putBoolean(KEY_FIRST_RUN_SETUP_SUGGESTED, true)
+            // An unfinished tour could already have saved individual choices before it was closed.
+            if (!settings.contains(KEY_ENABLED)) edit.putBoolean(KEY_ENABLED, false)
+            if (!settings.contains(KEY_AUTO_LOCATION_UPDATE)) edit.putBoolean(KEY_AUTO_LOCATION_UPDATE, false)
+            if (!settings.contains(KEY_CALL_END_VIBRATION_ENABLED)) edit.putBoolean(KEY_CALL_END_VIBRATION_ENABLED, false)
+            val place = getPlace(context)
+            if (settings.contains(KEY_DELEGATION_ID) || place is PrayerPlace.Coordinates) {
+                // The old Skip wrote Tunis and its provisional marker separately. A bare default
+                // left between those writes can be shown again, but cannot authorize schedules.
+                if (place == PrayerPlace.Inm(DEFAULT_DELEGATION_ID) &&
+                    !settings.contains(KEY_LOCATION_FROM_GPS) && !settings.contains(KEY_LOCALITY_ID) &&
+                    !settings.contains(KEY_PLACE_PROVISIONAL)
+                ) edit.putBoolean(KEY_PLACE_PROVISIONAL, true)
+                edit.putBoolean(KEY_FIRST_LAUNCH, true)
+            }
+        }
+        edit.apply()
+    }
+
+    /** A device-copy tool can restore individual feature settings without invoking Android's restore callback.
+     * Only look at app-owned user configuration. WorkManager and Firebase also create local data on a clean install.
+     */
+    private fun hasRecoveredFeatureChoices(context: Context): Boolean {
+        fun settings(name: String) = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+        return settings("adhan_settings").all.isNotEmpty() || settings("mosque_silence_settings").all.isNotEmpty() ||
+            settings("fasting_reminder").contains("enabled") ||
+            context.filesDir.resolve("datastore/prayer_wake_store.preferences_pb").length() > 0 ||
+            context.filesDir.resolve("hifz/hifz.json").length() > 0
+    }
+
+    /** Called by Android after full restore, whether or not application startup preceded the callback. */
+    internal fun markOnboardingRestored(context: Context) {
+        prefs(context).edit().putBoolean(KEY_FRESH_ONBOARDING, false).apply()
+    }
+
+    fun isFreshOnboarding(context: Context): Boolean = prefs(context).getBoolean(KEY_FRESH_ONBOARDING, false)
+
+    fun usesPlaceOnboarding(context: Context): Boolean = prefs(context).contains(KEY_FRESH_ONBOARDING)
+
+    fun isFirstRunSetupSuggested(context: Context): Boolean =
+        !isFirstLaunch(context) && prefs(context).getBoolean(KEY_FIRST_RUN_SETUP_SUGGESTED, false)
+
+    fun dismissFirstRunSetup(context: Context) {
+        prefs(context).edit().putBoolean(KEY_FIRST_RUN_SETUP_SUGGESTED, false).apply()
+    }
+
+    fun hasConfirmedPlace(context: Context): Boolean = !isFirstLaunch(context) && !isPlaceProvisional(context)
+
+    /** Only revised flows record a fresh/returning cohort. Completed legacy users keep their
+     * existing schedules, including those configured against an old suggestion.
+     */
+    fun canUsePlaceForAutomation(context: Context): Boolean =
+        !usesPlaceOnboarding(context) || hasConfirmedPlace(context)
+
+    /** Publish a single decision even if two activities finish preparing different places. */
+    @Synchronized
+    fun completeFirstRun(context: Context, choice: FirstRunPlaceChoice): Boolean {
+        val settings = prefs(context)
+        if (settings.getBoolean(KEY_FIRST_LAUNCH, false)) return false
+        val edit = settings.edit()
+            .putBoolean(KEY_FIRST_LAUNCH, true)
+            .remove(KEY_PICK_PLACE_ON_START)
+        when (choice) {
+            is FirstRunPlaceChoice.Local ->
+                edit.putTunisianPlace(choice.locality.delegationId, choice.locality, fromGps = false)
+            is FirstRunPlaceChoice.Gps ->
+                edit.putTunisianPlace(choice.result.delegation.id, choice.result.locality, fromGps = true)
+            is FirstRunPlaceChoice.Abroad -> edit.putCoordinates(choice.place, choice.label, choice.fromGps, provisional = false)
+            is FirstRunPlaceChoice.Browse -> when (val place = choice.place) {
+                is PrayerPlace.Inm -> edit.putTunisianPlace(place.delegationId, null, fromGps = false)
+                    .putBoolean(KEY_PLACE_PROVISIONAL, true)
+                is PrayerPlace.Coordinates -> edit.putCoordinates(place, choice.label, fromGps = false, provisional = true)
+            }
+        }
+        edit.apply()
+        return true
     }
 
     fun markFirstLaunchDone(context: Context) {
@@ -370,10 +482,18 @@ object PrefsManager {
     fun markAutoSilenceActive(context: Context, previousRingerMode: Int, previousInterruptionFilter: Int) {
         prefs(context).edit()
             .putBoolean(KEY_AUTO_SILENCE_ACTIVE, true)
+            .remove(KEY_ANDROID_AUTO_SKIPPED_SILENCE)
             .putInt(KEY_AUTO_SILENCE_PREVIOUS_RINGER_MODE, previousRingerMode)
             .putInt(KEY_AUTO_SILENCE_PREVIOUS_INTERRUPTION_FILTER, previousInterruptionFilter)
             .apply()
     }
+
+    internal fun markAutoSilenceSkippedForAndroidAuto(context: Context) {
+        prefs(context).edit().putBoolean(KEY_ANDROID_AUTO_SKIPPED_SILENCE, true).apply()
+    }
+
+    internal fun wasAutoSilenceSkippedForAndroidAuto(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ANDROID_AUTO_SKIPPED_SILENCE, false)
 
     fun getAutoSilencePreviousRingerMode(context: Context): Int {
         return prefs(context).getInt(KEY_AUTO_SILENCE_PREVIOUS_RINGER_MODE, AudioManager.RINGER_MODE_NORMAL)
@@ -583,15 +703,23 @@ object PrefsManager {
     }
 
     fun setAutoLocationUpdateEnabled(context: Context, enabled: Boolean) {
-        prefs(context).edit().putBoolean(KEY_AUTO_LOCATION_UPDATE, enabled).apply()
+        val edit = prefs(context).edit().putBoolean(KEY_AUTO_LOCATION_UPDATE, enabled)
+        if (!enabled) edit.putBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, false)
+        edit.apply()
     }
 
-    /** Whether the background-location disclosure already came up by itself after a locate (once; settings keep it). */
-    fun isBackgroundLocationOffered(context: Context): Boolean =
-        prefs(context).getBoolean(KEY_BACKGROUND_LOCATION_OFFERED, false)
+    fun isBackgroundTravelEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, false)
 
-    fun setBackgroundLocationOffered(context: Context) {
-        prefs(context).edit().putBoolean(KEY_BACKGROUND_LOCATION_OFFERED, true).apply()
+    fun setBackgroundTravelEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, enabled).apply()
+    }
+
+    private fun initializeBackgroundTravel(settings: SharedPreferences, edit: SharedPreferences.Editor, context: Context) {
+        if (settings.contains(KEY_BACKGROUND_TRAVEL_ENABLED)) return
+        // Capture existing behavior at upgrade. A later grant for mosque detection can't opt the user into travel.
+        val usedTravel = settings.getBoolean(KEY_AUTO_LOCATION_UPDATE, settings.getBoolean(KEY_FIRST_LAUNCH, false))
+        edit.putBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, usedTravel && DelegationLocator.hasBackgroundLocationPermission(context))
     }
 
     fun getQiblaMethod(context: Context): QiblaMethod {

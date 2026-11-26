@@ -7,7 +7,11 @@ import android.content.Intent
 import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.AtomicFile
+import android.util.Log
 import com.tunisianprayertimes.Prayer
+import com.tunisianprayertimes.FirstRunPlaceChoice
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.quran.QuranVerseReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,13 +23,78 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.util.ReflectionHelpers.ClassParameter
+import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.LocalDate
 import java.time.ZoneId
 
+/** Windows File.renameTo cannot replace an existing file as Android's rename can. */
+@Implements(AtomicFile::class)
+class HifzNotebookAtomicFileShadow {
+    companion object {
+        @JvmStatic @Implementation
+        fun rename(source: File, target: File) {
+            if (File.separatorChar == '\\' && source.isFile && target.isFile) {
+                try {
+                    Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } catch (error: IOException) {
+                    Log.e("AtomicFile", "Failed to rename $source to $target", error)
+                }
+            } else {
+                Shadow.directlyOn<Void?, AtomicFile>(AtomicFile::class.java, "rename",
+                    ClassParameter.from(File::class.java, source), ClassParameter.from(File::class.java, target))
+            }
+        }
+    }
+}
+
 /** Notification contents and persisted eligibility must agree with the reminder's prayer day. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], application = Application::class)
+@Config(sdk = [35], application = Application::class, shadows = [HifzNotebookAtomicFileShadow::class])
 class HifzReminderEligibilityTest {
+    @Test
+    fun restoredPrayerSlotWaitsForConfirmationWhileClockSlotsRemainAvailable() = isolated { app ->
+        PrefsManager.initializeFirstRun(app)
+        val prayer = HifzWhen.After(Prayer.FAJR)
+        val day = LocalDate.of(2026, 11, 24).toEpochDay()
+        val clock = HifzWhen.At(9 * 60)
+        val clockAt = LocalDate.ofEpochDay(day).atTime(9, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val schedule = HifzSettings(times = HifzTimes(setOf(Prayer.FAJR), setOf(clock.minute)))
+        HifzSettings.write(app, schedule)
+        HifzReminder.installPrayerSpans(app)
+        assertNull(HifzReminder.slotAt(app, day, prayer))
+        assertEquals(clockAt, HifzReminder.slotAt(app, day, clock))
+
+        PrefsManager.completeFirstRun(app, FirstRunPlaceChoice.Browse(PrefsManager.getPlace(app), null))
+        assertNull(HifzReminder.slotAt(app, day, prayer))
+        assertEquals(schedule, HifzSettings.read(app))
+        PrefsManager.setPlaceProvisional(app, false)
+        assertTrue(HifzReminder.slotAt(app, day, prayer) != null)
+    }
+
+    @Test
+    fun pendingPrayerBroadcastCannotConsumeASlotBeforePlaceConfirmation() = isolated { app ->
+        PrefsManager.initializeFirstRun(app)
+        val now = System.currentTimeMillis()
+        val day = epochDay(now)
+        val prefs = app.getSharedPreferences("quran_hifz", Context.MODE_PRIVATE)
+        val prayer = HifzWhen.After(Prayer.FAJR)
+        HifzSettings.write(app, HifzSettings(times = HifzTimesPreset.Once.times))
+        HifzRepository.restore(app, point(10L, 1, day, now))
+        prefs.edit().putString("armed", "$day|${prayer.key}|$now").commit()
+        HifzReminder.refresh(app)
+        assertNull(prefs.getString("armed", null))
+        HifzReminder.deliver(app, day, prayer, now)
+        assertNull(prefs.getString("shown_slot", null))
+        assertTrue(HifzReminder.postedIds(app).isEmpty())
+    }
+
     @Test
     fun twoSuccessfulRecalls_deferTheNextReminderAndItsLabelUntilTomorrow() = isolated { app ->
         val day = todayEpochDay()

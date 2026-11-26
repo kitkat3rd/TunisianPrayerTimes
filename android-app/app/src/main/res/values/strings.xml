@@ -44,10 +44,10 @@
     <string name="call_end_vibration_title">اهتزاز عند انتهاء الإسكات إذا وردت مكالمة</string>
     <string name="auto_location_title">تحديث الموقع تلقائيًا</string>
     <string name="auto_location_foreground_only">تتغيّر مدينتك تلقائيًا عند فتح التطبيق فقط.</string>
-    <string name="auto_location_allow_background">السماح في الخلفية</string>
+    <string name="auto_location_allow_background">السماح بتحديث الموقع في الخلفية</string>
     <!-- Play's prominent disclosure for ACCESS_BACKGROUND_LOCATION: location data, use while closed, the one feature. -->
     <string name="background_location_title">استخدام الموقع أثناء إغلاق التطبيق</string>
-    <string name="background_location_body">إذا فعّلت متابعة السفر، يستخدم التطبيق الموقع في الخلفية لتحديث مكان مواقيت الصلاة أثناء تنقلك. وإذا اخترت الإسكات حسب الوقت ووجودك داخل المسجد، يستخدمه خلال فترات الإسكات المفعّلة فقط للتأكد من وجودك داخل المساحات المحفوظة وخروجك منها. لكل ميزة إعداد مستقل. تبقى بيانات موقعك على هاتفك ولا نرسلها إلى أحد.\n\nاسمح بالموقع الدقيق أولًا، ثم اختر «السماح طوال الوقت» في الصفحة التالية. يمكنك الرفض واستخدام الإسكات حسب الوقت أو الإسكات اليدوي.</string>
+    <string name="background_location_body">@string/mosque_background_disclosure</string>
     <string name="background_location_continue">متابعة</string>
     <string name="background_location_later">لاحقًا</string>
     <string name="manual_silence_title">الإسكات اليدوي</string>
@@ -176,43 +176,6 @@
     <string name="pick_aid_fitr_time">اختر وقت صلاة عيد الفطر</string>
     <string name="pick_aid_adha_time">اختر وقت صلاة عيد الأضحى</string>
 
-    <!-- Onboarding -->
-    <string name="onboarding_welcome">هذا التطبيق يقوم بإسكات هاتفك تلقائيًا عند دخول وقت كل صلاة\n\nفي تونس، يعتمد التطبيق على مواقيت المعهد الوطني للرصد الجوي المنشورة على meteo.tn، وخارجها على طريقة بلدك.\n\nهذا التطبيق مستقل وليس تابعًا لأي جهة حكومية ولا يمثلها.\n\nدعنا نشرح لك كيف يعمل</string>
-    <string name="onboarding_period_title">لكل صلاة فترة إسكات من البداية إلى النهاية</string>
-    <string name="onboarding_period_desc">العلامة الذهبية على الشريط هي وقت الأذان، والطرفان يحددان بداية الإسكات ونهايته، والمدة تُحسب بينهما تلقائيًا.\n\nيمكنك تفعيل الإسكات أو إيقافه لكل صلاة من المفتاح.</string>
-    <string name="onboarding_drag_title">اسحب طرفي الفترة لتعديل الإسكات</string>
-    <string name="onboarding_drag_desc">اسحب طرف البداية أو طرف النهاية على الشريط؛ يظهر لك أثناء السحب الوقت الجديد وقيمته بالنسبة للأذان.\n\nاضغط على البداية أو النهاية لفتح التعديل الدقيق.</string>
-    <string name="onboarding_rule_title">حسب الأذان أو وقت ثابت</string>
-    <string name="onboarding_rule_desc">اضغط على «البداية» أو «النهاية» في الصف لتفتح المحرر، ثم اختر:\n• «حسب الأذان»: قبل الأذان أو معه أو بعده بعدد من الدقائق.\n• «وقت ثابت»: عند ساعة محددة لا تتغير مع تغيّر موعد الأذان.\nبعد الضغط على «تطبيق»، يظهر أثر التعديل مباشرة على فترة الإسكات.</string>
-    <string name="onboarding_rule_step_tap">1 · اضغط على «البداية» لفتح المحرر</string>
-    <string name="onboarding_rule_step_choose">2 · اختر قاعدة البداية</string>
-    <string name="onboarding_rule_step_apply">3 · اضغط «تطبيق»</string>
-    <string name="onboarding_rule_step_tap_end">4 · اضغط على «النهاية» لفتح المحرر</string>
-    <string name="onboarding_rule_step_choose_end">5 · اختر قاعدة النهاية</string>
-    <string name="onboarding_rule_step_apply_end">6 · اضغط «تطبيق»</string>
-    <string name="onboarding_rule_step_impact">7 · لاحظ الأثر على فترة الإسكات</string>
-    <string name="onboarding_jomoaa_title">صلاة الجمعة</string>
-    <string name="onboarding_jomoaa_desc">يمكنك تعديل وقت صلاة الجمعة حسب مسجدك بالضغط على الوقت، ثم ضبط فترة الإسكات كما في باقي الصلوات.</string>
-    <string name="onboarding_wake_alarm_title">منبه الاستيقاظ</string>
-    <string name="onboarding_wake_alarm_desc">يمكنك إضافة منبه استيقاظ مرتبط بأوقات الصلاة.\nمثلا: منبه قبل أذان الفجر بـ 30 دقيقة ليوقظك لصلاة الفجر.\n\nيمكنك أيضا ضبطه على وقت ثابت أو بعد مدة من الآن.</string>
-    <string name="onboarding_ready_title">جاهز للاستخدام!</string>
-    <string name="onboarding_ready_desc">تأكد من اختيار منطقتك الصحيحة؛ فالمواقيت تعتمد على الموقع المختار. يمكنك استخدام تحديد الموقع أو البحث عن مدينة أو حيّ.\n\nصلاة مقبولة 🤲</string>
-    <string name="onboarding_start">ابدأ</string>
-    <string name="onboarding_next">التالي</string>
-    <string name="onboarding_prev">السابق</string>
-    <string name="onboarding_skip">تخطّ</string>
-    <string name="onboarding_perm_title">صلاحيات ضرورية</string>
-    <string name="onboarding_perm_desc">لكي يعمل التطبيق بشكل صحيح، يرجى منح الصلاحيات التالية:</string>
-    <string name="onboarding_perm_dnd">إسكات الهاتف (Do Not Disturb)</string>
-    <string name="onboarding_perm_dnd_desc">يحتاج التطبيق لإذن تغيير إعدادات الصوت.</string>
-    <string name="onboarding_perm_grant">منح الصلاحية</string>
-    <string name="onboarding_perm_alarm">المنبهات الدقيقة</string>
-    <string name="onboarding_perm_alarm_desc">يحتاج التطبيق إلى هذا الإذن لجدولة المنبهات في وقتها بدقة.</string>
-    <string name="onboarding_perm_granted">ممنوح</string>
-    <string name="onboarding_perm_battery">عدم تقييد البطارية</string>
-    <string name="onboarding_perm_battery_desc">يمنع النظام من إيقاف التطبيق عند عدم استخدامه.</string>
-    <string name="onboarding_perm_phone_state">حالة الهاتف</string>
-    <string name="onboarding_perm_phone_state_desc">هذا الإذن مطلوب ليهتز هاتفك عند انتهاء الإسكات إذا وردت مكالمة خلاله.</string>
     <string name="banner_battery_missing">التطبيق قد يتوقف عن العمل بسبب تحسين البطارية. اضغط هنا لإعفائه. ⬅</string>
     <string name="error_start_after_end">وقت البدء يجب أن يكون قبل وقت الانتهاء</string>
     <string name="error_start_before_athan">وقت البدء يجب أن لا يكون قبل وقت الأذان</string>
@@ -710,14 +673,8 @@
     <string name="silence_year_fit_use_fixed_end">نهاية ثابتة عند الساعة %1$s</string>
     <string name="silence_year_fit_keep">الإبقاء على اختياري</string>
     <!-- The first run's location step and its provisional place (plan 6.8). -->
-    <string name="onboarding_location_title">أين تصلّي؟</string>
-    <string name="onboarding_location_desc">نحسب المواقيت لمكانك: في تونس من جداول المعهد الوطني للرصد الجوي، وخارجها بطريقة بلدك. يمكنك التخطّي، فنقترح موقعًا تؤكّده لاحقًا.</string>
-    <string name="onboarding_location_locate">تحديد موقعي</string>
     <string name="onboarding_location_pick">اختيار مدينة</string>
     <string name="onboarding_location_locating">جارٍ تحديد موقعك…</string>
-    <string name="onboarding_location_done">موقعك: %1$s</string>
-    <string name="onboarding_location_pick_later">ستختار مدينتك عند فتح التطبيق.</string>
-    <string name="onboarding_location_failed">تعذّر تحديد موقعك. اختر مدينة، أو تابع ونقترح موقعًا تؤكّده لاحقًا.</string>
     <string name="location_confirm_title">تأكيد الموقع</string>
     <string name="location_confirm_text">اخترنا لك %1$s من شبكة هاتفك ومنطقته الزمنية. هل هذا موقعك؟</string>
     <string name="location_confirm_yes">نعم</string>
@@ -748,7 +705,6 @@
     <string name="estimated_adjustment">قُيّد تعديلك بالدقائق حتى يبقى وقت %1$s ضمن الحدّ المعتمد.</string>
     <string name="estimated_order">تقدّم هذه الطريقة %1$s اليوم على الوقت الذي قبله، فجُعل معه.</string>
     <string name="estimated_night_middle">الفترة التي تحددها هذه الطريقة بعد المغرب أطول من نصف الليلة، فجُعل العشاء في وسط الليلة.</string>
-    <string name="onboarding_ready_desc_abroad">سيتكفل التطبيق بالباقي، ويمكنك ضبط طريقة الحساب لتوافق مسجدك من إعدادات المواقيت.\n\nصلاة مقبولة 🤲</string>
     <plurals name="prayer_day_alarm_cluster_title">
         <item quantity="zero">عدد المنبّهات المتقاربة: ⁦%d⁩</item>
         <item quantity="one">منبّه على الخط الزمني</item>

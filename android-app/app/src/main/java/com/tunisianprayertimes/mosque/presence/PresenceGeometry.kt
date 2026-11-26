@@ -31,6 +31,8 @@ data class SilencePolygon(val exterior: List<GeoPoint>, val holes: List<List<Geo
     internal fun contains(point: GeoPoint): Boolean = pointInRing(point, openRing(exterior)) &&
         holes.none { pointInRing(point, openRing(it)) }
 
+    internal fun inHole(point: GeoPoint): Boolean = holes.any { pointInRing(point, openRing(it)) }
+
     internal fun boundaryDistance(point: GeoPoint): Double = (listOf(exterior) + holes).minOf { ring ->
         val vertices = openRing(ring)
         vertices.indices.minOf { i ->
@@ -47,6 +49,7 @@ data class SilenceArea(
     val revision: Long,
     val polygons: List<SilencePolygon>,
     val enabled: Boolean = true,
+    val requireStrongerEvidence: Boolean = false,
 ) {
     init {
         require(id.isNotBlank() && revision >= 0 && polygons.isNotEmpty())
@@ -65,51 +68,6 @@ data class PresenceFix(
     val isMock: Boolean = false,
 )
 
-enum class FixClass { STRICT_INSIDE, STRICT_OUTSIDE, AMBIGUOUS, UNUSABLE, STORE_UNAVAILABLE }
-enum class FixRejection {
-    OUTSIDE_WINDOW, INVALID_COORDINATES, MOCK, AGE, ACCURACY, DUPLICATE_OR_OUT_OF_ORDER, OBSOLETE_EPOCH, NOT_READY, CLOCK }
-data class FixAssessment(
-    val classification: FixClass,
-    val insideAreaIds: Set<String> = emptySet(),
-    val rejection: FixRejection? = null,
-)
-
-object PresenceGeometry {
-    /** Geometry only. De-duplication and epoch/permission checks belong to PresenceMachine. */
-    fun classify(
-        fix: PresenceFix,
-        deliveredAtMillis: Long,
-        areas: List<SilenceArea>,
-        config: PresenceConfig = PresenceConfig(),
-        storeAvailable: Boolean = true,
-    ): FixAssessment {
-        val rejection = when {
-            !fix.point.isValid() -> FixRejection.INVALID_COORDINATES
-            fix.isMock -> FixRejection.MOCK
-            fix.elapsedRealtimeMillis < 0 || fix.elapsedRealtimeMillis > deliveredAtMillis ||
-                deliveredAtMillis - fix.elapsedRealtimeMillis > config.maxFixAgeMillis -> FixRejection.AGE
-            fix.accuracyMeters == null || !fix.accuracyMeters.isFinite() ||
-                fix.accuracyMeters <= 0 || fix.accuracyMeters > config.holdingAccuracyMeters -> FixRejection.ACCURACY
-            else -> null
-        }
-        if (rejection != null) return FixAssessment(FixClass.UNUSABLE, rejection = rejection)
-        val enabled = areas.filter { it.enabled }
-        if (!storeAvailable || enabled.isEmpty()) return FixAssessment(FixClass.STORE_UNAVAILABLE)
-        val accuracy = requireNotNull(fix.accuracyMeters)
-        if (accuracy > config.strictAccuracyMeters) return FixAssessment(FixClass.AMBIGUOUS)
-        val inside = enabled.filter { area -> area.polygons.any { polygon ->
-            polygon.contains(fix.point) &&
-                polygon.boundaryDistance(fix.point) > accuracy + config.entryMarginMeters
-        } }.mapTo(linkedSetOf()) { it.id }
-        if (inside.isNotEmpty()) return FixAssessment(FixClass.STRICT_INSIDE, inside)
-        val outside = enabled.all { area -> area.polygons.all { polygon ->
-            !polygon.contains(fix.point) &&
-                polygon.boundaryDistance(fix.point) > accuracy + config.exitMarginMeters
-        } }
-        return FixAssessment(if (outside) FixClass.STRICT_OUTSIDE else FixClass.AMBIGUOUS)
-    }
-}
-
 private fun openRing(ring: List<GeoPoint>): List<GeoPoint> =
     if (ring.size > 1 && ring.first() == ring.last()) ring.dropLast(1) else ring
 
@@ -124,10 +82,20 @@ private fun validRing(input: List<GeoPoint>): Boolean {
         xy[i].first * xy[j].second - xy[j].first * xy[i].second
     }
     if (kotlin.math.abs(area2) < 0.01) return false
-    return ring.indices.all { i -> (i + 1 until ring.size).all { j ->
-        if (j == i + 1 || (i == 0 && j == ring.lastIndex)) true
-        else !segmentsIntersect(ring[i], ring[(i + 1) % ring.size], ring[j], ring[(j + 1) % ring.size])
-    } }
+    return firstBoundaryCrossing(ring, closed = true) == null
+}
+
+internal fun firstBoundaryCrossing(points: List<GeoPoint>, closed: Boolean): Pair<Int, Int>? {
+    val count = if (closed) points.size else (points.size - 1).coerceAtLeast(0)
+    for (i in 0 until count) {
+        for (j in i + 2 until count) {
+            if (closed && i == 0 && j == count - 1) continue
+            if (segmentsIntersect(points[i], points[(i + 1) % points.size], points[j], points[(j + 1) % points.size])) {
+                return i to j
+            }
+        }
+    }
+    return null
 }
 
 private fun ringsIntersect(a: List<GeoPoint>, b: List<GeoPoint>): Boolean = a.indices.any { i ->
@@ -160,7 +128,7 @@ private fun pointInRing(point: GeoPoint, ring: List<GeoPoint>): Boolean {
     return inside
 }
 
-private fun project(point: GeoPoint, origin: GeoPoint): Pair<Double, Double> {
+internal fun project(point: GeoPoint, origin: GeoPoint): Pair<Double, Double> {
     val radians = origin.latitude * PI / 180
     val eccentricity2 = 6.69437999014e-3
     val denominator = 1 - eccentricity2 * sin(radians) * sin(radians)

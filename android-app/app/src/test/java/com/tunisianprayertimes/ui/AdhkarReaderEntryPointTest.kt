@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -34,6 +35,7 @@ import com.tunisianprayertimes.adhkar.DhikrState
 import com.tunisianprayertimes.adhkar.MushafPassages
 import com.tunisianprayertimes.adhkar.collectionEntries
 import com.tunisianprayertimes.adhkar.findDhikr
+import com.tunisianprayertimes.adhkar.target
 import com.tunisianprayertimes.mosque.DisplayTexts
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -58,6 +60,7 @@ class AdhkarReaderEntryPointTest {
         itemIds = ids, index = ids.indexOf("ya_hayyu"), category = DhikrCategory.EVENING))
     private var reminder by mutableStateOf<DhikrReminder?>(null)
     private val counts = mutableListOf<Int>()
+    private var advances = 0
     private var configuredReminders = 0
 
     @Before fun showReader() {
@@ -73,7 +76,7 @@ class AdhkarReaderEntryPointTest {
                         onMove = { direction ->
                             session = session.copy(index = (session.index + direction).mod(session.itemIds.size))
                         },
-                        onSkip = {}, onRemove = {}, onFavourite = {}, onCollections = {}, onEditCustom = {},
+                        onAdvance = { advances++ }, onSkip = {}, onRemove = {}, onFavourite = {}, onCollections = {}, onEditCustom = {},
                         onDeleteCustom = {}, onAddToCollection = {}, onReorderCollection = {}, onTextSize = {},
                         onHaptics = {}, onVariant = {}, reminder = reminder, reminderActionLabel = "إنشاء تذكير لهذا الذكر",
                         onReminder = {}, onConfigureReminder = { configuredReminders++ }, onDeleteReminder = {},
@@ -135,6 +138,30 @@ class AdhkarReaderEntryPointTest {
 
         assertEquals(next, session.index)
         assertEquals("notification-occurrence", session.occurrenceId)
+        assertReadingHeader()
+    }
+
+    @Test fun completedDhikrTapAdvancesAndProgressFollowsTheReturnedPosition() {
+        val items = listOf("sayyid_istighfar", "ayat_kursi", "ya_hayyu")
+        compose.runOnIdle {
+            val reading = DhikrSession(itemIds = items, index = items.lastIndex, category = DhikrCategory.EVENING)
+            session = reading.copy(counts = listOf(items.first(), items.last()).associateWith { state.target(reading, it) })
+        }
+        val progress = compose.onNodeWithTag("adhkar_list_progress")
+        val before = progress.fetchSemanticsNode().config
+        assertEquals(ProgressBarRangeInfo(2f, 0f..3f), before[SemanticsProperties.ProgressBarRangeInfo])
+        assertEquals("الذكر 3 من 3، تمّ 2 من 3", before[SemanticsProperties.StateDescription])
+
+        compose.onNodeWithTag("adhkar_count").performClick()
+        assertEquals(1, advances)
+        assertEquals(emptyList<Int>(), counts)
+        assertEquals(items.lastIndex, session.index)
+        // Apply the saved destination supplied by the repository-backed screen.
+        compose.runOnIdle { session = session.copy(index = 1) }
+
+        val after = progress.fetchSemanticsNode().config
+        assertEquals(ProgressBarRangeInfo(2f, 0f..3f), after[SemanticsProperties.ProgressBarRangeInfo])
+        assertEquals("الذكر 2 من 3، تمّ 2 من 3", after[SemanticsProperties.StateDescription])
         assertReadingHeader()
     }
 

@@ -136,6 +136,7 @@ internal fun PrayerTimeMethodDialog(
                         ) {
                             if (location == null || explanation == null) {
                                 Text(stringResource(R.string.prayer_method_unavailable), fontSize = 14.sp, color = TextMuted)
+                                GuideText(stringResource(R.string.prayer_method_app_provenance))
                             } else {
                                 GuidedMethodContent(location, date, delegationName, explanation, asExample)
                             }
@@ -192,6 +193,7 @@ private fun GuidedMethodContent(
             stringResource(if (asExample) R.string.prayer_method_guide_example_scope else R.string.prayer_method_guide_scope),
             fontSize = 13.sp, lineHeight = 20.sp, color = PrayerSilencePalette.SecondaryText,
         )
+        GuideText(stringResource(R.string.prayer_method_app_provenance))
     }
 
     GuideStep("1", stringResource(R.string.prayer_method_guide_inputs_title)) {

@@ -35,7 +35,6 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -50,6 +49,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.fasting.FastingReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminder
@@ -91,11 +92,14 @@ internal object FastingRequests {
 
 /** Turns the reminder on, asking for notifications the first time; off at once. */
 @Composable
-private fun rememberFastingSwitch(onChanged: () -> Unit): (Boolean) -> Unit {
+private fun rememberFastingSwitch(onPlaceRequired: () -> Unit, onChanged: () -> Unit): (Boolean) -> Unit {
     val context = LocalContext.current
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onChanged() }
-    return { on ->
-        FastingReminder.setEnabled(context, on)
+    return toggle@{ on ->
+        if (!FastingReminder.setEnabled(context, on)) {
+            onPlaceRequired()
+            return@toggle
+        }
         if (on) Toast.makeText(context, "سنذكّرك بعد صلاة المغرب في الليلة التي قبل يوم الصيام.", Toast.LENGTH_SHORT).show()
         if (on && Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -121,7 +125,7 @@ private fun fastingCardState(context: android.content.Context, now: Instant = In
     val enabled = FastingReminder.isEnabled(context)
     val eve = FastingReminder.tonight(context, now)
     val chosenDay = eve != null && FastingReminder.isChosen(context, eve)
-    val tonight = eve?.takeIf { enabled && chosenDay && !it.paused }
+    val tonight = eve?.takeIf { enabled && chosenDay && !it.paused && PrefsManager.canUsePlaceForAutomation(context) }
     return when {
         tonight != null -> {
             val suhoorAt = FastingReminder.suhoorAt(context, tonight, now)
@@ -168,19 +172,27 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
     }
     var sheet by remember { mutableStateOf(false) }
     var suhoorSheet by remember { mutableStateOf<FastingReminder.Eve?>(null) }
-    val switch = rememberFastingSwitch { revision++ }
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
+    val switch = rememberFastingSwitch(onPlaceRequired = { placeRequired = true }) { revision++ }
     val state by produceState<FastingCardState?>(initialValue = null, revision) {
         value = withContext(Dispatchers.IO) { fastingCardState(context) }
     }
     val setSuhoor: (FastingReminder.Eve) -> Unit = { target ->
         scope.launch {
             val set = withContext(Dispatchers.IO) { FastingReminder.setSuhoor(context, target) }
-            if (!set) Toast.makeText(context, SUHOOR_TOO_LATE, Toast.LENGTH_SHORT).show()
+            if (!set) {
+                if (PrefsManager.hasConfirmedPlace(context)) Toast.makeText(context, SUHOOR_TOO_LATE, Toast.LENGTH_SHORT).show()
+                else placeRequired = true
+            }
             revision++
         }
     }
     // One tap once chosen, with alarm access and the chosen minutes still in time; the questions otherwise.
-    val askSuhoor: (FastingReminder.Eve) -> Unit = { target ->
+    val askSuhoor: (FastingReminder.Eve) -> Unit = ask@{ target ->
+        if (!PrefsManager.hasConfirmedPlace(context)) {
+            placeRequired = true
+            return@ask
+        }
         val options = target.fajr?.let { FastingReminder.suhoorOptions(it) }.orEmpty()
         if (FastingReminder.suhoorChosen(context) && FastingReminder.suhoorMinutes(context) in options &&
             com.tunisianprayertimes.wake.WakeAlarmScheduler.canScheduleExactAlarms(context)
@@ -200,6 +212,11 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
     }
     LaunchedEffect(FastingRequests.suhoor) {
         if (FastingRequests.suhoor) {
+            if (!PrefsManager.hasConfirmedPlace(context)) {
+                FastingRequests.suhoor = false
+                placeRequired = true
+                return@LaunchedEffect
+            }
             // Cleared only after the read: clearing the key first would restart this effect and cancel it.
             val eve = withContext(Dispatchers.IO) { FastingReminder.tonight(context) }
             FastingRequests.suhoor = false
@@ -262,7 +279,7 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
         )
     }
 
-    if (sheet) FastingSheet(onDismiss = { sheet = false }, onChanged = { revision++ })
+    if (sheet) FastingSheet(onDismiss = { sheet = false }, onPlaceRequired = { placeRequired = true }, onChanged = { revision++ })
     suhoorSheet?.let { target ->
         SuhoorAlarmSetupSheet(
             fajrAtMillis = target.fajr?.toEpochMilli(),
@@ -276,12 +293,16 @@ internal fun FastingCard(modifier: Modifier = Modifier) {
             onDismiss = { suhoorSheet = null },
         )
     }
+    if (placeRequired) PrayerPlaceRequiredDialog(
+        onChoosingPlace = { sheet = false; suhoorSheet = null },
+        onDismiss = { placeRequired = false },
+    )
 }
 
 /** Everything about the reminder: the days, a week's pause, the suhoor alarm, why nothing comes, and the intention. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
+private fun FastingSheet(onDismiss: () -> Unit, onPlaceRequired: () -> Unit, onChanged: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var revision by remember { mutableIntStateOf(0) }
@@ -290,7 +311,7 @@ private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
         onPauseOrDispose { }
     }
     val changed = { revision++; onChanged() }
-    val switch = rememberFastingSwitch(changed)
+    val switch = rememberFastingSwitch(onPlaceRequired, changed)
     val enabled = remember(revision) { FastingReminder.isEnabled(context) }
     val fasts = remember(revision) { FastingReminder.fasts(context) }
     val lines by produceState(initialValue = emptyList<String>(), revision) {
@@ -298,7 +319,7 @@ private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
     }
     val paused = remember(revision) { FastingReminder.isPaused(context) }
     var suhoorSheet by remember { mutableStateOf(false) }
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Color.White,
@@ -341,8 +362,16 @@ private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     lines.forEach { Text(it, color = TextDark, fontSize = 14.sp, lineHeight = 21.sp) }
+                    if (!PrefsManager.canUsePlaceForAutomation(context)) {
+                        TextButton(onClick = onPlaceRequired) { Text("اختيار المدينة", color = GreenPrimary) }
+                    }
                     if (paused) {
-                        TextButton(onClick = { FastingReminder.resume(context); changed() }) {
+                        TextButton(onClick = {
+                            if (PrefsManager.hasConfirmedPlace(context)) {
+                                FastingReminder.resume(context)
+                                changed()
+                            } else onPlaceRequired()
+                        }) {
                             Text("استأنف التذكير", color = GreenPrimary, fontWeight = FontWeight.SemiBold)
                         }
                     } else {
@@ -359,7 +388,9 @@ private fun FastingSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
                     }
                 }
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button) { suhoorSheet = true }
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button) {
+                        if (PrefsManager.hasConfirmedPlace(context)) suhoorSheet = true else onPlaceRequired()
+                    }
                         .border(BorderStroke(1.dp, Gold.copy(alpha = 0.25f)), RoundedCornerShape(12.dp)).padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

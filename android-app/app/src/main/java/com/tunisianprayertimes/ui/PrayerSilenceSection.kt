@@ -408,7 +408,7 @@ private fun SilenceSwitchRow(
 }
 
 @Composable
-private fun PrayerSilenceClock(
+internal fun PrayerSilenceClock(
     prayer: Prayer,
     timeText: String,
     onPrayerTimeClick: (() -> Unit)?,

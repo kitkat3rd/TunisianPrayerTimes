@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.adhan.AdhanScheduler.occurrence
 import com.tunisianprayertimes.adhan.AdhanScheduler.putOccurrence
 import kotlin.concurrent.thread
@@ -18,6 +19,7 @@ import kotlin.concurrent.thread
 class AdhanReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
+        if (intent.action != ACTION_SKIP && !PrefsManager.canUsePlaceForAutomation(app)) return
         when (intent.action) {
             AdhanScheduler.ACTION_ADHAN -> {
                 val occurrence = intent.occurrence() ?: return

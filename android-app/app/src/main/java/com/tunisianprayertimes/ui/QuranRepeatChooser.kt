@@ -67,7 +67,7 @@ internal fun QuranRepeatChooser(
 ) {
     var gapOpen by rememberSaveable { mutableStateOf(gapFactor > 0f) }
     var asking by rememberSaveable { mutableStateOf(false) }
-    ModalBottomSheet(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = BgCream,

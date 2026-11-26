@@ -50,7 +50,7 @@ import com.tunisianprayertimes.adhkar.DhikrEntry
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = AdhkarSurface, unfocusedContainerColor = AdhkarSurface,
         focusedBorderColor = p.primary.copy(alpha = .6f), unfocusedBorderColor = AdhkarBorder)
-    ModalBottomSheet(onDismissRequest = { if (!saving) onDismiss() },
+    AppModalBottomSheet(onDismissRequest = { if (!saving) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = p.background, modifier = Modifier.testTag("adhkar_custom_editor")) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).imePadding()) {

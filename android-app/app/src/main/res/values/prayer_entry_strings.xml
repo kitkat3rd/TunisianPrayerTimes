@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="prayer_entry_confirm_to_schedule">أكّد مدينتك أولًا لتحديد وقت الصلاة.</string>
+    <string name="prayer_entry_time_reference">مرجع المواقيت: %1$s</string>
+</resources>

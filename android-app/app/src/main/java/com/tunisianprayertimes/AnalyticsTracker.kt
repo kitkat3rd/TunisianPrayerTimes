@@ -19,13 +19,18 @@ object AnalyticsTracker {
      * Switzerland or French overseas, and is turned on elsewhere. Applied at start and after every place change.
      */
     fun applyRegionalCollection(context: Context) {
+        val allowed = collectionAllowedInRegion(context)
+        runCatching { FirebaseAnalytics.getInstance(context.applicationContext).setAnalyticsCollectionEnabled(allowed) }
+    }
+
+    private fun collectionAllowedInRegion(context: Context): Boolean {
         val phone = context.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
         val countries = listOfNotNull(
             runCatching { phone?.simCountryIso }.getOrNull(),
             runCatching { phone?.networkCountryIso }.getOrNull(),
             runCatching { (PrefsManager.getPlace(context) as? com.tunisianprayertimes.place.PrayerPlace.Coordinates)?.countryCode }.getOrNull(),
         )
-        runCatching { FirebaseAnalytics.getInstance(context.applicationContext).setAnalyticsCollectionEnabled(collectionAllowed(countries)) }
+        return collectionAllowed(countries)
     }
 
     /** False when any of [countries] (ISO codes, any case) is one where analytics would need the user's consent. */
@@ -48,6 +53,23 @@ object AnalyticsTracker {
 
     fun markDelegationSource(context: Context, source: String) {
         prefs(context).edit().putString(KEY_DELEGATION_SOURCE, source).apply()
+    }
+
+    internal fun openFirstRunSession(
+        context: Context,
+        freshOrdinaryLaunch: Boolean,
+        savedInstanceState: Bundle?,
+    ): FirstRunTimetableSession? {
+        val app = context.applicationContext
+        return FirstRunTimetableSession.open(
+            prefs = prefs(app),
+            freshOrdinaryLaunch = freshOrdinaryLaunch,
+            savedInstanceState = savedInstanceState,
+            collectionAllowed = { collectionAllowedInRegion(app) },
+            record = { event, elapsedBucket ->
+                log(app, event, Bundle().apply { if (elapsedBucket != null) putString("elapsed_bucket", elapsedBucket) })
+            },
+        )
     }
 
     fun activationCompletedIfNeeded(

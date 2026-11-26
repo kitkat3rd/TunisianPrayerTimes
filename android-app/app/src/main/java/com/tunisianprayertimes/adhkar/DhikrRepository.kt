@@ -62,6 +62,8 @@ class DhikrRepository(context: Context) {
         DhikrReminderScheduler.refresh(app)
     }
     fun setEnabled(id: String, enabled: Boolean, now: Long = System.currentTimeMillis()) {
+        if (enabled && !PrefsManager.canUsePlaceForAutomation(app) &&
+            state.value.reminders.any { it.id == id && it.usesPrayerTimes() }) return
         // Switching back on restarts the missed-nudge recovery: a nudge that fell while the
         // reminder was off was never missed, so it is not sent the moment the switch flips.
         update { it.copy(reminders = it.reminders.map { rule ->
@@ -568,6 +570,21 @@ class DhikrRepository(context: Context) {
         val updated = session.copy(index = index, updatedAtMillis = System.currentTimeMillis())
         old.copy(sessions = old.sessions + (sessionId to updated), lastSessionId = sessionId)
     }
+
+    /** A tap on a completed dhikr continues with the next unfinished one, wrapping at the end. */
+    fun advanceAfterReading(sessionId: String, itemId: String) = update { old ->
+        val session = old.sessions[sessionId] ?: return@update old
+        val size = session.itemIds.size
+        if (size <= 1 || session.itemId != itemId || (session.counts[itemId] ?: 0) < old.target(session))
+            return@update old
+        val index = (1 until size).asSequence()
+            .map { (session.index + it).mod(size) }
+            .firstOrNull { !old.isItemFinished(session, session.itemIds[it]) }
+            ?: (session.index + 1).mod(size)
+        val updated = session.copy(index = index, updatedAtMillis = System.currentTimeMillis())
+        old.copy(sessions = old.sessions + (sessionId to updated), lastSessionId = sessionId)
+    }
+
     /** Marks the current item skipped and advances; skipped items no longer block list completion. */
     fun skipItem(sessionId: String, now: Long = System.currentTimeMillis()) {
         update { old ->

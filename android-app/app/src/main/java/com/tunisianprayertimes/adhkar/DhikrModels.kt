@@ -52,6 +52,9 @@ data class DhikrReminder(
 fun DhikrReminder.intervals(): List<DhikrInterval> =
     listOf(DhikrInterval(start, end, endNextDay)) + extraIntervals
 
+internal fun DhikrReminder.usesPrayerTimes(): Boolean =
+    intervals().any { it.start.kind != DhikrTimeKind.FIXED || it.end.kind != DhikrTimeKind.FIXED }
+
 /** The salawat reminder's default goals: more on Friday, as the Sunnah asks (Abu Dawud 1047). */
 const val SALAWAT_DAILY_GOAL = 5
 const val SALAWAT_FRIDAY_GOAL = 10
@@ -230,7 +233,7 @@ data class DhikrSession(
     val itemIds: List<String>, val counts: Map<String, Int> = emptyMap(), val index: Int = 0,
     val category: DhikrCategory? = null, val occurrenceId: String? = null,
     val updatedAtMillis: Long = System.currentTimeMillis(),
-    /** Items the reader moved past without counting; a skip still satisfies list completion. */
+    /** Items explicitly skipped from the reader menu; a skip still satisfies list completion. */
     val skippedIds: Set<String> = emptySet(),
     /** A manual reminder reading can keep its chosen goal without joining scheduled progress. */
     val targetCountOverride: Int? = null,
@@ -349,8 +352,11 @@ fun DhikrState.target(session: DhikrSession, itemId: String = session.itemId): I
     else entry?.countForCollection(session.category) ?: 1
 }
 
+internal fun DhikrState.isItemFinished(session: DhikrSession, itemId: String): Boolean =
+    itemId in session.skippedIds || (session.counts[itemId] ?: 0) >= target(session, itemId)
+
 fun DhikrState.isComplete(session: DhikrSession): Boolean =
-    session.itemIds.all { it in session.skippedIds || (session.counts[it] ?: 0) >= target(session, it) }
+    session.itemIds.all { isItemFinished(session, it) }
 
 /**
  * The latest full reading of this occasion decides whether it is done, whether it was opened
