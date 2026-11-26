@@ -2,6 +2,7 @@ package com.tunisianprayertimes.ui
 
 import android.content.Context
 import com.tunisianprayertimes.ManualSilenceMode
+import com.tunisianprayertimes.ManualSilenceScheduler
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
 import java.util.Calendar
@@ -43,7 +44,8 @@ internal fun phoneStatusNoticeText(
 
 internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason): String {
     if (reason.source in setOf(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED, PhoneSilenceReasonSource.MANUAL_UNTIL_PRAYER, PhoneSilenceReasonSource.MANUAL_UNTIL_TIME) &&
-        com.tunisianprayertimes.mosque.MosquePrayerActions.canUndo(context)) return context.getString(R.string.phone_status_silent_manual_until_time,
+        com.tunisianprayertimes.mosque.MosquePrayerActions.canUndo(context)) return context.getString(
+        if (ManualSilenceScheduler.canScheduleExact(context)) R.string.phone_status_silent_manual_until_time else R.string.manual_approximate_time,
         formatTimeOfDay(com.tunisianprayertimes.PrefsManager.getManualSilenceEndsAtMillis(context)))
     return when (reason.source) {
         PhoneSilenceReasonSource.MOSQUE_WINDOW -> context.getString(if (com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor.fallbackRequested(context))
@@ -55,11 +57,11 @@ internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason
         PhoneSilenceReasonSource.AUTO_PRAYER_UNKNOWN -> context.getString(R.string.phone_status_silent_auto)
         PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED -> context.getString(R.string.phone_status_silent_manual)
         PhoneSilenceReasonSource.MANUAL_UNTIL_TIME -> context.getString(
-            R.string.phone_status_silent_manual_until_time,
+            if (ManualSilenceScheduler.canScheduleExact(context)) R.string.phone_status_silent_manual_until_time else R.string.manual_approximate_time,
             formatTimeOfDay(reason.endsAtMillis),
         )
         PhoneSilenceReasonSource.MANUAL_UNTIL_PRAYER -> context.getString(
-            R.string.phone_status_silent_manual_until_prayer,
+            if (ManualSilenceScheduler.canScheduleExact(context)) R.string.phone_status_silent_manual_until_prayer else R.string.manual_approximate_prayer,
             prayerName(context, requireNotNull(reason.prayer)),
         )
         PhoneSilenceReasonSource.WAKE_ALARM -> context.getString(R.string.phone_status_silent_wake_alarm)

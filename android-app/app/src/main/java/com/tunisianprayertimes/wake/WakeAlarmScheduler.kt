@@ -1,9 +1,12 @@
 package com.tunisianprayertimes.wake
 
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.media.AudioManager
 import android.os.Build
 import android.util.Log
 import androidx.annotation.VisibleForTesting
@@ -25,6 +28,9 @@ import com.tunisianprayertimes.isSkippingWakeOccurrence
 import com.tunisianprayertimes.isSuppressedWakeOccurrence
 import com.tunisianprayertimes.adhkar.DhikrReminderScheduler
 import com.tunisianprayertimes.nap.NapSilenceController
+import com.tunisianprayertimes.mosque.MosqueSilenceSettings
+import com.tunisianprayertimes.mosque.SilenceCoordinator
+import com.tunisianprayertimes.mosque.SilenceOwner
 import com.tunisianprayertimes.silence.SilenceWindowPlanner
 import java.time.DayOfWeek
 import java.time.Instant
@@ -57,11 +63,53 @@ object WakeAlarmScheduler {
 	private val MARKER_FOLLOW_MILLIS = TimeUnit.HOURS.toMillis(12)
 	private val reminderRefreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+	internal enum class TimerSilenceIssue { DND, RULE }
+
+	internal fun timerSilenceIssue(context: Context): TimerSilenceIssue? = when {
+		!context.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted -> TimerSilenceIssue.DND
+		MosqueSilenceSettings.usesOwnedRules(context) && !SilenceCoordinator.canRequest(context, SilenceOwner.WAKE) -> TimerSilenceIssue.RULE
+		else -> null
+	}
+
+	/** Called after scheduling, only for the timer its owner just saved, enabled or explicitly retried. */
+	internal suspend fun applyEditedTimerSilence(context: Context, edited: PrayerWakeConfig): Boolean {
+		if (edited.id.isBlank()) return !edited.silenceUntilAlarm
+		if (!edited.silenceUntilAlarm && !isSilencedAlarm(context, edited.id)) return true
+		val saved = PrayerWakeRepository(context).getWakeAlarm(edited.id) ?: return true
+		if (saved.enabled != edited.enabled || saved.mainAlarm != edited.mainAlarm ||
+			saved.silenceUntilAlarm != edited.silenceUntilAlarm) return true
+		val requested = saved.enabled && saved.mainAlarm.mode == WakeMainAlarmMode.FROM_NOW && saved.silenceUntilAlarm
+		if (requested && canScheduleExactAlarms(context) && scheduledMainTriggerAt(context, saved.id) > System.currentTimeMillis()) {
+			if (activateSilenceUntilAlarm(context, saved.id)) return true
+		}
+		if (isSilencedAlarm(context, saved.id)) removeSilenceUntilAlarm(context, saved.id)
+		return !requested
+	}
+
+	internal fun observeTimerSilence(context: Context, onChange: () -> Unit): () -> Unit {
+		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
+		val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+			if (key == null || key == KEY_SILENCED_ALARM_IDS || key == KEY_SILENCED_ALARM_ID ||
+				key == KEY_SILENCE_PAUSED_FOR_ALARM_ID) onChange()
+		}
+		prefs.registerOnSharedPreferenceChangeListener(listener)
+		return { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+	}
+
+	@Synchronized
 	fun activateSilenceUntilAlarm(context: Context, alarmId: String): Boolean {
+		if (timerSilenceIssue(context) != null) return false
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
 		val pendingAlarmIds = silencedAlarmIds(context)
-		if (pendingAlarmIds.isEmpty() && !NapSilenceController.enableNapSilence(context)) {
-			return false
+		val paused = prefs.contains(KEY_SILENCE_PAUSED_FOR_ALARM_ID)
+		if (pendingAlarmIds.isEmpty() || (!paused && !wakeSilenceInEffect(context))) {
+			val applied = try {
+				NapSilenceController.enableNapSilence(context)
+			} catch (denied: SecurityException) {
+				Log.w(TAG, "Timer silence access changed while applying it", denied)
+				false
+			}
+			if (!applied) return false
 		}
 		persistSilencedAlarmIds(
 			context = context,
@@ -72,47 +120,73 @@ object WakeAlarmScheduler {
 		return true
 	}
 
+	@Synchronized
 	fun releaseSilenceForRingingAlarm(context: Context, alarmId: String): Boolean {
 		if (!isSilencedAlarm(context, alarmId)) return false
 		val remainingAlarmIds = silencedAlarmIds(context) - alarmId
-		val temporarilyLifted = shouldUseWakeSilence(context) && NapSilenceController.disableNapSilence(context)
+		val alreadyPaused = isTimerSilencePaused(context)
+		val release = !alreadyPaused && shouldUseWakeSilence(context)
+		if (release && !releaseTimerContribution(context)) return false
 		persistSilencedAlarmIds(
 			context = context,
 			alarmIds = remainingAlarmIds,
-			pausedForAlarmId = if (remainingAlarmIds.isNotEmpty() && temporarilyLifted) alarmId else null,
+			pausedForAlarmId = if (remainingAlarmIds.isNotEmpty() && (release || alreadyPaused)) alarmId else null,
 		)
-		if (temporarilyLifted) refreshDhikrRemindersAfterSilenceRelease(context)
+		if (release) refreshDhikrRemindersAfterSilenceRelease(context)
 		Log.d(TAG, "Silence released for ringing alarm $alarmId")
 		return true
 	}
 
 	/** Lifts the silence for the pending alarms while another alarm rings, until [resumeSilenceUntilNextAlarm]. */
+	@Synchronized
 	fun pauseSilenceForRingingAlarm(context: Context, alarmId: String): Boolean {
 		if (!isSilenceUntilAlarmActive(context) || !shouldUseWakeSilence(context)) return false
-		if (!NapSilenceController.disableNapSilence(context)) return false
+		if (!releaseTimerContribution(context)) return false
 		persistSilencedAlarmIds(context, silencedAlarmIds(context), alarmId)
 		refreshDhikrRemindersAfterSilenceRelease(context)
 		Log.d(TAG, "Silence paused for ringing alarm $alarmId")
 		return true
 	}
 
+	@Synchronized
 	fun removeSilenceUntilAlarm(context: Context, alarmId: String): Boolean {
 		if (!isSilencedAlarm(context, alarmId)) return false
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
 		val remainingAlarmIds = silencedAlarmIds(context) - alarmId
 		val pausedForAlarmId = prefs.getString(KEY_SILENCE_PAUSED_FOR_ALARM_ID, null)
-		val lifted = remainingAlarmIds.isEmpty() && pausedForAlarmId == null &&
-			shouldUseWakeSilence(context) && NapSilenceController.disableNapSilence(context)
+		val release = remainingAlarmIds.isEmpty() && pausedForAlarmId == null && shouldUseWakeSilence(context)
+		// The final ID carries the saved pre-silence state. Keep it for the next refresh if
+		// Android still owns the transition and refuses the release (e.g. DND access was revoked).
+		if (release && !releaseTimerContribution(context)) return false
 		persistSilencedAlarmIds(
 			context = context,
 			alarmIds = remainingAlarmIds,
 			pausedForAlarmId = pausedForAlarmId?.takeIf { remainingAlarmIds.isNotEmpty() },
 		)
-		if (lifted) refreshDhikrRemindersAfterSilenceRelease(context)
+		if (release) refreshDhikrRemindersAfterSilenceRelease(context)
 		Log.d(TAG, "Silence removed for alarm $alarmId")
 		return true
 	}
 
+	private fun releaseTimerContribution(context: Context): Boolean {
+		if (!MosqueSilenceSettings.usesOwnedRules(context)) {
+			val manager = context.getSystemService(NotificationManager::class.java)
+			val filter = manager.currentInterruptionFilter
+			// On the legacy path the timer applied NONE. A subsequently chosen filter belongs
+			// to the user or another app; never replay the timer's old filter over that choice.
+			if (filter != NotificationManager.INTERRUPTION_FILTER_NONE &&
+				filter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN) return true
+			if (!manager.isNotificationPolicyAccessGranted || filter == NotificationManager.INTERRUPTION_FILTER_UNKNOWN) return false
+		}
+		return try {
+			NapSilenceController.disableNapSilence(context)
+		} catch (denied: SecurityException) {
+			Log.w(TAG, "Could not release timer silence; will retry", denied)
+			false
+		}
+	}
+
+	@Synchronized
 	fun resumeSilenceUntilNextAlarm(context: Context): Boolean {
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
 		val pendingAlarmIds = silencedAlarmIds(context)
@@ -136,8 +210,20 @@ object WakeAlarmScheduler {
 
 	fun isSilenceUntilAlarmActive(context: Context): Boolean {
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
-		return silencedAlarmIds(context).isNotEmpty() && !prefs.contains(KEY_SILENCE_PAUSED_FOR_ALARM_ID)
+		return silencedAlarmIds(context).isNotEmpty() && !prefs.contains(KEY_SILENCE_PAUSED_FOR_ALARM_ID) &&
+			timerSilenceIssue(context) == null && wakeSilenceInEffect(context)
 	}
+
+	private fun wakeSilenceInEffect(context: Context): Boolean = if (MosqueSilenceSettings.usesOwnedRules(context)) {
+		SilenceCoordinator.requested(context, SilenceOwner.WAKE)
+	} else {
+		val filter = context.getSystemService(NotificationManager::class.java).currentInterruptionFilter
+		filter == NotificationManager.INTERRUPTION_FILTER_NONE || (filter == NotificationManager.INTERRUPTION_FILTER_UNKNOWN &&
+			context.getSystemService(AudioManager::class.java).ringerMode == AudioManager.RINGER_MODE_SILENT)
+	}
+
+	internal fun isTimerSilencePaused(context: Context): Boolean =
+		context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE).contains(KEY_SILENCE_PAUSED_FOR_ALARM_ID)
 
 	/**
 	 * The first ring still to come of each alarm whose silence-until-alarm is pending, as scheduled: that alarm's
@@ -532,11 +618,23 @@ object WakeAlarmScheduler {
 		return moved
 	}
 
+	@Synchronized
 	fun cancelAll(context: Context) {
 		cancelEventIds(context, scheduledEventIds(context))
 		persistScheduledEventIds(context, emptySet())
+		reconcileTimerSilence(context, emptySet(), onlyAlarmId = null)
 		cancelRepairAlarm(context)
 		WakeAlarmVerifyWorker.cancel(context)
+	}
+
+	/** The receiver releases its own owner as it begins playback. A refresh must leave that handoff alone. */
+	private fun reconcileTimerSilence(context: Context, registeredTimers: Set<String>, onlyAlarmId: String?) {
+		for (alarmId in silencedAlarmIds(context)) {
+			if (onlyAlarmId != null && onlyAlarmId != alarmId) continue
+			if (alarmId in registeredTimers || WakeAlarmDeliveryTracker.pendingForAlarm(alarmId) != null ||
+				WakeAlarmQueueHolder.queue.activeOccurrenceForAlarm(alarmId) != null) continue
+			removeSilenceUntilAlarm(context, alarmId)
+		}
 	}
 
 	fun schedulingSnapshot(
@@ -593,6 +691,7 @@ object WakeAlarmScheduler {
 	}
 
 	@VisibleForTesting
+	@Synchronized
 	internal fun scheduleAllInternal(
 		context: Context,
 		now: Calendar,
@@ -600,16 +699,17 @@ object WakeAlarmScheduler {
 		onlyAlarmId: String? = null,
 	) {
 		val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+		val exactAllowed = canScheduleExactAlarms(alarmManager)
 		val previousEventIds = scheduledEventIds(context)
 		val placeReady = PrefsManager.canUsePlaceForAutomation(context)
 		val eligibleConfigs = configs.filter { placeReady || it.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE }
-		val scopedEventIds = if (onlyAlarmId == null) previousEventIds else {
+		val scopedEventIds = if (onlyAlarmId == null || !exactAllowed) previousEventIds else {
 			previousEventIds.filterTo(mutableSetOf()) { eventId ->
 				wakeAlarmIdFromEventId(eventId) == onlyAlarmId
 			}
 		}
 		val prefs = context.getSharedPreferences(SCHEDULER_PREFS, Context.MODE_PRIVATE)
-		val preservedDueEventIds = if (onlyAlarmId != null) emptySet() else scopedEventIds.filterTo(mutableSetOf()) { eventId ->
+		val preservedDueEventIds = if (onlyAlarmId != null || !exactAllowed) emptySet() else scopedEventIds.filterTo(mutableSetOf()) { eventId ->
 			val alarmId = wakeAlarmIdFromEventId(eventId)
 			val config = eligibleConfigs.firstOrNull { candidate -> candidate.id == alarmId }
 			val triggerAtMillis = prefs.getLong(KEY_TRIGGER_PREFIX + eventId, 0L)
@@ -623,10 +723,20 @@ object WakeAlarmScheduler {
 		val retainedEventIds = previousEventIds - replacedEventIds
 		cancelEventIds(context, replacedEventIds)
 
-		if (!canScheduleExactAlarms(alarmManager)) {
+		fun publishRegistrations(events: Set<String>) {
+			persistScheduledEventIds(context, events)
+			if (silencedAlarmIds(context).isEmpty()) return
+			val timers = if (exactAllowed) eligibleConfigs.filter {
+				it.enabled && it.mainAlarm.mode == WakeMainAlarmMode.FROM_NOW && it.silenceUntilAlarm
+			}.mapTo(mutableSetOf()) { it.id } else emptySet()
+			val armed = events.mapNotNullTo(mutableSetOf(), ::wakeAlarmIdFromEventId)
+			reconcileTimerSilence(context, timers.intersect(armed), onlyAlarmId.takeIf { exactAllowed })
+		}
+
+		if (!exactAllowed) {
 			Log.w(TAG, "Cannot schedule wake alarms because exact alarm permission is missing")
-			persistScheduledEventIds(context, retainedEventIds)
-			if (onlyAlarmId == null && retainedEventIds.isEmpty()) cancelRepairAlarm(context)
+			publishRegistrations(retainedEventIds)
+			cancelRepairAlarm(context)
 			return
 		}
 
@@ -635,7 +745,7 @@ object WakeAlarmScheduler {
 				config.hasFutureWakeTriggers(now.timeInMillis)
 		}
 		if (enabledConfigs.isEmpty()) {
-			persistScheduledEventIds(context, retainedEventIds)
+			publishRegistrations(retainedEventIds)
 			if (onlyAlarmId == null) {
 				val earliestDueAtMillis = preservedDueEventIds
 					.map { eventId -> prefs.getLong(KEY_TRIGGER_PREFIX + eventId, 0L) }
@@ -691,7 +801,7 @@ object WakeAlarmScheduler {
 				if (eventId in preservedDueEventIds) return@let
 				val autoSilenceConflictPrayer = trigger.autoSilenceConflictPrayer(silencePlanner)
 					.takeIf { autoSilenceOverrideAllowed }
-				scheduleTrigger(
+				if (!scheduleTrigger(
 					context = context,
 					alarmManager = alarmManager,
 					trigger = trigger,
@@ -702,7 +812,7 @@ object WakeAlarmScheduler {
 						lastExtraOffset == null || lastExtraOffset == 0
 					},
 					awakeCheckGroupSize = awakeCheckGroupSize,
-				)
+				)) return@let
 				scheduledEventIds += eventId
 				latestTriggerAtMillis = maxOf(latestTriggerAtMillis ?: Long.MIN_VALUE, trigger.triggerAtMillis)
 			}
@@ -714,7 +824,7 @@ object WakeAlarmScheduler {
 				if (eventId in preservedDueEventIds) return@forEach
 				val autoSilenceConflictPrayer = trigger.autoSilenceConflictPrayer(silencePlanner)
 					.takeIf { autoSilenceOverrideAllowed }
-				scheduleTrigger(
+				if (!scheduleTrigger(
 					context = context,
 					alarmManager = alarmManager,
 					trigger = trigger,
@@ -725,14 +835,14 @@ object WakeAlarmScheduler {
 						trigger.subAlarmId?.let { subAlarmId -> subAlarmId in lastExtraIds } == true
 					},
 					awakeCheckGroupSize = awakeCheckGroupSize,
-				)
+				)) return@forEach
 				scheduledEventIds += eventId
 				latestTriggerAtMillis = maxOf(latestTriggerAtMillis ?: Long.MIN_VALUE, trigger.triggerAtMillis)
 			}
 		}
 
 		ringOffsetsEditor.apply()
-		persistScheduledEventIds(context, scheduledEventIds)
+		publishRegistrations(scheduledEventIds)
 		if (onlyAlarmId != null) return
 		val needsRepairForSkippedOccurrences = enabledConfigs.any { config ->
 			config.skipNextOccurrenceAtMillis != null && config.isRepeatingWakeAlarm()
@@ -822,7 +932,7 @@ object WakeAlarmScheduler {
 		autoSilenceOverrideAllowed: Boolean,
 		awakeCheckPlayback: WakePlaybackOptions?,
 		awakeCheckGroupSize: Int,
-	) {
+	): Boolean {
 		val pendingIntent = createPendingIntent(
 			context = context,
 			trigger = trigger,
@@ -848,8 +958,10 @@ object WakeAlarmScheduler {
 				.putLong(KEY_OCCURRENCE_PREFIX + eventId, trigger.occurrenceAtMillis)
 				.putBoolean(KEY_DELIVERED_PREFIX + eventId, false)
 				.apply()
+			return true
 		} catch (e: SecurityException) {
 			Log.w(TAG, "Exact alarm denied for $eventId; skipping", e)
+			return false
 		}
 	}
 

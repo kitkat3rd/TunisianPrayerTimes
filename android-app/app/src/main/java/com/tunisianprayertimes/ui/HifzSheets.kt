@@ -1,14 +1,7 @@
 package com.tunisianprayertimes.ui
 
-import android.Manifest
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.SystemClock
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -58,9 +51,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.quran.QuranCatalog
 import com.tunisianprayertimes.quran.QuranGoTo
@@ -119,6 +109,7 @@ import com.tunisianprayertimes.quran.quranVerseLabel
 import com.tunisianprayertimes.quran.quranVerseSentence
 import com.tunisianprayertimes.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.LocalTime
@@ -2083,45 +2074,29 @@ private fun HifzTimeDialog(minute: Int, onPick: (Int) -> Unit, onRemove: (() -> 
 @Composable
 internal fun HifzNotificationsWarning(channels: List<String>, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var check by remember { mutableIntStateOf(0) }
-    val problem = remember(channels, check) { HifzReminder.notificationProblem(context, channels) }
-    LifecycleResumeEffect(Unit) {
-        check++
-        onPauseOrDispose { }
+    val scope = rememberCoroutineScope()
+    val access = rememberReminderNotificationAccess(channels) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { HifzReminder.refresh(context.applicationContext) }
+                .onFailure { Log.w("HifzReminder", "Could not refresh after notification access changed", it) }
+        }
     }
-    var askedAt by remember { mutableLongStateOf(0L) }
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        check++
-        // Once refused for good, the system answers at once without asking: the settings are then the only way.
-        if (!granted && SystemClock.elapsedRealtime() - askedAt < 500) openHifzNotificationSettings(context, channels)
+    val problem = when (access.action) {
+        ReminderNotificationAction.None -> return
+        ReminderNotificationAction.Request, ReminderNotificationAction.AppSettings -> "إشعارات التطبيق متوقّفة."
+        ReminderNotificationAction.GroupSettings -> "مجموعة إشعارات المراجعة متوقّفة في إعدادات الهاتف."
+        ReminderNotificationAction.ChannelSettings -> "إشعارات «المراجعة» متوقّفة في إعدادات الهاتف."
     }
-    if (problem == null) return
     Row(
         modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.errorContainer)
             .padding(start = 12.dp, end = 4.dp).testTag("hifz_notifications_off"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(problem, Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onErrorContainer)
-        TextButton(onClick = {
-            if (Build.VERSION.SDK_INT >= 33 &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-            ) {
-                askedAt = SystemClock.elapsedRealtime()
-                ask.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else openHifzNotificationSettings(context, channels)
-        }) { Text("اسمح") }
+        TextButton(onClick = access.perform) {
+            Text(if (access.action == ReminderNotificationAction.Request) "السماح بالإشعارات" else "إعدادات الإشعارات")
+        }
     }
-}
-
-/** The app's notification settings, or straight the «المراجعة» channel among [channels] the reader turned off. */
-internal fun openHifzNotificationSettings(context: Context, channels: List<String>) {
-    val channel = HifzReminder.blockedChannel(context, channels)
-    val intent = if (NotificationManagerCompat.from(context).areNotificationsEnabled() && channel != null) {
-        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).putExtra(Settings.EXTRA_CHANNEL_ID, channel)
-    } else {
-        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-    }
-    runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 /** A recitation a hifz sheet shows at its bottom, since the sheet hides the player. */

@@ -37,7 +37,6 @@ class TravelPlaceWorker(context: Context, params: WorkerParameters) : CoroutineW
     companion object {
         private const val TAG = "TravelPlace"
         private const val WORK_NAME = "travel_place_after_zone_change"
-        private const val CHANNEL = "location"
         private const val NOTIFICATION_ID = 7_302
         private const val FAST_FIX_MS = 3_000L
 
@@ -71,9 +70,9 @@ class TravelPlaceWorker(context: Context, params: WorkerParameters) : CoroutineW
         private fun notifyChoosePlace(context: Context) {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, context.getString(R.string.location_channel_name), NotificationManager.IMPORTANCE_DEFAULT),
+                NotificationChannel(PlaceResolution.LOCATION_CHANNEL, context.getString(R.string.location_channel_name), NotificationManager.IMPORTANCE_DEFAULT),
             )
-            val notification = NotificationCompat.Builder(context, CHANNEL)
+            val notification = NotificationCompat.Builder(context, PlaceResolution.LOCATION_CHANNEL)
                 .setSmallIcon(R.drawable.mosque_silhouette)
                 .setContentTitle(context.getString(R.string.travel_zone_changed_title))
                 .setContentText(context.getString(R.string.travel_zone_changed_text))

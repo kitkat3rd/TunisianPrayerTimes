@@ -3,8 +3,12 @@ package com.tunisianprayertimes.mosque
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -31,7 +36,9 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.tunisianprayertimes.DelegationLocator
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.locationPermissionState
 import com.tunisianprayertimes.mosque.presence.AdaptiveVisitDetector
 import com.tunisianprayertimes.mosque.presence.PresenceFix
 import com.tunisianprayertimes.mosque.presence.SilenceArea
@@ -67,8 +74,8 @@ internal suspend fun testDraftArrival(area: SilenceArea, readings: Flow<Presence
 @SuppressLint("MissingPermission")
 private fun editorReadings(context: Context): Flow<PresenceFix> = callbackFlow {
     val client = LocationServices.getFusedLocationProviderClient(context)
-    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
-        .setMinUpdateIntervalMillis(2_000L).setMaxUpdateAgeMillis(0)
+    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, ARRIVAL_FIX_INTERVAL_MILLIS)
+        .setMinUpdateIntervalMillis(ARRIVAL_FIX_INTERVAL_MILLIS).setMaxUpdateAgeMillis(0)
         .setMaxUpdateDelayMillis(0).setDurationMillis(TEST_MILLIS).build()
     val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -82,35 +89,61 @@ private fun editorReadings(context: Context): Flow<PresenceFix> = callbackFlow {
 }
 
 @Composable
-internal fun MosqueArrivalTestDialog(polygons: List<SilencePolygon>, stricter: Boolean, onDismiss: () -> Unit) {
+internal fun MosqueArrivalTestDialog(
+    polygons: List<SilencePolygon>,
+    stricter: Boolean,
+    readings: (Context) -> Flow<PresenceFix> = ::editorReadings,
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
+    val activity = LocalActivity.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var granted by remember { mutableStateOf(hasMapLocation(context)) }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        granted = hasMapLocation(context)
+    var access by remember { mutableStateOf(locationPermissionState(context)) }
+    var asked by rememberSaveable { mutableStateOf(false) }
+    var awaitingAndroid by rememberSaveable { mutableStateOf(false) }
+    fun refreshAccess() {
+        access = locationPermissionState(context)
+        if (access.hasFine) asked = false
     }
-    var attempt by remember { mutableIntStateOf(0) }
-    var reading by remember(attempt) { mutableStateOf<EditorTestReading?>(null) }
-    var status by remember(attempt) { mutableStateOf(TestStatus.RUNNING) }
-    var started by remember(attempt) { mutableLongStateOf(0L) }
-    var secondsLeft by remember(attempt) { mutableIntStateOf(120) }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        awaitingAndroid = false
+        refreshAccess()
+    }
+    val settings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        awaitingAndroid = false
+        refreshAccess()
+    }
+    val granted = access.hasFine
+    val openSettings = asked && activity?.shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION) == false
+    var attempt by rememberSaveable(granted) { mutableIntStateOf(0) }
+    var reading by remember(attempt, granted) { mutableStateOf<EditorTestReading?>(null) }
+    var status by rememberSaveable(attempt, granted) { mutableStateOf(TestStatus.RUNNING) }
+    var started by rememberSaveable(attempt, granted) { mutableLongStateOf(0L) }
+    var confirmedArrival by rememberSaveable(attempt, granted) { mutableStateOf<AdaptiveVisitDetector.Arrival?>(null) }
+    var secondsLeft by remember(attempt, granted) { mutableIntStateOf(120) }
 
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP, onEvent = onDismiss)
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { refreshAccess(); awaitingAndroid = false }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (!awaitingAndroid && activity?.isChangingConfigurations != true) onDismiss()
+    }
     LaunchedEffect(attempt, granted, polygons, stricter, lifecycle) {
         if (!granted) return@LaunchedEffect
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (status != TestStatus.RUNNING) return@repeatOnLifecycle
             val area = SilenceArea("editor-preview", 0, polygons, requireStrongerEvidence = stricter)
-            status = TestStatus.RUNNING
-            started = SystemClock.elapsedRealtime()
+            val now = SystemClock.elapsedRealtime()
+            if (started == 0L) started = now
+            val remaining = if (now >= started) TEST_MILLIS - (now - started) else 0L
             try {
-                val found = withTimeoutOrNull(TEST_MILLIS) {
-                    testDraftArrival(area, editorReadings(context), started, SystemClock::elapsedRealtime) { reading = it }
+                val found = withTimeoutOrNull(remaining) {
+                    testDraftArrival(area, readings(context), started, SystemClock::elapsedRealtime) { reading = it }
                 }
+                if (found == true) confirmedArrival = reading?.arrival
                 status = if (found == true) TestStatus.CONFIRMED else TestStatus.TIMED_OUT
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                granted = hasMapLocation(context)
+                refreshAccess()
                 status = TestStatus.FAILED
             }
         }
@@ -124,11 +157,13 @@ internal fun MosqueArrivalTestDialog(polygons: List<SilencePolygon>, stricter: B
     }
     val last = reading
     val message = when {
+        !granted && access.hasCoarse -> R.string.mosque_test_approximate
         !granted -> R.string.mosque_test_permission
         status == TestStatus.FAILED -> R.string.mosque_test_failed
         status == TestStatus.TIMED_OUT && last == null -> R.string.mosque_test_no_readings
         status == TestStatus.TIMED_OUT -> R.string.mosque_test_no_arrival
-        status == TestStatus.CONFIRMED -> when (last?.arrival) {
+        status == TestStatus.CONFIRMED -> when (confirmedArrival) {
+            AdaptiveVisitDetector.Arrival.WALKED_IN -> R.string.mosque_test_walked_in
             AdaptiveVisitDetector.Arrival.INSIDE -> R.string.mosque_test_inside_confirmed
             AdaptiveVisitDetector.Arrival.EARLIER_PRECISE -> R.string.mosque_test_drift_confirmed
             else -> R.string.mosque_test_near_confirmed
@@ -159,9 +194,15 @@ internal fun MosqueArrivalTestDialog(polygons: List<SilencePolygon>, stricter: B
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.mosque_test_close)) } },
         dismissButton = {
-            if (!granted) TextButton(onClick = {
-                permission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-            }) { Text(stringResource(R.string.mosque_test_allow_location)) }
+            if (!granted) TextButton(enabled = !awaitingAndroid, onClick = {
+                awaitingAndroid = true
+                if (openSettings) {
+                    settings.launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
+                } else {
+                    asked = true
+                    permission.launch(DelegationLocator.requestedPermissions)
+                }
+            }) { Text(stringResource(if (openSettings) R.string.prayer_open_app_settings else R.string.mosque_allow_precise)) }
             else if (status != TestStatus.RUNNING) TextButton(onClick = { attempt++ }) {
                 Text(stringResource(R.string.mosque_test_retry))
             }

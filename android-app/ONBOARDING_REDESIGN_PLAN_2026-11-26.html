@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>From first launch to the next prayer · Android onboarding plan</title>
+  <title>Setting up automatic silencing at prayer time · Android onboarding plan</title>
   <style>
     :root { color-scheme: light; --ink: #1d352c; --muted: #4c6156; --green: #165341; --paper: #faf9f4; --rule: #cdd9ce; --accent: #87632e; }
     * { box-sizing: border-box; }
@@ -46,28 +46,28 @@
 <body>
   <header>
     <p class="meta">TunisianPrayerTimes · Android phone · 26 November 2026</p>
-    <h1>From first launch to the next prayer</h1>
-    <p class="lead">Open with one question about place. A person who chooses a city should land directly on the prayer timetable, able to name their next prayer and its time. A person who wants their phone to go quiet should be able to set that up from the same prayer screen.</p>
-    <nav aria-label="Plan sections"><a href="#research">Research</a><a href="#audit">Current experience</a><a href="#walkthrough">Try the design</a><a href="#permissions">Feature setup</a><a href="#delivery">Implementation</a><a href="#validation">Validation</a></nav>
+    <h1>Setting up automatic silencing at prayer time</h1>
+    <p class="lead">A quiet phone during prayer is the core purpose of the app. After choosing a place, people can configure time-only or mosque-aware silencing, or continue to their timetable with silence off.</p>
+    <nav aria-label="Plan sections"><a href="#research">Research</a><a href="#audit">Original experience</a><a href="#walkthrough">Try the design</a><a href="#permissions">Feature setup</a><a href="#delivery">Implementation</a><a href="#validation">Validation</a></nav>
   </header>
   <main>
     <section id="research" aria-labelledby="research-title">
       <h2 id="research-title">What the research supports</h2>
       <div class="evidence-grid">
-        <article><h3>Let people do the first task</h3><p>Nielsen Norman Group tested four iPhone apps with 70 people. The group that read the tutorial cards completed 91% of tasks successfully. The group that skipped them completed 94%. The difference was statistically insignificant, and the tutorial group rated the tasks harder. These were simple tasks in other apps. For this app, test giving people the city picker immediately. <a href="https://www.nngroup.com/articles/mobile-tutorials/">Read the study</a>.</p></article>
+        <article><h3>Let people do the first task</h3><p>Nielsen Norman Group tested four iPhone apps with 70 people. The group that read the tutorial cards completed 91% of tasks successfully. The group that skipped them completed 94%. The difference was statistically insignificant, and the tutorial group rated the tasks harder. These were simple tasks in other apps. For this app, give people the city picker and an actionable choice of silencing modes. Keep the detailed editing lesson in the prayer window editor. <a href="https://www.nngroup.com/articles/mobile-tutorials/">Read the study</a>.</p></article>
         <article><h3>Give the permission a purpose</h3><p>A 30-day field study of 1,719 Android users in ten countries and regions found that people were over twice as likely to deny an unexpected request. “Use my location once” provides a reason for the next prompt. Choosing a city by name provides an equally complete route. <a href="https://www.usenix.org/conference/usenixsecurity21/presentation/cao-weicheng">Cao et al., USENIX Security</a>.</p></article>
         <article><h3>Teach at the point of difficulty</h3><p>A movable silence boundary is unfamiliar, and useful to someone editing a real prayer. Put a short hint alongside the boundary, give the start and end explicit edit actions, and let people reopen the explanation. The same principle places Friday adjustments on Friday’s row. <a href="https://www.nngroup.com/articles/onboarding-tutorials/">NN/g on contextual help</a>.</p></article>
         <article><h3>Design the way back</h3><p>Android recommends requesting access after someone chooses the feature, keeping other tasks available after denial, and checking special access when they return from Settings. A person who returns empty-handed should find their city, timetable and selected feature exactly where they left them. <a href="https://developer.android.com/training/permissions/requesting">Android runtime permissions</a> · <a href="https://developer.android.com/training/permissions/requesting-special">Special access</a>.</p></article>
       </div>
     </section>
     <section id="audit" aria-labelledby="audit-title">
-      <h2 id="audit-title">Where the current flow gets in the way</h2>
+      <h2 id="audit-title">What the original nine-screen tour taught us</h2>
       <p class="path">Welcome → location → silence period → dragging boundaries → start and end rules → Friday → wake alarm → permissions → ready</p>
       <ul class="facts">
-        <li><strong>The manual choice does not open a picker.</strong> The GPS button can save a place immediately. “Choose a city” sets a flag for later. The underlying prayer screen can already have consumed its one-time picker request by the time the tutorial finishes. Someone who already knows their city still has to go through the silence and alarm lessons before selecting it. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/OnboardingScreen.kt">Wizard lines 136–178 and 272–312</a> · <a href="app/src/main/java/com/tunisianprayertimes/ui/MainScreen.kt">Picker handoff, line 462</a>.</span></li>
-        <li><strong>The normal finish requires four system capabilities.</strong> Next stays disabled until Do Not Disturb access, exact alarms where applicable, exemption from battery optimization, and phone-state permission all pass. The last one supports feedback after missed calls during silence. Android Back can leave the activity without recording completion. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/OnboardingScreen.kt">Gate, lines 209–223 and 348–368</a> · <a href="app/src/main/java/com/tunisianprayertimes/OnboardingActivity.kt">Completion, lines 31–36</a>.</span></li>
-        <li><strong>The first prayer screen repeats the pressure.</strong> Missing grants drive two banners between the next-prayer card and the timetable. The hero can also show a missing-DND notice. Outside Tunisia, some countries open a calculation chooser automatically. All three need an explicit first-run treatment. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/MainScreen.kt">Home, lines 465–475, 937–938 and 1115–1160</a> · <a href="app/src/main/java/com/tunisianprayertimes/ui/PhoneSilenceHeroState.kt">Hero notice, line 34</a>.</span></li>
-        <li><strong>Much of the replacement already exists.</strong> The app has a searchable local catalogue, manual selection abroad, a provisional-place banner and a next-prayer card. The prayer repository already selects the Tunisian INM calculation or the applicable calculation abroad. Preserve the Arabic explanation of the source and the app’s independent status in the existing method information. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/LocalityPickerSheet.kt">City picker</a> · <a href="app/src/main/java/com/tunisianprayertimes/PrayerTimesRepository.kt">Prayer repository, lines 23–27 and 90–109</a> · <a href="app/src/main/res/values/strings.xml">Current welcome, line 180</a>.</span></li>
+        <li><strong>Manual selection came too late.</strong> “Choose a city” deferred the picker until after the silence and alarm lessons. The new place screen opens the catalogue on tap. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/OnboardingScreen.kt">Place selection</a>.</span></li>
+        <li><strong>Four grants stood between the user and the timetable.</strong> The old finish required Do Not Disturb access, exact alarm access where applicable, a battery exemption and phone-state permission. The replacement checks the prerequisites of the chosen silencing mode. People can choose “Continue without automatic silencing” to open the timetable. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/FirstRunSilenceScreen.kt">Mode choice</a> · <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueReadiness.kt">Readiness checks</a>.</span></li>
+        <li><strong>The original timetable repeated setup warnings.</strong> Missing grants triggered banners between the next prayer and the timetable. The Prayer screen now relates a warning to the enabled feature that needs attention. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/MainScreen.kt">Prayer screen</a>.</span></li>
+        <li><strong>Reuse familiar controls.</strong> The searchable catalogue, city names abroad, provisional-place banner and timetable are existing app components. The prayer repository supplies the Tunisian INM calculation or the applicable calculation abroad. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/ui/LocalityPickerSheet.kt">City picker</a> · <a href="app/src/main/java/com/tunisianprayertimes/PrayerTimesRepository.kt">Prayer repository</a>.</span></li>
       </ul>
     </section>
 <section id="walkthrough" aria-labelledby="walkthrough-title">
@@ -100,6 +100,12 @@
     #walkthrough .wf-device [hidden]{display:none!important}
     #walkthrough .wf-screen .wf-result{display:flex;align-items:center;justify-content:space-between;gap:.5rem;text-align:start}
     #walkthrough .wf-result small{color:#496454;font-size:.85rem}
+    #walkthrough .wf-modes,#walkthrough .wf-requirements{display:grid;gap:.35rem;min-width:0;margin:1rem 0;padding:.55rem .7rem;border:1px solid #b5c6b7;border-radius:.6rem}
+    #walkthrough .wf-modes label,#walkthrough .wf-requirements label{display:block;padding:.45rem .15rem;min-height:48px;cursor:pointer}
+    #walkthrough .wf-modes label small{display:block;margin-inline-start:1.65rem;color:#43574c}
+    #walkthrough .wf-modes input,#walkthrough .wf-requirements input{accent-color:#1a5140}
+    #walkthrough button.wf-action{font-size:inherit;cursor:pointer}
+    #walkthrough button.wf-action:disabled{color:#41574c;background:#e6ece4;border-color:#b5c6b7;cursor:default}
     #walkthrough .wf-sim{padding:.65rem .85rem;background:#fff6df;border:1px dashed #ac8e50;border-radius:.65rem}
     #walkthrough .wf-sim small{font:600 .85rem/1.45 "Segoe UI",sans-serif;color:#684f19}
     #walkthrough .wf-place{font:600 1rem/1.5 TptFlowArabic,"Segoe UI",sans-serif;color:#405e4d;margin-block:0 .35rem}
@@ -118,13 +124,13 @@
     @media(max-width:730px){#walkthrough .wf-grid{grid-template-columns:minmax(0,1fr);gap:.75rem}#walkthrough .wf-context{margin-block:.8rem}}
     @media print{#walkthrough .wf-restart{display:none}#walkthrough .wf-grid{display:block}#walkthrough .wf-device{margin:0;box-shadow:none;break-inside:avoid}#walkthrough:not([data-interactive]) .wf-screen:not(:first-child){display:none}}
   </style>
-  <h2 id="walkthrough-title">Try the proposed first run</h2>
+  <h2 id="walkthrough-title">Try the first run</h2>
   <div class="wf-grid">
     <div class="wf-notes">
-      <p>Choose a city, try a one-time location lookup, or browse with a suggested city. The location controls simulate the device’s response. All choices operate inside this example.</p>
+      <p>Choose a city or defer it, then try setting up automatic silencing or opening the timetable. The walkthrough simulates location, Android access and activation entirely on this page.</p>
       <div class="wf-context">
         <strong id="wf-state-title">First opening</strong>
-        <p id="wf-state-note">The first decision is which place to use for prayer times. Each action leads somewhere immediately.</p>
+        <p id="wf-state-note">The place sets the times used by both the timetable and automatic silencing.</p>
       </div>
       <p class="wf-caption">The example uses Tunis at 11:50 on Wednesday, 26 November 2025. The timetable comes from the project’s <a href="../test-data/inm-prayer-times/meteo-2020-2025-sample.csv">INM reference data</a>.</p>
       <a class="wf-restart" href="#wf-start" data-wf-go="start">Restart walkthrough</a>
@@ -133,20 +139,20 @@
       <div class="wf-device-inner">
         <div class="wf-device-header"><span>مواقيت الصلاة</span><bdi dir="ltr">11:50</bdi></div>
         <div class="wf-screen" id="wf-start">
-          <h3 tabindex="-1">مواقيت الصلاة في منطقتك</h3>
-          <p>اختر منطقتك لمعرفة وقت الصلاة القادمة.</p>
+          <h3 tabindex="-1">إسكات الهاتف وقت الصلاة</h3>
+          <p>اختر مدينتك أو حيّك لعرض مواقيت الصلاة، ثم اختر متى تريد أن يصمت هاتفك.</p>
           <div class="wf-actions">
             <a class="wf-action wf-primary" href="#wf-picker" data-wf-go="picker">اختيار مدينة</a>
             <a class="wf-action" href="#wf-location" data-wf-go="location">استخدام موقعي مرة واحدة</a>
-            <a class="wf-action wf-text" href="#wf-preview" data-wf-go="preview">التصفّح الآن</a>
+            <a class="wf-action wf-text" href="#wf-silence" data-wf-go="defer-place">تحديد منطقتي لاحقًا</a>
           </div>
         </div>
         <div class="wf-screen" id="wf-picker">
           <h3 tabindex="-1">اختيار مدينة</h3>
           <p>يعرض هذا المثال مدينة تونس فقط.</p>
           <div class="wf-actions">
-            <a class="wf-action wf-result" href="#wf-today" data-wf-go="today"><strong>تونس</strong><small>ولاية تونس</small></a>
-            <a class="wf-action wf-text" href="#wf-start" data-wf-go="start">رجوع</a>
+            <a class="wf-action wf-result" href="#wf-silence" data-wf-go="pick"><strong>تونس</strong><small>ولاية تونس</small></a>
+            <a class="wf-action wf-text" href="#wf-start" data-wf-go="picker-back">رجوع</a>
           </div>
         </div>
         <div class="wf-screen" id="wf-location">
@@ -162,10 +168,10 @@
           </div>
         </div>
         <div class="wf-screen" id="wf-match">
-          <h3 tabindex="-1">هل أنت في تونس؟</h3>
+          <h3 tabindex="-1">هل هذه منطقتك؟</h3>
           <p>المنطقة المقترحة بحسب موقعك هي تونس.</p>
           <div class="wf-actions">
-            <a class="wf-action wf-primary" href="#wf-today" data-wf-go="today">عرض مواقيت تونس</a>
+            <a class="wf-action wf-primary" href="#wf-silence" data-wf-go="confirm-match">تأكيد تونس والمتابعة</a>
             <a class="wf-action" href="#wf-picker" data-wf-go="picker">اختيار مدينة أخرى</a>
           </div>
         </div>
@@ -174,7 +180,7 @@
           <p>يمكنك عرض المواقيت باختيار مدينتك من القائمة.</p>
           <div class="wf-actions">
             <a class="wf-action wf-primary" href="#wf-picker" data-wf-go="picker">اختيار مدينة</a>
-            <a class="wf-action wf-text" href="#wf-preview" data-wf-go="preview">التصفّح الآن</a>
+            <a class="wf-action wf-text" href="#wf-silence" data-wf-go="defer-place">تحديد منطقتي لاحقًا</a>
           </div>
         </div>
         <div class="wf-screen" id="wf-unavailable">
@@ -183,24 +189,89 @@
           <div class="wf-actions">
             <a class="wf-action wf-primary" href="#wf-picker" data-wf-go="picker">اختيار مدينة</a>
             <a class="wf-action" href="#wf-location" data-wf-go="location">المحاولة مجددًا</a>
-            <a class="wf-action wf-text" href="#wf-preview" data-wf-go="preview">التصفّح الآن</a>
+            <a class="wf-action wf-text" href="#wf-silence" data-wf-go="defer-place">تحديد منطقتي لاحقًا</a>
+          </div>
+        </div>
+        <div class="wf-screen" id="wf-silence">
+          <h3 tabindex="-1">الإسكات وقت الصلاة</h3>
+          <p>لتغيير وضع صوت الهاتف وقت الصلاة، يحتاج التطبيق إلى إذن «عدم الإزعاج». اختر متى تريد الإسكات أو تابع بدونه.</p>
+          <fieldset class="wf-modes">
+            <legend>اختر الطريقة.</legend>
+            <label><input type="radio" name="wf-mode" value="time" checked> حسب الوقت فقط<small>يسكت هاتفك خلال فترات الصلاة المفعّلة أينما كنت.</small></label>
+            <label><input type="radio" name="wf-mode" value="mosque"> حسب الوقت وموقع المسجد<small>يسكت هاتفك خلال فترة الصلاة إذا كنت في مسجد محفوظ أو وصلت وتوقّفت عنده. يحتاج إلى الموقع في الخلفية، وقد يتّبع الجدول إذا تعذّر تحديد موقعك.</small></label>
+          </fieldset>
+          <p>يمكنك تعديل فترة كل صلاة من جدول المواقيت.</p>
+          <div class="wf-actions">
+            <a class="wf-action wf-primary" href="#wf-dnd" data-wf-go="setup">إعداد الإسكات</a>
+            <a class="wf-action wf-text" href="#wf-today" data-wf-go="decline">المتابعة بدون إسكات تلقائي</a>
+          </div>
+          <noscript><a href="#wf-mosque-setup">متطلبات الإسكات حسب الوقت وموقع المسجد</a></noscript>
+        </div>
+        <div class="wf-screen" id="wf-confirm-place">
+          <h3 tabindex="-1">تأكيد الموقع</h3>
+          <p>اختر مدينتك أولًا ليُحدَّد الموعد بحسب مواقيت الصلاة فيها.</p>
+          <div class="wf-actions">
+            <a class="wf-action wf-primary" href="#wf-dnd" data-wf-go="confirm-for-setup">تأكيد تونس</a>
+            <a class="wf-action" href="#wf-picker" data-wf-go="picker">اختيار مدينة</a>
+            <a class="wf-action wf-text" href="#wf-silence" data-wf-go="silence">العودة إلى خيارات الإسكات</a>
+          </div>
+        </div>
+        <div class="wf-screen" id="wf-dnd">
+          <h3 tabindex="-1">إذن «عدم الإزعاج»</h3>
+          <div class="wf-sim">
+            <small lang="en" dir="ltr">Simulate returning from Android Settings</small>
+            <div class="wf-actions">
+              <a class="wf-action wf-primary" href="#wf-time-setup" data-wf-go="grant-dnd">السماح والعودة إلى التطبيق</a>
+              <a class="wf-action" href="#wf-time-setup" data-wf-go="leave-dnd">العودة دون منح الإذن</a>
+            </div>
+          </div>
+        </div>
+        <div class="wf-screen" id="wf-time-setup">
+          <h3 tabindex="-1">حسب الوقت فقط</h3>
+          <a class="wf-action" href="#wf-dnd" data-wf-go="dnd">إعدادات عدم الإزعاج</a>
+          <fieldset class="wf-requirements wf-sim">
+            <legend lang="en" dir="ltr">Simulate completed setup on Android 12 or later</legend>
+            <label><input type="checkbox" data-wf-exact> السماح بالمنبّهات الدقيقة</label>
+          </fieldset>
+          <div class="wf-actions">
+            <button type="button" class="wf-action wf-primary" data-wf-activate disabled>تفعيل الإسكات التلقائي</button>
+            <a class="wf-action wf-text" href="#wf-today" data-wf-go="decline">المتابعة بدون إسكات تلقائي</a>
+            <a class="wf-action wf-text" href="#wf-silence" data-wf-go="silence">العودة إلى خيارات الإسكات</a>
+          </div>
+        </div>
+        <div class="wf-screen" id="wf-mosque-setup">
+          <h3 tabindex="-1">حسب الوقت وموقع المسجد</h3>
+          <a class="wf-action" href="#wf-dnd" data-wf-go="dnd">إعدادات عدم الإزعاج</a>
+          <fieldset class="wf-requirements wf-sim">
+            <legend lang="en" dir="ltr">Simulate completed setup on a supported phone</legend>
+            <label><input type="checkbox" data-wf-exact> السماح بالمنبّهات الدقيقة</label>
+            <label><input type="checkbox"> إعداد قاعدة الإسكات الخاصة بالمسجد</label>
+            <label><input type="checkbox"> الموافقة على استخدام الموقع في الخلفية والسماح بالموقع الدقيق ثم الوصول إليه طوال الوقت</label>
+            <label><input type="checkbox"> تفعيل إشعارات التحقّق من موقع المسجد</label>
+            <label><input type="checkbox"> حفظ حدود مسجد وتفعيلها</label>
+          </fieldset>
+          <div class="wf-actions">
+            <button type="button" class="wf-action wf-primary" data-wf-activate disabled>تفعيل الإسكات التلقائي</button>
+            <a class="wf-action wf-text" href="#wf-today" data-wf-go="decline">المتابعة بدون إسكات تلقائي</a>
+            <a class="wf-action wf-text" href="#wf-silence" data-wf-go="silence">العودة إلى خيارات الإسكات</a>
           </div>
         </div>
         <div class="wf-screen" id="wf-preview">
           <h3 tabindex="-1">مواقيت اليوم في تونس</h3>
           <p class="wf-place">الأربعاء 26 نوفمبر 2025</p>
-          <div class="wf-alert"><strong>مدينة مقترحة</strong><p>نعرض مواقيت تونس مؤقتًا.</p><a href="#wf-today" data-wf-go="today">تأكيد تونس</a><a href="#wf-picker" data-wf-go="picker">تغيير المدينة</a></div>
+          <div class="wf-alert"><strong>مدينة مقترحة</strong><p>نعرض مواقيت تونس مؤقتًا.</p><a href="#wf-today" data-wf-go="confirm-preview">تأكيد تونس</a><a href="#wf-picker" data-wf-go="picker">تغيير المدينة</a></div>
           <div class="wf-hero"><small>الصلاة القادمة</small><div class="wf-prayer"><span>الظهر</span><bdi dir="ltr">12:13</bdi></div></div>
           <dl class="wf-times" aria-label="مواقيت اليوم"><div><dt>الفجر</dt><dd><bdi dir="ltr">05:37</bdi></dd></div><div><dt>الشروق</dt><dd><bdi dir="ltr">07:08</bdi></dd></div><div class="wf-next"><dt>الظهر</dt><dd><bdi dir="ltr">12:13</bdi></dd></div><div><dt>العصر</dt><dd><bdi dir="ltr">14:45</bdi></dd></div><div><dt>المغرب</dt><dd><bdi dir="ltr">17:07</bdi></dd></div><div><dt>العشاء</dt><dd><bdi dir="ltr">18:36</bdi></dd></div></dl>
           
         </div>
         <div class="wf-screen" id="wf-today">
           <h3 tabindex="-1">مواقيت اليوم في تونس</h3>
+          <p id="wf-activated" hidden></p>
           <p class="wf-place">الأربعاء 26 نوفمبر 2025</p>
           
           <div class="wf-hero"><small>الصلاة القادمة</small><div class="wf-prayer"><span>الظهر</span><bdi dir="ltr">12:13</bdi></div></div>
           <dl class="wf-times" aria-label="مواقيت اليوم"><div><dt>الفجر</dt><dd><bdi dir="ltr">05:37</bdi></dd></div><div><dt>الشروق</dt><dd><bdi dir="ltr">07:08</bdi></dd></div><div class="wf-next"><dt>الظهر</dt><dd><bdi dir="ltr">12:13</bdi></dd></div><div><dt>العصر</dt><dd><bdi dir="ltr">14:45</bdi></dd></div><div><dt>المغرب</dt><dd><bdi dir="ltr">17:07</bdi></dd></div><div><dt>العشاء</dt><dd><bdi dir="ltr">18:36</bdi></dd></div></dl>
-          <div class="wf-actions"><a class="wf-action" href="#adhan-setup">إعداد الأذان</a><a class="wf-action" href="#silence-setup">إعداد الإسكات التلقائي</a><a class="wf-action wf-text" href="#wf-picker" data-wf-go="picker">تغيير المدينة</a></div>
+          <div class="wf-actions"><a class="wf-action" href="#adhan-setup">إعداد الأذان</a><a class="wf-action wf-text" href="#wf-picker" data-wf-go="picker">تغيير المدينة</a></div>
         </div>
       </div>
     </div>
@@ -210,31 +281,94 @@
     const root = document.getElementById('walkthrough');
     const screens = [...root.querySelectorAll('.wf-screen')];
     const descriptions = {
-      start: ['First opening', 'The first decision is which place to use for prayer times. Each action leads somewhere immediately.'],
-      picker: ['Manual selection', 'The Android version would open its existing searchable picker here with Tunisian localities and cities abroad. Choosing a row confirms the place.'],
+      start: ['First opening', 'The place sets the times used by both the timetable and automatic silencing.'],
+      picker: ['Manual selection', 'The Android picker searches Tunisian localities and cities abroad. Selecting a row confirms the place.'],
       location: ['One-time location', 'Try a match, refusal, or unavailable result. A one-time lookup leaves travel tracking off.'],
-      match: ['Detected locality', 'The user can verify the suggested locality before adopting its timetable, or choose another city.'],
-      denied: ['Permission declined', 'City selection stays within reach. The app waits for another deliberate action before asking for location again.'],
-      unavailable: ['No location fix', 'A failed lookup leaves the manual picker available, alongside an explicit retry.'],
-      preview: ['Suggested place', 'The timetable names the suggested city and keeps confirmation visible. It counts as a preview until the user confirms or changes the city.'],
-      today: ['Confirmed timetable', 'A schedule is visible for the selected locality. The optional actions below the times open adhan or automatic silence settings.']
+      match: ['Detected locality', 'Confirm the suggested locality or choose another city.'],
+      denied: ['Permission declined', 'Manual search and deferring the place are both available.'],
+      unavailable: ['No location fix', 'Use manual search, retry the lookup, or defer the place.'],
+      silence: ['Choose a silencing mode', 'Set up either mode to request access, or continue with silencing off. You can enable it later in Prayer settings.'],
+      'confirm-place': ['Confirm a place for silencing', 'Scheduling requires a confirmed place. Confirm the example city, choose a city, or return to the silencing choice.'],
+      dnd: ['Android Do Not Disturb access', 'Both modes use this grant. Returning without access takes you to the checklist, where you can retry, change mode or opt out.'],
+      'time-setup': ['Time-only setup', 'Grant any missing access, then choose Activate. You can also return to the choices or continue without automatic silencing.'],
+      'mosque-setup': ['Mosque-aware setup', 'Complete each example prerequisite. Android also checks device services, background restrictions and area-store readiness. Activation is a separate final action.'],
+      preview: ['Suggested place', 'The suggested city stays visible until confirmed or changed.'],
+      today: ['Confirmed timetable', 'Prayer settings remain available to change silencing, prayer windows and adhan.']
     };
+    const chosenSetup = () => root.querySelector('input[name="wf-mode"]:checked').value + '-setup';
+    let dndGranted = false;
+    const setupEntry = () => dndGranted ? chosenSetup() : 'dnd';
+    let confirmed = true;
+    let current = 'start';
+    let pickerOrigin = 'start';
+    let activeMode = '';
     function show(key, focus) {
       if (!Object.prototype.hasOwnProperty.call(descriptions, key)) return;
+      current = key;
       const panel = document.getElementById('wf-' + key);
       screens.forEach(screen => { screen.hidden = screen !== panel; });
+      const activate = panel.querySelector('[data-wf-activate]');
+      if (activate) {
+        panel.querySelector('[data-wf-go="dnd"]').hidden = dndGranted;
+        activate.disabled = !dndGranted || ![...panel.querySelectorAll('.wf-requirements input')].every(box => box.checked);
+      }
       document.getElementById('wf-state-title').textContent = descriptions[key][0];
       document.getElementById('wf-state-note').textContent = descriptions[key][1];
+      const status = document.getElementById('wf-activated');
+      status.hidden = !activeMode;
+      status.textContent = activeMode;
       if (focus) panel.querySelector('h3').focus();
     }
+    root.addEventListener('change', event => {
+      if (!event.target.matches('.wf-requirements input')) return;
+      if (event.target.matches('[data-wf-exact]')) {
+        root.querySelectorAll('[data-wf-exact]').forEach(box => { box.checked = event.target.checked; });
+      }
+      show(current, false);
+    });
     root.addEventListener('click', event => {
+      if (event.button || event.ctrlKey || event.shiftKey || event.metaKey || event.altKey) return;
+      const activate = event.target.closest('[data-wf-activate]');
+      if (activate && !activate.disabled) {
+        activeMode = current === 'mosque-setup' ? 'طريقة الإسكات المفعّلة: حسب الوقت وموقع المسجد.' : 'طريقة الإسكات المفعّلة: حسب الوقت فقط.';
+        show('today', true);
+        return;
+      }
       const link = event.target.closest('[data-wf-go]');
-      if (!link || event.button || event.ctrlKey || event.shiftKey || event.metaKey || event.altKey) return;
+      if (!link) return;
       event.preventDefault();
-      show(link.dataset.wfGo, true);
+      let key = link.dataset.wfGo;
+      switch (key) {
+        case 'start':
+          confirmed = true;
+          dndGranted = false;
+          activeMode = '';
+          root.querySelector('input[value="time"]').checked = true;
+          root.querySelectorAll('.wf-requirements input').forEach(input => { input.checked = false; });
+          root.querySelectorAll('[data-wf-activate]').forEach(button => { button.disabled = true; });
+          break;
+        case 'picker': pickerOrigin = current; break;
+        case 'picker-back': key = pickerOrigin; break;
+        case 'pick':
+          confirmed = true;
+          key = pickerOrigin === 'confirm-place' ? setupEntry() :
+            ['today', 'preview'].includes(pickerOrigin) ? 'today' : 'silence';
+          break;
+        case 'confirm-match': confirmed = true; key = 'silence'; break;
+        case 'defer-place': confirmed = false; key = 'silence'; break;
+        case 'setup': key = confirmed ? setupEntry() : 'confirm-place'; break;
+        case 'confirm-for-setup': confirmed = true; key = setupEntry(); break;
+        case 'grant-dnd': dndGranted = true; key = chosenSetup(); break;
+        case 'leave-dnd': key = chosenSetup(); break;
+        case 'decline': activeMode = ''; key = confirmed ? 'today' : 'preview'; break;
+        case 'confirm-preview': confirmed = true; key = 'today'; break;
+      }
+      show(key, true);
     });
     root.setAttribute('data-interactive', '');
     const direct = location.hash.replace(/^#wf-/, '');
+    if (direct === 'preview' || direct === 'confirm-place') confirmed = false;
+    if (direct === 'mosque-setup') root.querySelector('input[value="mosque"]').checked = true;
     show(Object.prototype.hasOwnProperty.call(descriptions, direct) ? direct : 'start', false);
   })();
   </script>
@@ -243,11 +377,12 @@
     <section id="journey" aria-labelledby="journey-title">
       <h2 id="journey-title">What ships on the phone</h2>
       <dl class="matrix">
-        <div><dt>First opening</dt><dd>Present the place question on the Prayer tab (<span lang="ar" dir="rtl">الصلاة</span>) on a normal first launch. “Choose a city” opens the actual searchable sheet on tap. Show the locality with its governorate or country so similar names are distinguishable. Selecting a row confirms the place and returns to the timetable. Show catalogue loading, no matches, or a source problem inline with an edit or retry action.</dd></div>
+        <div><dt>First opening</dt><dd>Present the place question on the Prayer tab (<span lang="ar" dir="rtl">الصلاة</span>) on a normal first launch. “Choose a city” opens the actual searchable sheet on tap. Show the locality with its governorate or country so similar names are distinguishable. Selecting a row confirms the place and opens the automatic silencing choice. Show catalogue loading, no matches, or a source problem inline with an edit or retry action.</dd></div>
         <div><dt>Find my locality</dt><dd>Explain that the app will use the current location once. On tap, request foreground access only if needed. Accept approximate access, show the resolved locality for confirmation, and let the person change it. Keep city search available during lookup, on timeout, and after denial. A later GPS result must yield to a subsequent manual choice.</dd></div>
-        <div><dt>Browse now</dt><dd>Open Prayer with the existing provisional suggestion. Name the city above the times, flag it as suggested, and offer Confirm or Change. In Tunisia the fallback can be Tunis. Abroad it can be a catalogue city compatible with the phone’s time zone. Keep the banner across relaunches. Ask for place confirmation before enabling a new location-dependent alert or silence schedule.</dd></div>
+        <div><dt>Choose a place later</dt><dd>Keep the provisional suggestion and show the silencing choice. Choosing to continue without automatic silencing opens Prayer with the suggested city. Name the city above the times, flag it as suggested, and offer Confirm or Change. In Tunisia the fallback can be Tunis. Abroad it can be a catalogue city compatible with the phone’s time zone. Keep the banner across relaunches. Ask for place confirmation before enabling a new location-dependent alert or silence schedule.</dd></div>
+        <div><dt>Automatic silencing</dt><dd>Offer “Time only” and “Time and mosque location” during onboarding. Time only is preselected. After the city is confirmed, “Set up silencing” opens Android’s Do Not Disturb access screen if the grant is missing. On return, the person sees the remaining requirements for their chosen mode and can activate it when ready. “Continue without automatic silencing” opens the timetable and keeps silencing off across restarts. People can turn it on later in Prayer settings. <a href="app/src/main/java/com/tunisianprayertimes/ui/FirstRunSilenceScreen.kt">Silencing choice</a>.</dd></div>
         <div><dt>First timetable</dt><dd>Show the chosen locality, next prayer and time, and today’s rows using the real repository and the place’s local date. For Tunisia, retain the INM explanation. Abroad, show the current method and a visible choice or confirmation row where relevant. If the method is provisional, label it. Keep the chooser available on tap. While computing a cold result, show “Preparing times for [city]”. If no result is available, keep Change city and Retry visible.</dd></div>
-        <div><dt>After the first result</dt><dd>Below the timetable, offer two optional links in a dismissible group. “Set up adhan” opens the per-prayer audio settings. “Set up automatic silence” opens the mode choice and a real prayer window the person can edit. Place Friday help on the Friday editor, wake setup in Alarms and Qur’an or Adhkar help in their own tabs. Keep the permanent settings entries after dismissal. A notification or shortcut should still open its requested destination.</dd></div>
+        <div><dt>After the first result</dt><dd>The first timetable offers adhan setup. People can return to Prayer settings to enable automatic silencing or change its configuration. Each prayer’s editor lets people change the start and end of its silence window. Place Friday help on the Friday editor, wake setup in Alarms and Qur’an or Adhkar help in their own tabs. Keep the permanent settings entries after dismissal. A notification or shortcut should still open its requested destination.</dd></div>
       </dl>
     </section>
     <section id="permissions" aria-labelledby="permissions-title">
@@ -257,28 +392,28 @@
         <div><dt>Prayer times</dt><dd>Manual city selection works with zero system prompts. A one-time lookup can use foreground location. Offer ongoing travel updates separately, with background disclosure only after the person chooses updates while the app is closed. On Android 11 and later, background access is granted in Settings. <a href="https://developer.android.com/develop/sensors-and-location/location/permissions/runtime">Foreground location</a> · <a href="https://developer.android.com/develop/sensors-and-location/location/permissions/background">Background location</a>.</dd></div>
         <div id="adhan-setup"><dt>Adhan</dt><dd>Open the existing per-prayer adhan settings. When a person enables a prayer, check notifications on Android 13+, channel/app settings and alarm volume. Explain exact timing only where access is missing. The scheduler can fall back to an inexact alarm, advance warnings need exact access, and a sufficiently late adhan stays quiet. Explain full-screen presentation independently. <a href="app/src/main/java/com/tunisianprayertimes/adhan/AdhanScheduler.kt">Scheduler</a> · <a href="app/src/main/java/com/tunisianprayertimes/adhan/AdhanDecision.kt">Late delivery</a> · <a href="https://developer.android.com/develop/ui/compose/notifications/notification-permission">Android notification permission</a>.</dd></div>
         <div><dt>Wake alarm</dt><dd>Check exact scheduling when the user saves or enables an alarm. If unavailable, retain their configuration and show “Saved · needs exact alarm access” with a route back. Show notification and lock-screen presentation status separately. A denied notification request should return to the editor without opening another system page. <a href="app/src/main/java/com/tunisianprayertimes/wake/WakeAlarmScheduler.kt">Wake readiness</a> · <a href="https://developer.android.com/develop/background-work/services/alarms">Exact alarms</a> · <a href="https://developer.android.com/about/versions/14/behavior-changes-14#secure-fsi">Full-screen intent access</a>.</dd></div>
-        <div id="silence-setup"><dt>Automatic silence</dt><dd>When someone selects time-based silence, show the prayer window and check DND, exact scheduling and any required app-owned rule. Offer mosque-aware silence as a distinct choice. Reuse its disclosure, precise and background location sequence, area setup and readiness screen. Keep time-only available for users who decline mosque access. <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueReadiness.kt">Time and mosque prerequisites</a> · <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueSettingsActivity.kt">Mosque setup</a>.</dd></div>
+        <div id="silence-setup"><dt>Automatic silence</dt><dd>Both modes open Android’s Do Not Disturb settings when the person chooses setup and that access is missing. Manual silence uses the same grant. Returning from Android without granting access leaves the checklist open with a retry action. Both modes need exact alarm access on Android 12 and later. Time-only checks the prayer rule when the app uses owned rules. Mosque-aware setup needs Android 10 or later, the app-owned mosque rule, precise and background location with disclosure, observation notifications and an enabled saved mosque area. The app checks the device’s location services, background restrictions, Play services and area-store readiness. Returning from Android Settings refreshes these checks. The person taps “Activate automatic silencing” once the selected mode is ready. Keep time-only available for users who decline mosque access. <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueReadiness.kt">Time and mosque prerequisites</a> · <a href="app/src/main/java/com/tunisianprayertimes/mosque/MosqueSettingsActivity.kt">Mosque setup</a>.</dd></div>
         <div><dt>Missed calls and battery</dt><dd>Request phone state only when someone explicitly enables vibration after a missed call during app-managed silence. Put battery optimization guidance in troubleshooting for an enabled feature with delivery issues. Keep the Prayer tab clear of grant reminders for features the person has left off. <a href="app/src/main/java/com/tunisianprayertimes/PhoneStateReceiver.kt">Call handling</a> · <a href="app/src/main/java/com/tunisianprayertimes/ui/PrayerTabSettingsSheet.kt">Prayer settings</a>.</dd></div>
       </dl>
     </section>
     <section id="delivery" aria-labelledby="delivery-title">
       <h2 id="delivery-title">Implementation sequence</h2>
       <ol class="delivery">
-        <li><strong>Define first-run state before changing the screens.</strong> Store the decision to browse separately from confirmed place and from optional feature intent. For genuinely new installs, initialize automatic silence, ongoing location and missed-call feedback off before any UI, worker or receiver can schedule them. Adhan already defaults off per prayer. Make initialization idempotent across process restarts and system broadcasts. Granting exact alarms for a wake alarm must never activate unrelated silence. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/PrefsManager.kt">Effective defaults, lines 349, 582 and 590</a> · <a href="app/src/main/java/com/tunisianprayertimes/ScheduleRefreshCoordinator.kt">Scheduler</a> · <a href="app/src/main/java/com/tunisianprayertimes/BootReceiver.kt">Boot and grant receiver</a>.</span></li>
+        <li><strong>Define first-run state before changing the screens.</strong> Persist the place decision, its confirmation status and the outstanding silencing choice independently. Saving a place advances onboarding to the mode choice. Successful activation or an explicit opt-out completes it. For genuinely new installs, initialize automatic silence, ongoing location and missed-call feedback off before any UI, worker or receiver can schedule them. Adhan already defaults off per prayer. Make initialization idempotent across process restarts and system broadcasts. Granting exact alarms for a wake alarm must never activate unrelated silence. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/PrefsManager.kt">Effective defaults, lines 349, 582 and 590</a> · <a href="app/src/main/java/com/tunisianprayertimes/ScheduleRefreshCoordinator.kt">Scheduler</a> · <a href="app/src/main/java/com/tunisianprayertimes/BootReceiver.kt">Boot and grant receiver</a>.</span></li>
         <li><strong>Handle existing installs explicitly.</strong> Completed installs bypass the new flow and retain both explicit settings and inherited legacy defaults. For an unfinished old tour, reuse any saved place/configuration and resume at its first unresolved decision. The Android backup rules exclude the legacy preferences file holding both completion and global silence, while other feature settings can survive. A missing flag alone cannot identify a fresh install. On ambiguous restores, preserve recovered choices, ask for missing place or automation intent in context and recheck device grants. Keep live DND ownership device-local. <span class="refs"><a href="app/src/main/res/xml/backup_rules.xml">Legacy backup rules</a> · <a href="app/src/main/res/xml/data_extraction_rules.xml">Cloud and transfer rules</a>.</span></li>
-        <li><strong>Give the flow one navigation owner.</strong> In MainActivity’s Compose content, replace the separate tutorial launch and deferred picker flag with a Prayer entry state. Reuse the picker, repository and latest-choice-wins logic. Persist place, its confirmation state and completion consistently so a killed process cannot reopen the wizard over a confirmed city. Picker Back returns to the place question. System Back from the initial question follows normal app exit. “Browse now” is the explicit deferral. Respect sequenced notification and shortcut destinations, asking for a missing place only when that action depends on it. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/MainActivity.kt">Entry and intent handling</a> · <a href="app/src/main/java/com/tunisianprayertimes/ui/MainScreen.kt">Existing selection logic, lines 1901–1956 and 2179–2238</a> · <a href="app/src/main/java/com/tunisianprayertimes/PlaceResolution.kt">Provisional resolver, line 268</a>.</span></li>
-        <li><strong>Wire the feature entry points and measure first value.</strong> Filter the hero notice and banners by enabled feature and readiness. Suppress the travel-location offer for a one-time fix. Review the wake flow’s chained permission requests. Move only the useful editing hints into the existing settings, then retire the carousel and update its tests and screenshot script. The old <code>activation_completed</code> event means DND, exact-alarm access and battery exemption. Give the confirmed timetable its own measurement and preserve the meaning of historical data. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/AnalyticsTracker.kt">Analytics, lines 15–39, 53–74 and 240–245</a> · <a href="app/src/androidTest/java/com/tunisianprayertimes/OnboardingActivityInstrumentedTest.kt">Existing opening-screen tests</a> · <a href="capture-screenshots.sh">Screenshot capture</a>.</span></li>
+        <li><strong>Give the flow one navigation owner.</strong> In MainActivity’s Compose content, replace the separate tutorial launch and deferred picker flag with a Prayer entry state. Reuse the picker, repository and latest-choice-wins logic. Persist place, its confirmation state and completion consistently so a killed process cannot reopen the wizard over a confirmed city. Picker Back returns to the place question. System Back from the initial question follows normal app exit. “Choose my area later” defers the place. The next screen lets the user choose a silencing mode or opt out. Respect sequenced notification and shortcut destinations, asking for a missing place only when that action depends on it. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/MainActivity.kt">Entry and intent handling</a> · <a href="app/src/main/java/com/tunisianprayertimes/ui/MainScreen.kt">Existing selection logic, lines 1901–1956 and 2179–2238</a> · <a href="app/src/main/java/com/tunisianprayertimes/PlaceResolution.kt">Provisional resolver, line 268</a>.</span></li>
+        <li><strong>Wire the feature entry points and measure first value.</strong> Filter the hero notice and banners by enabled feature and readiness. Suppress the travel-location offer for a one-time fix. Review the wake flow’s chained permission requests. Move only the useful editing hints into the existing settings, then retire the carousel and update its tests and screenshot script. The old <code>activation_completed</code> event means DND, exact-alarm access and battery exemption. Give the confirmed timetable its own measurement and preserve the meaning of historical data. <span class="refs"><a href="app/src/main/java/com/tunisianprayertimes/AnalyticsTracker.kt">Analytics, lines 15–39, 53–74 and 240–245</a> · <a href="app/src/androidTest/java/com/tunisianprayertimes/FirstRunPlaceInstrumentedTest.kt">First-run device tests</a> · <a href="capture-screenshots.sh">Screenshot capture</a>.</span></li>
       </ol>
     </section>
     <section id="validation" aria-labelledby="validation-title">
       <h2 id="validation-title">How to decide whether to ship</h2>
       <h3>First test the task with people</h3>
-      <p>Use the current build as the baseline. Recruit Arabic-speaking Android users in Tunisia and abroad, including someone who uses large text or TalkBack and someone who relies on automatic silence. Give people a city and ask, “Which prayer is next, and at what time?” Follow with a refusal scenario and a request to configure either one adhan or a silence period. Observe which screen they reach, what they believe is enabled, where they hesitate and whether they need help.</p>
+      <p>Use the current build as the baseline. Recruit Arabic-speaking Android users in Tunisia and abroad, including someone who uses large text or TalkBack and someone who relies on automatic silence. Give people a city and ask, “Which prayer is next, and at what time?” Follow with a refusal scenario and a request to set up a time-only silence or a mosque-aware silence. Observe which screen they reach, what they believe is enabled, where they hesitate and whether they need help.</p>
       <p><strong>Proposed pilot targets.</strong> With eight first-time participants on the revised design, aim for at least seven to identify the correct next prayer and time unaided, and a median under 30 seconds from launcher tap on the manual route. Record the observed baseline on comparable phones and tasks. Treat these as design targets. Re-test any case where someone trusts an unconfirmed city or believes the app will sound or silence their phone unexpectedly.</p>
       <h3 style="margin-top:1.4rem">Verify the build</h3>
       <ul class="facts">
         <li>Exercise a clean install offline, manual selection in Tunisia and abroad, no search matches, GPS denial, approximate access, timeout, and a late GPS fix after manual selection. Open the prayer tab after midnight and on Friday. Compare the first visible times with the existing repository for the selected place, its time zone and method.</li>
-        <li>Exercise browse, confirm, change, Back, rotation, process death during selection, upgrade with absent legacy keys, backup restore, and deep links into Prayer, Qur’an and Adhkar. Verify the suggestion survives relaunch and becomes confirmed only by an explicit choice. Check that cancelling Settings, granting only a subset, and later revocation update the selected feature’s status.</li>
+        <li>Exercise place deferral, both silencing modes, DND approval and denial, explicit activation and opting out before and during setup. Reopen the app after opting out and verify the timetable opens with silencing off. Check Back, rotation, process death between the two choices, upgrades, backup restore and deep links into Prayer, Qur’an and Adhkar. Verify the suggestion survives relaunch and becomes confirmed only by an explicit choice. Check that cancelling Settings, granting only a subset, and later revocation update the selected feature’s status.</li>
         <li>Cover API 26, Android 11 background access, Android 12 approximate location and exact alarms, Android 13 notifications, Android 14+ special access and the app’s current target of 36. Verify overnight scheduling and the notification or lock-screen result on a physical phone for the features selected. The manual timetable path must show zero permission dialogs and trigger zero automatic silence or travel tracking on a new install.</li>
         <li>Walk the entire journey in Arabic RTL using TalkBack, 200% font size, and a compact phone. Check focus after opening and closing the picker, mixed-script city names, spoken prayer/time pairs, non-color status cues, text reflow and touch targets of at least 48 dp. <a href="https://developer.android.com/guide/topics/ui/accessibility/apps">Android accessibility</a> · <a href="https://developer.android.com/about/versions/14/features#non-linear-font-scaling">Large font scaling</a>.</li>
       </ul>
@@ -286,6 +421,6 @@
       <p>For eligible new installs, measure the share that visibly render a valid timetable for a confirmed place on their first ordinary launch. Count each install once, with time from entry to that render. Track suggested-place views separately, plus recovery from denial and successful setup among people who chose each optional feature. Check regressions in alarm delivery and unwanted silence during staged rollout. Keep regional analytics controls and use aggregate durations or buckets. Exclude city, search text, coordinates, country, zone and calculation method from events. Use task observation and local QA wherever collection is off.</p>
     </section>
   </main>
-  <footer><p class="fine">Based on the current Android phone source, published research and platform documentation. The walkthrough illustrates the proposed behavior. First-time users and a device build are the next validation steps.</p></footer>
+  <footer><p class="fine">Based on the current Android phone source, published research and platform documentation. The walkthrough illustrates the fresh-install flow. The usability pilot remains a proposed evaluation.</p></footer>
 </body>
 </html>

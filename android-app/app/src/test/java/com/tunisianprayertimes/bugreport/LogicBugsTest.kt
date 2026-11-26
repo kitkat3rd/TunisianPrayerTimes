@@ -10,6 +10,8 @@ import com.tunisianprayertimes.PrayerSilenceConfig
 import com.tunisianprayertimes.PrayerTime
 import com.tunisianprayertimes.PrayerWakeSubAlarm
 import com.tunisianprayertimes.PrefsManager
+import com.tunisianprayertimes.ManualSilenceMode
+import com.tunisianprayertimes.ui.nextManualSilenceOccurrence
 import com.tunisianprayertimes.WakePlaybackOptions
 import com.tunisianprayertimes.isInsideTunisiaBounds
 import com.tunisianprayertimes.ui.EndpointRuleMode
@@ -45,17 +47,19 @@ class LogicBugsTest {
         PrefsManager.setJomoaaTime(context, 13, 15)
         val fridayMorning = calendarAt(2026, Calendar.OCTOBER, 16, 10, 0) // Friday
         assertEquals("Precondition: a Friday", Calendar.FRIDAY, fridayMorning.get(Calendar.DAY_OF_WEEK))
-        val resolveEnd = Class.forName("com.tunisianprayertimes.ui.MainScreenKt").getDeclaredMethod(
-            "resolveManualSilencePrayerEndMillis",
-            Context::class.java, Int::class.javaPrimitiveType, Prayer::class.java, Long::class.javaPrimitiveType,
-        ).apply { isAccessible = true }
+        val friday = requireNotNull(nextManualSilenceOccurrence(context, Prayer.DHUHR, fridayMorning.timeInMillis))
+        val deadline = calendarAt(2026, Calendar.OCTOBER, 16, 13, 15).timeInMillis
+        assertEquals(Prayer.JOMOAA, friday.prayer)
+        assertEquals("Silence should last until the Friday prayer at 13:15", deadline, friday.at.toEpochMilli())
+        assertEquals(Prayer.DHUHR, nextManualSilenceOccurrence(context, Prayer.DHUHR, deadline)?.prayer)
 
-        val endMillis = resolveEnd.invoke(
-            null, context, PrefsManager.getDelegationId(context), Prayer.DHUHR, fridayMorning.timeInMillis,
-        ) as Long?
-
-        assertEquals("Silence should last until the Friday prayer at 13:15",
-            calendarAt(2026, Calendar.OCTOBER, 16, 13, 15).timeInMillis, endMillis)
+        PrefsManager.setManualSilenceTargetPrayer(context, Prayer.DHUHR)
+        PrefsManager.setManualSilenceEndsAtMillis(context, deadline)
+        // A timer created on an older build can still be in effect while the next preview is already Saturday.
+        assertEquals(Prayer.JOMOAA, PrefsManager.activeManualSilencePrayer(context))
+        PrefsManager.setManualSilenceMode(context, ManualSilenceMode.UNTIL_PRAYER, friday.prayer)
+        assertEquals(Prayer.JOMOAA, PrefsManager.activeManualSilencePrayer(context))
+        assertEquals(Prayer.DHUHR, PrefsManager.getManualSilenceTargetPrayer(context))
     }
 
     /** M12: a GPS fix inside a border sector is reported as outside Tunisia. */

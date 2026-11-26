@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="trace_prayer_start_alarm">تلقّى التطبيق تنبيه بدء فترة الإسكات · %1$s</string>
+    <string name="trace_prayer_end_alarm">تلقّى التطبيق تنبيه نهاية فترة الإسكات · %1$s</string>
+    <string name="trace_mosque_disabled">الإسكات التلقائي متوقف.</string>
+    <string name="trace_mosque_time_only">الإسكات حسب الوقت فقط. التحقق من وصولك إلى المسجد متوقف.</string>
+    <string name="trace_mosque_silence_window">فترة الإسكات حسب الوقت والموقع: %1$s</string>
+    <string name="trace_mosque_observe_window">فترة التحقق من الوصول قبل الإسكات: %1$s</string>
+    <string name="trace_mosque_inside">توقّف داخل الحدود</string>
+    <string name="trace_mosque_walked_in">دخول من خارج الحدود أكّدته قراءات متتالية داخل المسجد</string>
+    <string name="trace_mosque_edge">اقتراب وتوقّف عند الحدود</string>
+    <string name="trace_mosque_earlier_precise">توقّف قرب الحدود بعد قراءة سابقة دقيقة</string>
+    <string name="trace_mosque_nearby">اقتراب وتوقّف مستمر قرب الحدود</string>
+    <string name="trace_mosque_arrival">تأكّد الوصول إلى %1$s (%2$s).</string>
+    <string name="trace_mosque_exiting">رصد التحقق موقعًا خارج حدود المسجد ويترقب تأكيد الخروج.</string>
+    <string name="trace_mosque_departed">تأكّدت مغادرة %1$s بعد قراءات متتالية بعيدًا عن المسجد.</string>
+    <string name="trace_mosque_lost_evidence">لم تعد قراءات الموقع تؤكّد وجودك في %1$s.</string>
+    <string name="trace_mosque_stopped">التحقق من الوصول إلى المسجد متوقف.</string>
+    <string name="trace_mosque_failed">تعذّر على خدمة التحقق متابعة رصد الموقع.</string>
+    <string name="trace_mosque_sampling_parked">التحقق لا يطلب تحديثات للموقع حاليًا.</string>
+    <string name="trace_mosque_sampling_balanced">التحقق يطلب الموقع بالدقة المتوازنة.</string>
+    <string name="trace_mosque_sampling_precise">التحقق يطلب قراءات متقاربة عالية الدقة.</string>
+    <string name="trace_mosque_eligible">توفّرت شروط طلب الإسكات التلقائي للمسجد.</string>
+    <string name="trace_mosque_ineligible">لم تتوفّر شروط طلب الإسكات التلقائي للمسجد.</string>
+    <string name="trace_mosque_mock_fix">تجاهل التحقق قراءة موقع تجريبية.</string>
+    <string name="trace_mosque_rejected_fix">تجاهل التحقق هذه القراءة.</string>
+    <string name="trace_mosque_inside_fix">قراءة التحقق داخل منطقة مسجد، على بعد %1$d م من حدودها.</string>
+    <string name="trace_mosque_outside_fix">قراءة التحقق خارج مناطق المساجد، على بعد %1$d م من أقرب حدود.</string>
+    <string name="trace_mosque_geofence_enter">أبلغ أندرويد عن دخول محيط مسجد محفوظ وطلب التحقق من الوصول.</string>
+    <string name="trace_mosque_geofence_exit">أبلغ أندرويد عن مغادرة محيط مسجد محفوظ وطلب التحقق من الموقع.</string>
+    <string name="trace_mosque_geofence_dwell">أبلغ أندرويد عن البقاء في محيط مسجد محفوظ وطلب التحقق من الوصول.</string>
+    <string name="trace_mosque_geofence_check">تلقّى التطبيق إشارة من محيط أحد المساجد المحفوظة.</string>
+</resources>

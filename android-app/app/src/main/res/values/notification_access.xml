@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_access_title">السماح بالإشعارات</string>
+    <string name="notification_access_retry_explanation">يمكنك طلب الإذن مجددًا أو فتح إعدادات إشعارات التطبيق.</string>
+    <string name="notification_access_retry">طلب الإذن مجددًا</string>
+    <string name="notification_access_open_settings">فتح إعدادات الإشعارات</string>
+</resources>

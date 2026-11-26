@@ -195,7 +195,7 @@ class PhoneCallVibrationTest {
         PrefsManager.setCallEndVibrationEnabled(context, true)
 
         SilenceModeController.setManualSilent(context)
-        ManualSilenceScheduler.schedule(context, 1)
+        ManualSilenceScheduler.scheduleAt(context, System.currentTimeMillis() - 1)
         PrefsManager.markCallReceivedDuringSilence(context)
 
         silenceReceiver.onReceive(context, Intent(ManualSilenceScheduler.ACTION_MANUAL_UNSILENCE))
@@ -212,7 +212,7 @@ class PhoneCallVibrationTest {
         PrefsManager.setCallEndVibrationEnabled(context, false)
 
         SilenceModeController.setManualSilent(context)
-        ManualSilenceScheduler.schedule(context, 1)
+        ManualSilenceScheduler.scheduleAt(context, System.currentTimeMillis() - 1)
         PrefsManager.markCallReceivedDuringSilence(context)
 
         silenceReceiver.onReceive(context, Intent(ManualSilenceScheduler.ACTION_MANUAL_UNSILENCE))

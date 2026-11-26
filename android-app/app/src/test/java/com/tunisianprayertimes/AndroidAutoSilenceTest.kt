@@ -40,6 +40,7 @@ class AndroidAutoSilenceTest {
         notifications.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
         audio = context.getSystemService(AudioManager::class.java)
         audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        PrefsManager.markFirstLaunchDone(context)
         PrefsManager.setEnabled(context, true)
     }
 

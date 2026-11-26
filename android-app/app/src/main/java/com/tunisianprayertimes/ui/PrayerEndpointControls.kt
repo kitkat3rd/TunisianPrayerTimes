@@ -66,8 +66,8 @@ import kotlin.math.abs
 internal fun EndpointRuleEditor(
     endpoint: SilenceEndpoint,
     config: PrayerSilenceConfig,
-    anchor: PrayerTimelineAnchor,
-    window: PrayerTimelineWindow,
+    resolvedClock: String,
+    resolvedOffset: Int,
     enabled: Boolean,
     relativeValue: String,
     hourValue: String,
@@ -82,8 +82,6 @@ internal fun EndpointRuleEditor(
     val start = endpoint == SilenceEndpoint.START
     val mode = if (start) config.startRuleMode() else config.endRuleMode()
     val fixed = mode == EndpointRuleMode.FIXED_TIME
-    val resolvedMinutes = if (start) window.startMinutes else window.endMinutes
-    val resolvedOffset = anchor.offsetAt(resolvedMinutes)
     val direction = offsetDirection(resolvedOffset)
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         EndpointModeChoices(
@@ -100,7 +98,7 @@ internal fun EndpointRuleEditor(
         )
         Text(
             text = if (fixed) {
-                stringResource(R.string.prayer_silence_explain_fixed, silenceClockText(resolvedMinutes))
+                stringResource(R.string.prayer_silence_explain_fixed, resolvedClock)
             } else if (resolvedOffset == 0) {
                 stringResource(R.string.prayer_silence_explain_follows_adhan)
             } else {
@@ -125,7 +123,7 @@ internal fun EndpointRuleEditor(
                 onSelected = onDirectionSelected,
             )
             if (direction == EndpointDirection.AT_ADHAN) {
-                CompactResolvedTime(resolvedMinutes)
+                CompactResolvedTime(resolvedClock)
             } else {
                 EndpointMinuteStepper(
                     value = relativeValue,
@@ -152,7 +150,7 @@ internal fun EndpointRuleEditor(
 
 /** Compact resolved clock shown for at-adhan mode, which needs no numeric input. */
 @Composable
-private fun CompactResolvedTime(minutes: Int) {
+private fun CompactResolvedTime(clock: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -160,12 +158,10 @@ private fun CompactResolvedTime(minutes: Int) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = silenceClockText(minutes),
+            text = clock,
             color = PrayerSilencePalette.PrimaryText,
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            softWrap = false,
         )
     }
 }

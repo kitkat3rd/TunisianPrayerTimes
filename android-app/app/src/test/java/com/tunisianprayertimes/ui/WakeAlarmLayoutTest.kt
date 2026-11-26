@@ -30,6 +30,8 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -164,6 +166,30 @@ class WakeAlarmLayoutTest {
     @Test fun fajrSetupFitsLargeText() {
         show(2f) { FajrAlarmSetupSheet(1, System.currentTimeMillis(), onAdd = {}, onDismiss = {}) }
         assertLabelsFit()
+    }
+
+    @Test fun confirmingTheCityKeepsFajrChoicesUntilAddIsTappedAgain() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        PrefsManager.setDelegationId(app, PlaceResolution.TUNIS_DELEGATION_ID)
+        PrefsManager.markFirstLaunchDone(app)
+        PrefsManager.setPlaceProvisional(app, true)
+        var added: PrayerWakeConfig? = null
+        show(1f) {
+            FajrAlarmSetupSheet(PlaceResolution.TUNIS_DELEGATION_ID, System.currentTimeMillis(),
+                onAdd = { added = it }, onDismiss = {})
+        }
+        compose.onNodeWithText(activity.getString(R.string.wake_editor_minutes_short, 45)).performScrollTo().performClick()
+        compose.onNodeWithText(activity.getString(R.string.wake_fajr_suggestion_gentle_title)).performScrollTo().performClick()
+        val add = compose.onNodeWithText(activity.getString(R.string.wake_fajr_suggestion_add))
+        add.performScrollTo().performClick()
+        compose.onNodeWithTag("feature_cancel_place").performClick()
+        add.performScrollTo().performClick()
+        compose.onNodeWithTag("feature_confirm_suggested_place").performClick()
+        compose.waitForIdle()
+        assertNull(added)
+        add.performScrollTo().performClick()
+        assertEquals(-45, added?.mainAlarm?.prayerOffset?.minutes)
+        assertEquals(false, added?.playback?.awakeCheckEnabled)
     }
 
     @Test fun alarmListCardFitsLargeText() {

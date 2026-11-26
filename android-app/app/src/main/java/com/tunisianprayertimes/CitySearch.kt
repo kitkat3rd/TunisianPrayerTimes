@@ -1,5 +1,7 @@
 package com.tunisianprayertimes
 
+import com.tunisianprayertimes.place.CountryResolver
+import com.tunisianprayertimes.place.LatLngE5
 import java.text.Normalizer
 import java.util.Locale
 
@@ -43,7 +45,13 @@ object CitySearch {
      * catalogue's 26,600 cities, where folding every name again on every key took over 100 ms on a computer and
      * seconds on a phone, so a typed name came after the next keys or not at all.
      */
-    class Index(val rows: List<PlaceCatalogue.Row>) {
+    data class Area(val region: String?, val nearby: String?, val coordinates: LatLngE5?)
+
+    class Index(
+        val rows: List<PlaceCatalogue.Row>,
+        regionName: (PlaceCatalogue.Row) -> String? = { null },
+        nearbyCity: (PlaceCatalogue.Row) -> String? = { null },
+    ) {
         /** Each city's spellings, each between separators: "\u0001ivry sur seine\u0001ivry sobre sena\u0001…". */
         private val names: Array<String> = Array(rows.size) { i ->
             val row = rows[i]
@@ -52,6 +60,28 @@ object CitySearch {
         }
 
         val isEmpty: Boolean get() = rows.isEmpty()
+
+        // A result keeps its label even when its namesake falls outside the current query's limit.
+        private val areasById: Map<Long, Area> = buildMap {
+            val byName = rows.groupBy { CountryResolver.normalize(it.ref.countryCode) to it.displayName }
+            for (namesakes in byName.values) {
+                if (namesakes.size < 2) continue
+                for ((region, inRegion) in namesakes.groupBy(regionName)) {
+                    if (region != null && inRegion.size == 1) {
+                        put(inRegion.single().ref.id, Area(region, null, null))
+                        continue
+                    }
+                    for ((nearby, closeToCity) in inRegion.groupBy(nearbyCity)) {
+                        for (row in closeToCity) {
+                            val coordinates = row.ref.point.takeIf { nearby == null || closeToCity.size > 1 }
+                            put(row.ref.id, Area(region, nearby, coordinates))
+                        }
+                    }
+                }
+            }
+        }
+
+        fun areaOf(cityId: Long): Area? = areasById[cityId]
 
         /**
          * Rows matching [query], best first: a whole name, then the start of a name, then the start of any word in a name

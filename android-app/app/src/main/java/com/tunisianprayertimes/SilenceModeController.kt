@@ -3,6 +3,9 @@ package com.tunisianprayertimes
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.mosque.SilenceCoordinator
 import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
+import com.tunisianprayertimes.mosque.SilenceOwner
+import com.tunisianprayertimes.mosque.AutomaticSilencePause
+import com.tunisianprayertimes.mosque.observeSilenceSound
 
 import android.app.NotificationManager
 import android.content.Context
@@ -48,6 +51,8 @@ object SilenceModeController {
      *     has been processed (handles the async case).
      */
     private fun restoreState(
+        context: Context,
+        owner: SilenceOwner,
         notificationManager: NotificationManager,
         audioManager: AudioManager,
         previousFilter: Int,
@@ -59,6 +64,7 @@ object SilenceModeController {
             Thread.sleep(150)                                          // Wait synchronously for OS to process filter
         } catch (e: InterruptedException) { }
         audioManager.ringerMode = previousRinger                       // (3)
+        observeSilenceSound(context) { restored(context, owner) }
     }
 
     // Each change reads the saved state, then writes the ringer, the filter and the state: one at a time, as the
@@ -115,6 +121,7 @@ object SilenceModeController {
         notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
         audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
         if (isNewSilenceSession) {
+            observeSilenceSound(context) { requested(context, SilenceOwner.PRAYER, prayer) }
             AnalyticsTracker.phoneSilenced(context, source = "auto_prayer", prayer = prayer)
         }
         SilenceGuardService.start(context)
@@ -144,6 +151,7 @@ object SilenceModeController {
             )
         } else {
             restoreState(
+                context, SilenceOwner.PRAYER,
                 notificationManager, audioManager,
                 PrefsManager.getAutoSilencePreviousInterruptionFilter(context),
                 PrefsManager.getAutoSilencePreviousRingerMode(context)
@@ -159,7 +167,7 @@ object SilenceModeController {
     internal fun reconcileAndroidAutoSilence(context: Context) {
         if (!PrefsManager.isAutoSilenceActive(context) || !AndroidAutoConnection.isProjected(context)) return
         if (MosqueSilenceSettings.usesOwnedRules(context)) {
-            SilenceCoordinator.releaseAutoRules(context)
+            SilenceCoordinator.releaseAutoRules(context, AutomaticSilencePause.ANDROID_AUTO)
             refreshDhikrReminders(context)
         } else {
             pauseLegacyAutoSilenceForAndroidAuto(context)
@@ -168,6 +176,7 @@ object SilenceModeController {
 
     private fun pauseLegacyAutoSilenceForAndroidAuto(context: Context) {
         // A skipped window can end after the head unit disconnects; its end has no DND to restore.
+        observeSilenceSound(context) { legacyPause(context, AutomaticSilencePause.ANDROID_AUTO) }
         PrefsManager.markAutoSilenceSkippedForAndroidAuto(context)
         disableAutoSilence(context)
     }
@@ -178,12 +187,14 @@ object SilenceModeController {
         if (isAutoSilencePausedForAwakeCheck) return true
         if (!PrefsManager.isAutoSilenceActive(context) || PrefsManager.isManualSilenceActive(context)) return false
         isAutoSilencePausedForAwakeCheck = true
-        val lifted = if (MosqueSilenceSettings.usesOwnedRules(context)) {
-            SilenceCoordinator.releaseAutoRules(context)
+        val owned = MosqueSilenceSettings.usesOwnedRules(context)
+        val lifted = if (owned) {
+            SilenceCoordinator.releaseAutoRules(context, AutomaticSilencePause.AWAKE_CHECK)
         } else {
             disableAutoSilence(context)
         }
         if (!lifted) isAutoSilencePausedForAwakeCheck = false
+        else if (!owned) observeSilenceSound(context) { legacyPause(context, AutomaticSilencePause.AWAKE_CHECK) }
         return lifted
     }
 
@@ -205,39 +216,62 @@ object SilenceModeController {
     @Synchronized
     fun setManualSilent(context: Context): Boolean {
         if (MosqueSilenceSettings.usesOwnedRules(context)) {
+            val alreadyManual = PrefsManager.isManualSilenceActive(context)
+            if (!SilenceCoordinator.setManual(context, true)) return false
             PrefsManager.clearManualSilenceEndsAt(context)
-            PrefsManager.clearCallReceivedDuringSilence(context)
-            return SilenceCoordinator.setManual(context, true)
+            if (!alreadyManual) PrefsManager.clearCallReceivedDuringSilence(context)
+            return true
         }
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!notificationManager.isNotificationPolicyAccessGranted) return false
 
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val isNewSilenceSession = !PrefsManager.isAutoSilenceActive(context) && !PrefsManager.isManualSilenceActive(context)
-        if (!PrefsManager.isManualSilenceActive(context)) {
-            PrefsManager.clearCallReceivedDuringSilence(context)
-        }
+        val alreadyManual = PrefsManager.isManualSilenceActive(context)
+        val alreadyAutomatic = PrefsManager.isAutoSilenceActive(context)
+        val currentRinger = audioManager.ringerMode
+        val currentFilter = notificationManager.currentInterruptionFilter
         // A prayer silence or a silence-until-alarm has already silenced the phone: keep the
         // state it saved before it.
-        val previousRingerMode = if (PrefsManager.isAutoSilenceActive(context)) {
+        val previousRingerMode = if (alreadyAutomatic) {
             PrefsManager.getAutoSilencePreviousRingerMode(context)
         } else if (WakeAlarmScheduler.isSilenceUntilAlarmActive(context)) {
             NapPrefs.getPreviousRingerMode(context)
         } else {
-            audioManager.ringerMode
+            currentRinger
         }
-        val previousInterruptionFilter = if (PrefsManager.isAutoSilenceActive(context)) {
+        val previousInterruptionFilter = if (alreadyAutomatic) {
             PrefsManager.getAutoSilencePreviousInterruptionFilter(context)
         } else if (WakeAlarmScheduler.isSilenceUntilAlarmActive(context)) {
             NapPrefs.getPreviousInterruptionFilter(context)
         } else {
-            notificationManager.currentInterruptionFilter
+            currentFilter
+        }
+        // DND access can be revoked after the check. Keep the previous owner's timer and
+        // saved ringer state until both Android calls have accepted the change.
+        var filterApplied = false
+        try {
+            notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+            filterApplied = true
+            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        } catch (denied: SecurityException) {
+            if (filterApplied && currentFilter != NotificationManager.INTERRUPTION_FILTER_UNKNOWN) {
+                try {
+                    notificationManager.setInterruptionFilter(currentFilter)
+                    if (audioManager.ringerMode != currentRinger) audioManager.ringerMode = currentRinger
+                } catch (_: SecurityException) {
+                    // Android now owns the sound policy; it may also reject the rollback.
+                }
+            }
+            observeSilenceSound(context) { manualWriteFailed(context) }
+            return false
         }
 
         PrefsManager.clearAutoSilenceState(context)
         PrefsManager.clearManualSilenceEndsAt(context)
         SilenceGuardService.stopIfNotNeeded(context)
-        if (!PrefsManager.isManualSilenceActive(context)) {
+        if (!alreadyManual) {
+            observeSilenceSound(context) { requested(context, SilenceOwner.MANUAL) }
+            PrefsManager.clearCallReceivedDuringSilence(context)
             PrefsManager.markManualSilenceActive(
                 context = context,
                 previousRingerMode = previousRingerMode,
@@ -245,9 +279,7 @@ object SilenceModeController {
             )
         }
 
-        notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
-        audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
-        if (isNewSilenceSession) {
+        if (!alreadyManual && !alreadyAutomatic) {
             AnalyticsTracker.phoneSilenced(context, source = "manual")
         }
         return true
@@ -256,17 +288,16 @@ object SilenceModeController {
     @Synchronized
     fun setManualNormal(context: Context): Boolean {
         if (MosqueSilenceSettings.usesOwnedRules(context)) {
+            if (!SilenceCoordinator.setManual(context, false)) return false
             ManualSilenceScheduler.cancel(context)
             SilenceCoordinator.stopAutomaticForUser(context)
-            val released = SilenceCoordinator.setManual(context, false)
             refreshDhikrReminders(context)
-            return released
+            return true
         }
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!notificationManager.isNotificationPolicyAccessGranted) return false
 
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        ManualSilenceScheduler.cancel(context)
 
         if (WakeAlarmScheduler.isSilenceUntilAlarmActive(context)) {
             // A pending silence-until-alarm keeps the phone silenced and restores the state from
@@ -280,18 +311,21 @@ object SilenceModeController {
             }
         } else if (PrefsManager.isManualSilenceActive(context)) {
             restoreState(
+                context, SilenceOwner.MANUAL,
                 notificationManager, audioManager,
                 PrefsManager.getManualSilencePreviousInterruptionFilter(context),
                 PrefsManager.getManualSilencePreviousRingerMode(context)
             )
         } else {
             restoreState(
+                context, SilenceOwner.MANUAL,
                 notificationManager, audioManager,
                 NotificationManager.INTERRUPTION_FILTER_ALL,
                 AudioManager.RINGER_MODE_NORMAL
             )
         }
 
+        ManualSilenceScheduler.cancel(context)
         PrefsManager.clearManualSilenceState(context)
         PrefsManager.clearAutoSilenceState(context)
         SilenceGuardService.stopIfNotNeeded(context)
@@ -313,15 +347,14 @@ object SilenceModeController {
     fun endManualSilenceIfActive(context: Context): Boolean {
         if (MosqueSilenceSettings.usesOwnedRules(context)) {
             val wasActive = PrefsManager.isManualSilenceActive(context)
+            if (!SilenceCoordinator.setManual(context, false)) return false
             ManualSilenceScheduler.cancel(context)
-            SilenceCoordinator.setManual(context, false)
             refreshDhikrReminders(context)
             return wasActive
         }
+        if (PrefsManager.isManualSilenceActive(context)) return setManualNormal(context)
         ManualSilenceScheduler.cancel(context)
-        if (!PrefsManager.isManualSilenceActive(context)) return false
-        setManualNormal(context)
-        return true
+        return false
     }
 
     @Synchronized
@@ -338,6 +371,7 @@ object SilenceModeController {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         ManualSilenceScheduler.cancel(context)
         restoreState(
+            context, SilenceOwner.PRAYER,
             notificationManager, audioManager,
             NotificationManager.INTERRUPTION_FILTER_ALL,
             AudioManager.RINGER_MODE_NORMAL

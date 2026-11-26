@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="silence_walk_channel">تسجيل مسار اختبار الإسكات</string>
+    <string name="silence_walk_notification">يجري تسجيل مسار اختبار الإسكات</string>
+    <string name="silence_walk_notification_detail">اضغط لعرض المسار وأحداث الإسكات.</string>
+    <string name="silence_walk_notification_stop">إنهاء التسجيل</string>
+    <string name="silence_walk_start_failed">تعذّر على أندرويد تشغيل خدمة تسجيل المسار.</string>
+    <string name="silence_walk_permission_lost">توقّف التسجيل لأن إذن الموقع لم يعد متاحًا.</string>
+    <string name="silence_walk_wait_provider">لا يتوفر مصدر للموقع الآن. سيتابع التسجيل عند عودته.</string>
+    <string name="silence_walk_provider_failed">تعذّر طلب الموقع من الهاتف.</string>
+    <string name="silence_walk_write_failed">توقّف التسجيل لتعذّر حفظ البيانات على الهاتف.</string>
+    <string name="silence_walk_source">مصدر موقع المسار: %1$s</string>
+    <string name="silence_walk_service_interrupted">توقّف تسجيل المسار قبل إنهاء الاختبار.</string>
+    <string name="silence_walk_device_audio">وضع رنين الهاتف: %1$s. وضع عدم الإزعاج: %2$s.</string>
+    <string name="silence_walk_clock_changed">تغيّر وقت الهاتف أو منطقته الزمنية. الوقت الجديد: %1$s.</string>
+    <string name="silence_walk_ringing">رنين</string>
+    <string name="silence_walk_vibrating">اهتزاز</string>
+    <string name="silence_walk_silent">صامت</string>
+    <string name="silence_walk_filter_off">غير مفعّل</string>
+    <string name="silence_walk_filter_priority">الأولويات فقط</string>
+    <string name="silence_walk_filter_alarms">المنبّهات فقط</string>
+    <string name="silence_walk_filter_none">منع جميع المقاطعات</string>
+    <string name="silence_walk_unknown">غير معروف</string>
+</resources>

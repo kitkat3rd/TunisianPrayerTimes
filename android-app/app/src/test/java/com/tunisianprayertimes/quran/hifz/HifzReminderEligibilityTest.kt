@@ -7,8 +7,7 @@ import android.content.Intent
 import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.AtomicFile
-import android.util.Log
+import com.tunisianprayertimes.AndroidAtomicFileShadow
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.FirstRunPlaceChoice
 import com.tunisianprayertimes.PrefsManager
@@ -23,40 +22,12 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implementation
-import org.robolectric.annotation.Implements
-import org.robolectric.shadow.api.Shadow
-import org.robolectric.util.ReflectionHelpers.ClassParameter
-import java.io.File
-import java.io.IOException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** Windows File.renameTo cannot replace an existing file as Android's rename can. */
-@Implements(AtomicFile::class)
-class HifzNotebookAtomicFileShadow {
-    companion object {
-        @JvmStatic @Implementation
-        fun rename(source: File, target: File) {
-            if (File.separatorChar == '\\' && source.isFile && target.isFile) {
-                try {
-                    Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                } catch (error: IOException) {
-                    Log.e("AtomicFile", "Failed to rename $source to $target", error)
-                }
-            } else {
-                Shadow.directlyOn<Void?, AtomicFile>(AtomicFile::class.java, "rename",
-                    ClassParameter.from(File::class.java, source), ClassParameter.from(File::class.java, target))
-            }
-        }
-    }
-}
-
 /** Notification contents and persisted eligibility must agree with the reminder's prayer day. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35], application = Application::class, shadows = [HifzNotebookAtomicFileShadow::class])
+@Config(sdk = [35], application = Application::class, shadows = [AndroidAtomicFileShadow::class])
 class HifzReminderEligibilityTest {
     @Test
     fun restoredPrayerSlotWaitsForConfirmationWhileClockSlotsRemainAvailable() = isolated { app ->
@@ -272,6 +243,132 @@ class HifzReminderEligibilityTest {
     }
 
     @Test
+    fun grantingAccessWithinTheWindowDeliversTheHeldSlotOnce() = isolated { app ->
+        val day = todayEpochDay()
+        val slot = HifzWhen.At(600)
+        val at = localClock(day, slot.minute)
+        val check = point(10L, 1, day, at)
+        HifzSettings.write(app, HifzSettings(times = HifzTimes(minutes = setOf(slot.minute))))
+        HifzRepository.restore(app, check)
+        refreshAt(app, at - 1)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        val notifications = Shadows.shadowOf(manager)
+        val alarms = Shadows.shadowOf(app.getSystemService(AlarmManager::class.java))
+        notifications.setNotificationsEnabled(false)
+        try {
+            HifzReminder.deliver(app, day, slot, at)
+            assertTrue(HifzReminder.postedIds(app).isEmpty())
+            assertEquals(-1L, checkAskedDay(app, check.id))
+            assertEquals(0, HifzReminder.controlState(app, at).alertsToday)
+            assertTrue(alarms.scheduledAlarms.single().triggerAtTime > at)
+        } finally {
+            notifications.setNotificationsEnabled(true)
+        }
+        val allowedAt = at + 30 * 60_000L
+        refreshAt(app, allowedAt)
+        assertEquals(allowedAt, alarms.scheduledAlarms.single().triggerAtTime)
+        HifzReminder.deliver(app, day, slot, allowedAt)
+        assertEquals(setOf(check.id), HifzReminder.postedIds(app))
+        assertEquals(day, checkAskedDay(app, check.id))
+
+        manager.cancelAll()
+        refreshAt(app, allowedAt + 1)
+        HifzReminder.deliver(app, day, slot, allowedAt + 1)
+        assertTrue(notifications.allNotifications.isEmpty())
+        assertEquals(1, HifzReminder.controlState(app, allowedAt + 1).alertsToday)
+    }
+
+    @Test
+    fun aBlockedSlotExpiresAtItsOriginalTimeEvenAfterRetries() = isolated { app ->
+        val day = todayEpochDay()
+        val slot = HifzWhen.At(600)
+        val at = localClock(day, slot.minute)
+        HifzSettings.write(app, HifzSettings(times = HifzTimes(minutes = setOf(slot.minute))))
+        val check = point(10L, 1, day, at)
+        HifzRepository.restore(app, check)
+        refreshAt(app, at - 1)
+        val notifications = Shadows.shadowOf(app.getSystemService(NotificationManager::class.java))
+        notifications.setNotificationsEnabled(false)
+        try {
+            HifzReminder.deliver(app, day, slot, at)
+            refreshAt(app, at + 80 * 60_000L)
+        } finally {
+            notifications.setNotificationsEnabled(true)
+        }
+        val expired = at + HifzCatchUpMs + 1L
+        refreshAt(app, expired)
+        HifzReminder.deliver(app, day, slot, expired)
+        assertTrue(notifications.allNotifications.isEmpty())
+        assertEquals(-1L, checkAskedDay(app, check.id))
+        assertEquals(0, HifzReminder.controlState(app, expired).alertsToday)
+        val alarms = Shadows.shadowOf(app.getSystemService(AlarmManager::class.java))
+        assertEquals(localClock(day + 1L, slot.minute), alarms.scheduledAlarms.single().triggerAtTime)
+    }
+
+    @Test
+    fun snoozedReviewSurvivesDenialAndDeliversOnceAfterGrant() = isolated { app ->
+        val due = snoozePostedReview(app)
+        val notifications = Shadows.shadowOf(app.getSystemService(NotificationManager::class.java))
+        val alarms = Shadows.shadowOf(app.getSystemService(AlarmManager::class.java))
+        notifications.setNotificationsEnabled(false)
+        try {
+            HifzReminder.deliverSnoozed(app, due)
+            assertTrue(HifzReminder.postedIds(app).isEmpty())
+            assertTrue(HifzReminder.controlState(app, due).snoozedUntil != null)
+            assertTrue(alarms.scheduledAlarms.single().triggerAtTime > due)
+        } finally {
+            notifications.setNotificationsEnabled(true)
+        }
+        val allowedAt = due + 30 * 60_000L
+        val countBefore = HifzReminder.controlState(app, allowedAt).alertsToday
+        refreshAt(app, allowedAt)
+        assertEquals(allowedAt, alarms.scheduledAlarms.single().triggerAtTime)
+        HifzReminder.deliverSnoozed(app, allowedAt)
+        HifzReminder.deliverSnoozed(app, allowedAt + 1L)
+        assertEquals(setOf(10L), HifzReminder.postedIds(app))
+        assertNull(HifzReminder.controlState(app, allowedAt).snoozedUntil)
+        assertEquals(countBefore + 1, HifzReminder.controlState(app, allowedAt).alertsToday)
+    }
+
+    @Test
+    fun lateGrantCannotReviveAnExpiredSnooze() = isolated { app ->
+        val due = snoozePostedReview(app)
+        val notifications = Shadows.shadowOf(app.getSystemService(NotificationManager::class.java))
+        notifications.setNotificationsEnabled(false)
+        try {
+            HifzReminder.deliverSnoozed(app, due)
+            refreshAt(app, due + 80 * 60_000L)
+        } finally {
+            notifications.setNotificationsEnabled(true)
+        }
+        val expired = due + HifzCatchUpMs + 1L
+        val countBefore = HifzReminder.controlState(app, expired).alertsToday
+        HifzReminder.deliverSnoozed(app, expired)
+        assertTrue(notifications.allNotifications.isEmpty())
+        assertNull(HifzReminder.controlState(app, expired).snoozedUntil)
+        assertEquals(countBefore, HifzReminder.controlState(app, expired).alertsToday)
+    }
+
+    private fun localClock(day: Long, minute: Int) = LocalDate.ofEpochDay(day).atTime(minute / 60, minute % 60)
+        .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    private fun snoozePostedReview(app: Application): Long {
+        val now = System.currentTimeMillis()
+        val day = epochDay(now)
+        val slot = HifzWhen.At(600)
+        HifzSettings.write(app, HifzSettings(times = HifzTimes(minutes = setOf(slot.minute))))
+        HifzRepository.restore(app, point(10L, 1, day, now))
+        invokeRemind(app, mapOf(day to setOf(slot)), now)
+        assertTrue(HifzReminder.later(app))
+        return requireNotNull(HifzReminder.controlState(app, now).snoozedUntil)
+    }
+
+    private fun refreshAt(context: Context, now: Long) {
+        HifzReminder::class.java.getDeclaredMethod("refreshLocked", Context::class.java, Long::class.javaPrimitiveType)
+            .apply { isAccessible = true }.invoke(HifzReminder, context, now)
+    }
+
+    @Test
     fun checksOutsideTheShownBatch_remainEligibleAtALaterSelectedSlot() = isolated { app ->
         val now = System.currentTimeMillis()
         val today = epochDay(now)
@@ -417,8 +514,7 @@ class HifzReminderEligibilityTest {
         invokeRemind(app, mapOf(day to setOf(time)), now)
         HifzRepository.delete(app, first.id)
 
-        HifzReminder::class.java.getDeclaredMethod("refreshLocked", Context::class.java, Long::class.javaPrimitiveType)
-            .apply { isAccessible = true }.invoke(HifzReminder, app, now + 60_000L)
+        refreshAt(app, now + 60_000L)
 
         assertEquals(setOf(second.id), HifzReminder.postedIds(app))
         assertEquals(1, HifzReminder.controlState(app, now + 60_000L).alertsToday)

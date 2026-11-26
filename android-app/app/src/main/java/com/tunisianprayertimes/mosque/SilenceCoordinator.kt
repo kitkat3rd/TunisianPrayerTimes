@@ -28,6 +28,7 @@ enum class SilenceOwner(val title: Int) {
  */
 object SilenceCoordinator {
     internal val serial = Any()
+
     private fun prefs(context: Context) = context.getSharedPreferences("silence_ownership", Context.MODE_PRIVATE)
     private fun notifications(context: Context) = context.getSystemService(NotificationManager::class.java)
     private fun component(context: Context) = ComponentName(context, MosqueSettingsActivity::class.java)
@@ -97,9 +98,23 @@ object SilenceCoordinator {
         }.getOrDefault(false)
     }
 
+    /** Only link to the exact rule we installed. A disabled rule is the user's Android setting. */
+    internal fun disabledOwnedRuleId(context: Context, owner: SilenceOwner): String? = synchronized(serial) {
+        if (Build.VERSION.SDK_INT < 29 || !notifications(context).isNotificationPolicyAccessGranted) return@synchronized null
+        val settings = prefs(context)
+        val id = settings.getString(key(owner, "id"), null) ?: return@synchronized null
+        val rule = runCatching { notifications(context).getAutomaticZenRule(id) }.getOrNull() ?: return@synchronized null
+        id.takeIf { !rule.isEnabled && rule.configurationActivity == component(context) &&
+            rule.conditionId?.toString() == settings.getString(key(owner, "uri"), null) }
+    }
+
     fun requested(context: Context, owner: SilenceOwner): Boolean = synchronized(serial) {
         prefs(context).getBoolean(key(owner, "desired"), false) &&
             !prefs(context).getBoolean(key(owner, "blocked"), false) && ruleReady(context, owner)
+    }
+
+    internal fun canRequest(context: Context, owner: SilenceOwner): Boolean = synchronized(serial) {
+        !prefs(context).getBoolean(key(owner, "blocked"), false) && ruleReady(context, owner)
     }
     fun autoActive(context: Context) = synchronized(serial) {
         requested(context, SilenceOwner.PRAYER) || requested(context, SilenceOwner.MOSQUE)
@@ -110,16 +125,23 @@ object SilenceCoordinator {
     }
 
     /** Journal first. FALSE is retryable after a failed Binder call. Unchanged TRUE never resets snooze. */
-    internal fun set(context: Context, owner: SilenceOwner, desired: Boolean): Boolean = synchronized(serial) {
+    internal fun set(context: Context, owner: SilenceOwner, desired: Boolean, pauseReason: AutomaticSilencePause? = null): Boolean = synchronized(serial) {
         if (Build.VERSION.SDK_INT < 29 || !MosqueSilenceSettings.usesOwnedRules(context)) return@synchronized false
         // Keep observation and expiry running, but do not silence an escalating awake check.
         if (desired && (owner == SilenceOwner.PRAYER || owner == SilenceOwner.MOSQUE) &&
-            SilenceModeController.isAutoSilencePausedForAwakeCheck) return@synchronized true
+            SilenceModeController.isAutoSilencePausedForAwakeCheck) {
+            observeSilenceSound(context) { rulePaused(context, owner, AutomaticSilencePause.AWAKE_CHECK) }
+            return@synchronized true
+        }
         val state = prefs(context)
         val old = state.getBoolean(key(owner, "desired"), false)
         // Keep the presence observation alive so it can revalidate after projection ends.
         if (desired && !old && (owner == SilenceOwner.PRAYER || owner == SilenceOwner.MOSQUE) &&
-            AndroidAutoConnection.isProjected(context)) return@synchronized true
+            AndroidAutoConnection.isProjected(context)) {
+            observeSilenceSound(context) { rulePaused(context, owner, AutomaticSilencePause.ANDROID_AUTO) }
+            return@synchronized true
+        }
+        observeSilenceSound(context) { if (pauseReason == null) clearRulePause(owner) }
         if (desired && (state.getBoolean(key(owner, "blocked"), false) || !ruleReady(context, owner))) return@synchronized false
         if (desired && old) {
             if (owner == SilenceOwner.MOSQUE && !MosqueSilenceMonitor.canActivateLocked(context)) {
@@ -149,16 +171,21 @@ object SilenceCoordinator {
             }
             notifications(context).setAutomaticZenRuleState(id, Condition(requireNotNull(uri), context.getString(owner.title),
                 if (desired) Condition.STATE_TRUE else Condition.STATE_FALSE))
+            observeSilenceSound(context) {
+                if (!desired && old && pauseReason != null) rulePaused(context, owner, pauseReason)
+                ruleWritten(context, owner, desired)
+            }
             state.edit().putBoolean(key(owner, "release_pending"), false).commit()
             // A stopped silence-until-alarm must not come back merely because another pending alarm
             // resumes it. Other owners end their own episode naturally at FALSE.
             if (!desired && owner != SilenceOwner.WAKE) state.edit().putBoolean(key(owner, "blocked"), false).commit()
             true
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
             // The Binder result may be unknown. Withdraw logical authority and retain cleanup
             // rather than reporting a confirmed app contribution that was never established.
             state.edit().putBoolean(key(owner, "desired"), false)
                 .putBoolean(key(owner, "release_pending"), true).putBoolean(key(owner, "blocked"), true).commit()
+            observeSilenceSound(context) { ruleWriteFailed(context, owner, desired, failure) }
             false
         }
     }
@@ -177,11 +204,11 @@ object SilenceCoordinator {
         val mosque = set(context, SilenceOwner.MOSQUE, false)
         active && prayer && mosque
     }
-    internal fun releaseAutoRules(context: Context): Boolean = synchronized(serial) {
+    internal fun releaseAutoRules(context: Context, pauseReason: AutomaticSilencePause): Boolean = synchronized(serial) {
         // Leave the bounded visit alive for revalidation when the interruption ends.
         val active = autoActive(context)
-        val prayer = set(context, SilenceOwner.PRAYER, false)
-        val mosque = set(context, SilenceOwner.MOSQUE, false)
+        val prayer = set(context, SilenceOwner.PRAYER, false, pauseReason)
+        val mosque = set(context, SilenceOwner.MOSQUE, false, pauseReason)
         active && prayer && mosque
     }
     fun setManual(context: Context, enabled: Boolean): Boolean = synchronized(serial) {
@@ -209,6 +236,7 @@ object SilenceCoordinator {
         val state = prefs(context)
         val owner = SilenceOwner.entries.firstOrNull { state.getString(key(it, "id"), null) == id } ?: return@synchronized
         val requested = state.getBoolean(key(owner, "desired"), false)
+        observeSilenceSound(context) { ruleStatus(context, owner, status) }
         // API 30 status values: enabled=1, disabled=2, removed=3; API 35 adds activated=4,
         // deactivated=5. Never turn a callback into an artificial FALSE/TRUE reset.
         if (status == 2 || status == 3 || status == 5 && requested) {

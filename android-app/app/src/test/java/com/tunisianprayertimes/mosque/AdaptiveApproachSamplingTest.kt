@@ -1,0 +1,75 @@
+package com.tunisianprayertimes.mosque
+
+import com.tunisianprayertimes.mosque.presence.AdaptiveObservation
+import com.tunisianprayertimes.mosque.presence.GeoPoint
+import com.tunisianprayertimes.mosque.presence.PresenceFix
+import com.tunisianprayertimes.mosque.presence.SilenceArea
+import com.tunisianprayertimes.mosque.presence.SilencePolygon
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Test
+
+class AdaptiveApproachSamplingTest {
+    private val mosque = SilencePolygon(listOf(GeoPoint(0.0, 0.0), GeoPoint(0.001, 0.0),
+        GeoPoint(0.001, 0.001), GeoPoint(0.0, 0.001)))
+
+    private fun AdaptiveObservation.fix(at: Long, metersOutside: Double, accuracy: Double) {
+        val point = GeoPoint(0.0005, 0.001 + metersOutside / 111_319.49)
+        observe(PresenceFix(point, accuracy, at), at)
+    }
+
+    private fun balanced(initialDistance: Double = 37.0): AdaptiveObservation {
+        val machine = AdaptiveObservation(listOf(SilenceArea("test", 1, listOf(mosque))), 0)
+        machine.period(true, 0)
+        machine.start(0, forceBurst = true)
+        machine.fix(1_000, initialDistance, 3.0)
+        machine.tick(120_000)
+        assertEquals(AdaptiveObservation.Sampling.BALANCED, machine.sampling)
+        return machine
+    }
+
+    @Test fun gradualApproachStartsABoundedBurstOutsideTheMosqueWithoutSilencing() {
+        val m = balanced()
+        m.fix(150_000, 37.0, 3.0)
+        m.fix(177_000, 35.0, 9.0)
+        m.fix(204_000, 31.0, 8.0)
+        assertEquals(AdaptiveObservation.Sampling.BALANCED, m.sampling)
+        m.fix(231_000, 21.0, 9.0)
+        assertEquals(AdaptiveObservation.Sampling.PRECISE, m.sampling)
+        assertEquals(351_000L, m.requestEnd)
+        assertFalse(m.desired)
+
+        m.fix(240_000, 18.0, 8.0)
+        assertEquals(351_000L, m.requestEnd)
+        m.tick(351_000)
+        m.fix(352_000, 37.0, 3.0)
+        m.fix(379_000, 35.0, 9.0)
+        m.fix(406_000, 31.0, 8.0)
+        m.fix(433_000, 21.0, 9.0)
+        assertEquals(AdaptiveObservation.Sampling.BALANCED, m.sampling)
+        assertFalse(m.desired)
+    }
+
+    @Test fun gradualApproachNeedsRecentAccurateEvidenceWithinTheFinalThirtyMeters() {
+        val expired = balanced()
+        expired.fix(150_000, 37.0, 3.0)
+        expired.fix(177_000, 35.0, 9.0)
+        expired.fix(204_000, 31.0, 8.0)
+        expired.fix(280_000, 21.0, 9.0)
+        assertEquals(AdaptiveObservation.Sampling.BALANCED, expired.sampling)
+
+        val imprecise = balanced()
+        imprecise.fix(150_000, 37.0, 3.0)
+        imprecise.fix(177_000, 35.0, 9.0)
+        imprecise.fix(204_000, 31.0, 45.0)
+        imprecise.fix(231_000, 21.0, 9.0)
+        assertEquals(AdaptiveObservation.Sampling.BALANCED, imprecise.sampling)
+
+        val far = balanced(47.0)
+        far.fix(150_000, 47.0, 3.0)
+        far.fix(177_000, 45.0, 9.0)
+        far.fix(204_000, 41.0, 8.0)
+        far.fix(231_000, 31.0, 9.0)
+        assertEquals(AdaptiveObservation.Sampling.BALANCED, far.sampling)
+    }
+}

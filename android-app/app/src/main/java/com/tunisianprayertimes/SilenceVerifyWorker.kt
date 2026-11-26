@@ -15,8 +15,8 @@ import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 
 /**
- * Periodic WorkManager worker that re-verifies and re-schedules silence alarms.
- * Acts as a safety net in case AlarmManager alarms are killed by OEM battery optimization.
+ * One battery-constrained periodic job for prayer silence repair and an opted-in travel lookup,
+ * including trips between cities in the same time zone. Either feature can run on its own.
  */
 class SilenceVerifyWorker(
     appContext: Context,
@@ -25,9 +25,18 @@ class SilenceVerifyWorker(
 
     companion object {
         private const val TAG = "SilenceVerifyWorker"
-        private const val WORK_NAME = "silence_verify"
+        internal const val WORK_NAME = "silence_verify"
         private const val VERIFY_INTERVAL_HOURS = 6L
         private const val VERIFY_FLEX_HOURS = 2L
+
+        private fun canVerifySilence(context: Context): Boolean =
+            PrefsManager.isEnabled(context) && ScheduleRefreshCoordinator.hasSilencePermissions(context)
+
+        @Synchronized
+        fun reconcileSchedule(context: Context) {
+            if (canVerifySilence(context) || DelegationLocator.canUpdateTravelInBackground(context)) enqueue(context)
+            else cancel(context)
+        }
 
         fun enqueue(context: Context) {
             try {
@@ -44,7 +53,7 @@ class SilenceVerifyWorker(
                     .build()
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                     WORK_NAME,
-                    ExistingPeriodicWorkPolicy.UPDATE,
+                    ExistingPeriodicWorkPolicy.KEEP,
                     request
                 )
             } catch (e: IllegalStateException) {
@@ -62,29 +71,26 @@ class SilenceVerifyWorker(
     }
 
     override suspend fun doWork(): Result {
-        Log.d(TAG, "Verifying silence alarms")
-        if (MosqueSilenceSettings.usesOwnedRules(applicationContext)) {
-            SilenceCoordinator.recover(applicationContext)
-            MosqueSilenceMonitor.reconcile(applicationContext)
+        val app = applicationContext
+        if (!canVerifySilence(app) && !DelegationLocator.canUpdateTravelInBackground(app)) {
+            reconcileSchedule(app)
+            return Result.success()
         }
-        // Check for Ramadan date override from GitHub Pages
+        // The locator rechecks travel consent before acquiring a fix and again before saving it.
+        DelegationLocator.updatePlaceFromCurrentLocation(app, background = true)
+        if (!canVerifySilence(app)) return Result.success()
+        if (MosqueSilenceSettings.usesOwnedRules(app)) {
+            SilenceCoordinator.recover(app)
+            MosqueSilenceMonitor.reconcile(app)
+        }
         RamadanOverrideChecker.startPollingIfNeeded()
-        var refreshResult = "disabled"
-        if (PrefsManager.isEnabled(applicationContext)) {
-            // No outside-Tunisia gate (principle 7, D20): a place abroad keeps its silences.
-            refreshResult = "success"
-            // A job runs with no screen open: without the background-location permission Android refuses the fix (6.8).
-            if (DelegationLocator.updatePlaceFromCurrentLocation(applicationContext, background = true) == DelegationLocator.FixOutcome.CHANGED) {
-                Log.d(TAG, "Delegation updated, rescheduling alarms")
-            }
-            SilenceScheduler.scheduleAll(applicationContext)
-        }
+        SilenceScheduler.scheduleAll(app)
         AnalyticsTracker.scheduleRefreshResult(
-            context = applicationContext,
+            context = app,
             source = "silence_worker",
-            result = refreshResult,
-            silencePrayerCount = AnalyticsTracker.silencePrayerCount(applicationContext),
-            wakeAlarmCount = AnalyticsTracker.enabledWakeAlarmCount(applicationContext),
+            result = "success",
+            silencePrayerCount = AnalyticsTracker.silencePrayerCount(app),
+            wakeAlarmCount = AnalyticsTracker.enabledWakeAlarmCount(app),
         )
         return Result.success()
     }

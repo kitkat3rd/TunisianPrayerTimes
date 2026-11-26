@@ -1,7 +1,6 @@
 package com.tunisianprayertimes.adhkar
 
 import com.tunisianprayertimes.PrefsManager
-import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,14 +8,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -93,11 +89,8 @@ object DhikrReminderScheduler {
     }
     fun channelId(vibrate: Boolean): String = if (vibrate) CHANNEL_ID else QUIET_CHANNEL_ID
     fun notificationsEnabled(context: Context, vibrate: Boolean = true): Boolean =
-        (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
-            NotificationManagerCompat.from(context).areNotificationsEnabled() &&
-            manager(context).getNotificationChannel(channelId(vibrate))?.importance?.let {
-                it != NotificationManager.IMPORTANCE_NONE
-            } == true
+        manager(context).getNotificationChannel(channelId(vibrate)) != null &&
+            NotificationAccess.issue(context, channelId(vibrate)) == null
 
     fun exactAlarmsEnabled(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S || context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
@@ -708,18 +701,7 @@ object DhikrReminderScheduler {
             return@synchronized
         }
         if (eligible && !notificationsEnabled(context, rule!!.vibrate)) {
-            // A one-shot alarm has fired, so leave another alarm pending while this
-            // window remains open. Refresh releases it early if access returns.
-            Log.w(TAG, "Reminder notification blocked for rule=$ruleId")
-            val retryAt = minOf(now + BLOCKED_NOTIFICATION_RETRY_MILLIS, window!!.notificationEndMillis - 1)
-            if (retryAt > now) {
-                deferEvent(context, prefs, ruleId, event, retryAt, "notification_blocked")
-            } else {
-                cancelDelivery(context, ruleId, event)
-                prefs.edit().remove("event:" + ruleId).putString("done:" + event.getString("eventId"),
-                    JSONObject().put("intended", event.optLong("at")).put("actual", now).put("outcome", "notification_blocked").toString()).commit()
-                refresh(context, nowMillis = now + 1)
-            }
+            deferBlockedNotification(context, prefs, ruleId, event, now, window!!.notificationEndMillis)
             return@synchronized
         }
         val reading = DhikrReadingPresence.occurrenceId == occurrence?.id
@@ -744,9 +726,17 @@ object DhikrReminderScheduler {
                 (window.notificationEndMillis - window.startMillis) / 4)
         val posted = eligible && !reading && !tooLate &&
             postNotification(context, occurrence!!, window!!.notificationEndMillis, now, window = window)
-        if (eligible && !reading && !tooLate && !posted && now + 60_000L < window!!.notificationEndMillis) {
-            deferEvent(context, prefs, ruleId, event, now + 60_000L, "retry")
-            return@synchronized
+        if (eligible && !reading && !tooLate && !posted) {
+            val end = window!!.notificationEndMillis
+            if (!notificationsEnabled(context, rule!!.vibrate)) {
+                deferBlockedNotification(context, prefs, ruleId, event, now, end)
+                return@synchronized
+            }
+            val retryAt = minOf(now + 60_000L, end - 1)
+            if (retryAt > now) {
+                deferEvent(context, prefs, ruleId, event, retryAt, "retry")
+                return@synchronized
+            }
         }
         val outcome = if (!eligible) "ineligible" else if (reading) "reading" else if (tooLate) "too_late"
             else if (posted) "shown" else "post_failed"
@@ -817,6 +807,21 @@ object DhikrReminderScheduler {
         prefs.edit().putString("event:" + ruleId, event.toString()).commit()
         scheduleDelivery(context, ruleId, event)
     }
+    /** A blocked occurrence keeps its original window. A grant can release it before the next fallback alarm. */
+    private fun deferBlockedNotification(
+        context: Context, prefs: SharedPreferences, ruleId: String, event: JSONObject, now: Long, end: Long,
+    ) {
+        val retryAt = minOf(now + BLOCKED_NOTIFICATION_RETRY_MILLIS, end - 1)
+        if (retryAt > now) {
+            deferEvent(context, prefs, ruleId, event, retryAt, "notification_blocked")
+        } else {
+            cancelDelivery(context, ruleId, event)
+            prefs.edit().remove("event:$ruleId").putString("done:" + event.getString("eventId"),
+                JSONObject().put("intended", event.optLong("at")).put("actual", now).put("outcome", "notification_blocked").toString()).commit()
+            refresh(context, nowMillis = now + 1)
+        }
+    }
+
     /** [window] is the period being notified; a gentle or balanced collection names its end in the body. */
     private fun postNotification(context: Context, occurrence: DhikrOccurrence, endMillis: Long, now: Long,
                                  alert: Boolean = true, window: DhikrWindow? = null): Boolean {
@@ -861,8 +866,8 @@ object DhikrReminderScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         builder.setVibrate(if (rule?.vibrate == false || !alert) longArrayOf(0L) else longArrayOf(0, 250, 120, 250))
         Log.d(TAG, "posting " + occurrence.id + " title=$title")
-        return runCatching { manager(context).notify(occurrence.id, 1, builder.build()) }
-            .onFailure { Log.w(TAG, "Could not post reminder for " + occurrence.id, it) }.isSuccess
+        return runCatching { manager(context).postReminderIfAllowed(context, 1, builder.build(), tag = occurrence.id) }
+            .onFailure { Log.w(TAG, "Could not post reminder for " + occurrence.id, it) }.getOrDefault(false)
     }
     /** Keep an inexact copy: revoking exact-alarm access cancels all exact alarms. */
     private fun scheduleDelivery(context: Context, id: String, event: JSONObject) {

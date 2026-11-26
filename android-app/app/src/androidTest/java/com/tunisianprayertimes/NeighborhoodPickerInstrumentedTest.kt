@@ -6,13 +6,16 @@ import android.location.Location
 import android.graphics.Bitmap
 import android.os.SystemClock
 import java.io.File
-import java.util.Calendar
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import com.tunisianprayertimes.place.PrayerPlace
 import com.tunisianprayertimes.ui.TestTags
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -159,25 +162,28 @@ class NeighborhoodPickerInstrumentedTest {
         val destination = 36.3426978 to 9.6190025
         val destinationSource = GouvernoratRepository.findNearestDelegation(context, destination.first, destination.second)!!.id
         assertNotEquals(initialSource, destinationSource)
-        val today = Calendar.getInstance()
-        fun dhuhrTime(source: Int): String {
-            val time = PrayerTimesRepository.loadDayPrayerTimes(context, source,
-                today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1, today.get(Calendar.DAY_OF_MONTH))!!.dhuhr
-            return String.format(Locale.US, "%02d:%02d", time.hour, time.minute)
+        val today = LocalDate.now(PrayerPlace.Inm(initialSource).zone)
+        val clock = DateTimeFormatter.ofPattern("HH:mm", Locale.US).withZone(ZoneId.systemDefault())
+        fun prayerTimes(source: Int): Map<Prayer, String> {
+            return PrayerTimesRepository.prayerOccurrences(context, today, PrayerPlace.Inm(source))
+                .associate { it.prayer to clock.format(it.at) }
         }
-        val initialTime = dhuhrTime(initialSource)
-        val destinationTime = dhuhrTime(destinationSource)
-        assertNotEquals("The public test locations must have different Dhuhr times", initialTime, destinationTime)
-        compose.onNodeWithTag("prayer_time_DHUHR").performScrollTo().assertIsDisplayed().assertTextEquals(initialTime)
+        val before = prayerTimes(initialSource)
+        val after = prayerTimes(destinationSource)
+        val prayer = before.keys.first { before.getValue(it) != after.getValue(it) }
+        val rowTag = "today_time_${prayer.name}"
+        val initialTime = hasText(before.getValue(prayer), substring = true)
+        val destinationTime = hasText(after.getValue(prayer), substring = true)
+        compose.onNodeWithTag(rowTag).performScrollTo().assertIsDisplayed().assert(initialTime)
 
         coordinate = destination
         PrefsManager.setAutoLocationUpdateEnabled(context, true)
         assertTrue(runBlocking { DelegationLocator.updateDelegationFromLastLocation(context) })
         compose.waitUntil(5_000) {
-            compose.onAllNodes(hasTestTag("prayer_time_DHUHR") and hasText(destinationTime))
+            compose.onAllNodes(hasTestTag(rowTag) and destinationTime)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("prayer_time_DHUHR").assertIsDisplayed().assertTextEquals(destinationTime)
+        compose.onNodeWithTag(rowTag).assertIsDisplayed().assert(destinationTime)
         assertEquals(destinationSource, PrefsManager.getDelegationId(context))
         compose.onNodeWithTag(TestTags.LOCATION_PICKER).performScrollTo()
         compose.onNode(hasText("حيّ السلام") and hasAnyAncestor(hasTestTag(TestTags.LOCATION_PICKER))).assertIsDisplayed()

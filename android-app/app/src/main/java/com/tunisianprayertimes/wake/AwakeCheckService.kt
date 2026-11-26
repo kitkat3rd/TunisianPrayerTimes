@@ -332,7 +332,7 @@ class AwakeCheckService : Service() {
     private fun appPendingIntent(): PendingIntent = MainActivityPendingIntents.awakeCheck(this)
 
     companion object {
-        private const val CHANNEL_ID = "tunisianprayertimes.awake.check.silent"
+        internal const val CHANNEL_ID = "tunisianprayertimes.awake.check.silent"
         private const val NOTIFICATION_ID = 0x7A0E
         private const val TAG = "AwakeCheckService"
 

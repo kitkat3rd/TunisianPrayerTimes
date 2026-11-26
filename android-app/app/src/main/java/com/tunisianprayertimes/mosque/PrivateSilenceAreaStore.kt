@@ -147,17 +147,22 @@ object PrivateSilenceAreaStore {
     fun exportGeoJson(context: Context): String {
         val read = read(context); check(read.available)
         return JSONObject().put("type", "FeatureCollection").put("features", JSONArray().apply {
-            read.areas.forEach { saved -> put(JSONObject().put("type", "Feature").put("id", saved.geometry.id)
-                .put("properties", JSONObject().put("name", saved.name).put("enabled", saved.geometry.enabled))
-                .put("geometry", JSONObject().put("type", "MultiPolygon").put("coordinates", JSONArray().apply {
-                    saved.geometry.polygons.forEach { polygon -> put(JSONArray().apply {
-                        (listOf(polygon.exterior) + polygon.holes).forEach { points ->
-                            val closed = if (points.first() == points.last()) points else points + points.first()
-                            put(ringJson(closed))
-                        }
-                    }) }
-                }))) }
+            read.areas.forEach { put(geoJsonFeature(it)) }
         }).toString(2)
+    }
+    internal fun geoJsonFeature(saved: SavedSilenceArea): JSONObject {
+        val coordinates = JSONArray()
+        saved.geometry.polygons.forEach { polygon ->
+            val rings = JSONArray()
+            (listOf(polygon.exterior) + polygon.holes).forEach { points ->
+                val closed = if (points.first() == points.last()) points else points + points.first()
+                rings.put(ringJson(closed))
+            }
+            coordinates.put(rings)
+        }
+        return JSONObject().put("type", "Feature").put("id", saved.geometry.id)
+            .put("properties", JSONObject().put("name", saved.name).put("enabled", saved.geometry.enabled))
+            .put("geometry", JSONObject().put("type", "MultiPolygon").put("coordinates", coordinates))
     }
     private fun ringJson(points: List<GeoPoint>) = JSONArray().apply {
         points.forEach { put(JSONArray().put(it.longitude).put(it.latitude)) }

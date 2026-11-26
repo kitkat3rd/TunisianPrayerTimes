@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مسار اختبار الإسكات</title>
+<style>
+* { box-sizing: border-box }
+body { margin: 0; background: #f4f5ef; color: #213832; font: 16px/1.6 Roboto, "Segoe UI", sans-serif }
+main { max-width: 1300px; margin: auto; padding: clamp(16px, 3.6vw, 54px) }
+header, .heading, .tools, .legend { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem }
+header, .heading { justify-content: space-between }
+h1, h2, p { margin: 0 }
+h1 { font-size: clamp(1.7rem, 4vw, 2.8rem); line-height: 1.25 }
+h2 { font-size: 1.2rem }
+header p, .muted, figcaption { color: #53645e }
+header p { margin-top: .45rem }
+button, select { font: inherit; color: inherit; background: #fff; border: 1px solid #c3cec4; border-radius: 7px; padding: .32rem .72rem; cursor: pointer }
+button:disabled { opacity: .5; cursor: default }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid #cb7d24; outline-offset: 2px }
+.grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(275px, 1fr); gap: 1rem; margin-top: 1.6rem; align-items: start }
+section { min-width: 0; background: #fff; border: 1px solid #d9e1d7; border-radius: 14px; padding: 1rem }
+figure { margin: .8rem 0 }
+#map { display: block; width: 100%; height: clamp(260px, 44vh, 510px); border-radius: 8px; touch-action: none; background: #edf2ea }
+figcaption { display: flex; justify-content: space-between; gap: .6rem; flex-wrap: wrap; font-size: .85rem; padding-top: .45rem }
+.legend { gap: 1rem }
+.key::before { display: inline-block; content: ""; width: .55rem; height: .55rem; border-radius: 50%; margin-left: .35rem; background: var(--key) }
+.selected { border-top: 1px solid #dde4dc; margin-top: .8rem; padding-top: .8rem; min-height: 6rem; overflow-wrap: anywhere }
+#selected-details { white-space: pre-wrap }
+.seek { width: 100%; accent-color: #146457; margin: .75rem 0 .35rem }
+ol { list-style: none; margin: .65rem 0; padding: 0; max-height: 52vh; overflow: auto; scrollbar-width: thin }
+.item { width: 100%; background: transparent; border: 0; border-radius: 4px; border-bottom: 1px solid #e2e7de; padding: .65rem .45rem; display: grid; grid-template-columns: auto 1fr; gap: .75rem; align-items: baseline; text-align: start }
+.item time { font-variant-numeric: tabular-nums; color: #53645e; direction: ltr }
+.item[aria-current="true"] { background: #e0f1e7; box-shadow: inset -3px 0 #146457 }
+.item span { overflow-wrap: anywhere }
+.pages { display: flex; align-items: center; justify-content: space-between; gap: .6rem; font-size: .9rem }
+[hidden] { display: none !important }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr } #map { height: 35vh; min-height: 240px } }
+</style>
+<main>
+  <header>
+    <div><h1>مسار اختبار الإسكات</h1><p id="session"></p></div>
+    <button id="download">تنزيل البيانات بصيغة GeoJSON</button>
+  </header>
+  <div class="grid">
+    <section aria-labelledby="map-heading">
+      <div class="heading"><h2 id="map-heading">خريطة المسار</h2>
+        <div class="tools"><button id="zoom-in" aria-label="تكبير الخريطة">＋</button><button id="zoom-out" aria-label="تصغير الخريطة">−</button><button id="fit">كامل المسار</button></div>
+      </div>
+      <figure><canvas id="map" role="img" aria-label="المسار الجغرافي، الشمال في الأعلى. يمكن اختيار النقاط من السجل الزمني."></canvas>
+        <figcaption><span class="legend"><span class="key" style="--key:#126659">المسار</span><span class="key" style="--key:#ad5917">حدث بموقع</span><span class="key" style="--key:#61549c">قياس نظام الإسكات</span><span id="boundary-key" class="key" style="--key:#95722e" hidden>حدود الإسكات وقت التصدير</span></span><span id="scale"></span></figcaption>
+        <p class="muted" id="boundary-summary"></p>
+      </figure>
+      <p class="muted" id="no-fixes" hidden>لا توجد إحداثيات مسجّلة في هذه الجلسة.</p>
+      <label for="seek">استعراض المسار حسب الوقت</label>
+      <input type="range" min="0" max="0" value="0" id="seek" class="seek" dir="ltr">
+      <div class="selected" aria-live="polite"><strong id="selected-title"></strong><p id="selected-details"></p><p class="muted" id="selected-location"></p></div>
+    </section>
+    <section aria-labelledby="timeline-heading">
+      <div class="heading"><h2 id="timeline-heading">السجل الزمني</h2>
+        <select id="filter" aria-label="عرض السجل"><option value="all">كل التسجيلات</option><option value="events">أحداث الإسكات والاختبار</option></select>
+      </div>
+      <ol id="timeline"></ol>
+      <div class="pages"><button id="previous">السابق</button><span id="page"></span><button id="next">التالي</button></div>
+    </section>
+  </div>
+</main>
+<script type="application/geo+json" id="trace">
+<!--TRACE_GEOJSON-->
+</script>
+<script>
+'use strict';
+const el = id => document.getElementById(id);
+const trace = JSON.parse(el('trace').textContent);
+const entries = trace.features;
+const entryIndex = new Map(entries.map((entry, index) => [entry.id, index]));
+const session = trace.session;
+const boundaryFeatures = trace.boundaries?.features || [];
+// An older browser may lack the recording device's time-zone identifier.
+let displayZone = session.timeZone;
+try { new Intl.DateTimeFormat('ar-TN', { timeZone: displayZone }); } catch { displayZone = 'UTC'; }
+const timeOptions = { timeZone: displayZone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
+const clock = new Intl.DateTimeFormat('ar-TN', timeOptions);
+const dateTime = new Intl.DateTimeFormat('ar-TN', { ...timeOptions, year: 'numeric', month: 'short', day: 'numeric' });
+const title = entry => entry.properties.title || entry.properties.detail || entry.properties.kind;
+const isRoute = entry => entry.properties.kind === 'route';
+const isMonitor = entry => entry.properties.kind === 'monitor_fix';
+const rangeText = dateTime.format(session.startedAt) + (session.endedAt == null ? ' · جلسة جارية عند التصدير' : ' — ' + dateTime.format(session.endedAt));
+el('session').textContent = rangeText + ' · ' + displayZone;
+el('boundary-key').hidden = !boundaryFeatures.length;
+if (boundaryFeatures.length) {
+  const names = boundaryFeatures.map(feature => feature.properties.name).join('، ');
+  el('boundary-summary').textContent = 'المناطق المفعّلة القريبة عند التصدير (' + dateTime.format(trace.boundaries.asOf) + '): ' + names;
+}
+if (trace.boundaries?.available === false || trace.boundaries?.partial) {
+  el('boundary-summary').textContent += ' تعذّرت قراءة بعض حدود الإسكات عند التصدير.';
+}
+
+const routeSegments = [];
+let previousRouteTime = null;
+for (const entry of entries) {
+  if (entry.properties.breaksRouteContinuity) previousRouteTime = null;
+  if (!isRoute(entry)) continue;
+  if (!entry.geometry) { previousRouteTime = null; continue; }
+  if (previousRouteTime === null || entry.properties.at - previousRouteTime > trace.routeMaxGapMs) routeSegments.push([]);
+  routeSegments[routeSegments.length - 1].push(entry.geometry.coordinates);
+  previousRouteTime = entry.properties.at;
+}
+el('download').onclick = () => {
+  const lines = routeSegments.filter(segment => segment.length > 1);
+  const features = entries.concat(boundaryFeatures);
+  if (lines.length) features.push({ type: 'Feature', properties: { kind: 'recorded_route' }, geometry: { type: 'MultiLineString', coordinates: lines } });
+  const { boundaries, ...metadata } = trace;
+  const blob = new Blob([JSON.stringify({ ...metadata, boundariesAsOf: boundaries?.asOf, features })], { type: 'application/geo+json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'silence-walk-' + session.id + '.geojson'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const canvas = el('map'), ctx = canvas.getContext('2d');
+const origin = entries.find(entry => entry.geometry)?.geometry.coordinates || [0, 0];
+const lonScale = 111320 * Math.max(0.000001, Math.cos(origin[1] * Math.PI / 180));
+// Local north-up projection of WGS84 fixes. Wrap longitude so a walk across 180° stays continuous.
+function project([lon, lat]) {
+  return [(((lon - origin[0] + 540) % 360) - 180) * lonScale, (lat - origin[1]) * 111320];
+}
+const points = entries.map(entry => entry.geometry ? project(entry.geometry.coordinates) : null);
+const polygons = boundaryFeatures.flatMap(feature => feature.geometry.coordinates.map(component => {
+  const rings = component.map(ring => ring.map(project));
+  const exterior = rings[0];
+  const labelAt = exterior[0];
+  return { rings, labelAt, name: feature.properties.name };
+}));
+let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+function includeInBounds(p) {
+  minX = Math.min(p[0], minX); maxX = Math.max(p[0], maxX);
+  minY = Math.min(p[1], minY); maxY = Math.max(p[1], maxY);
+}
+for (const p of points) if (p) includeInBounds(p);
+polygons.forEach(polygon => {
+  polygon.rings[0].forEach(includeInBounds);
+});
+const hasPoints = minX !== Infinity;
+let zoom = 1, centerX = 0, centerY = 0, unit = 1, width = 1, height = 1;
+let selected = entries.length - 1;
+function contextIndex(entry) { return entryIndex.get(entry?.properties.routeContextId); }
+function fit() {
+  centerX = hasPoints ? (maxX + minX) / 2 : 0; centerY = hasPoints ? (maxY + minY) / 2 : 0;
+  zoom = 1; draw();
+}
+function screen(point) { return [width / 2 + (point[0] - centerX) * unit, height / 2 - (point[1] - centerY) * unit]; }
+function circle(x, y, radius, color, filled) {
+  ctx.beginPath(); ctx.arc(x, y, radius, 0, 2 * Math.PI);
+  if (filled) { ctx.fillStyle = color; ctx.fill(); } else { ctx.strokeStyle = color; ctx.stroke(); }
+}
+function draw() {
+  width = canvas.clientWidth; height = canvas.clientHeight;
+  if (!width || !height) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.fillStyle = '#edf2ea'; ctx.fillRect(0, 0, width, height);
+  el('no-fixes').hidden = hasPoints;
+  if (!hasPoints) return;
+  unit = Math.min((width - 64) / Math.max(30, maxX - minX), (height - 64) / Math.max(30, maxY - minY)) * zoom;
+  if (unit <= 0) return;
+  const ideal = 90 / unit, magnitude = 10 ** Math.floor(Math.log10(ideal));
+  const grid = ([1, 2, 5, 10].find(n => n * magnitude >= ideal) || 10) * magnitude;
+  const step = grid * unit, [gx, gy] = screen([0, 0]);
+  ctx.beginPath();
+  for (let x = ((gx % step) + step) % step; x < width; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, height); }
+  for (let y = ((gy % step) + step) % step; y < height; y += step) { ctx.moveTo(0, y); ctx.lineTo(width, y); }
+  ctx.strokeStyle = '#d4ded1'; ctx.lineWidth = 1; ctx.stroke();
+  el('scale').textContent = 'تباعد الشبكة: ' + Number(grid.toPrecision(3)) + ' م';
+  ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+  for (const polygon of polygons) {
+    ctx.beginPath();
+    for (const ring of polygon.rings) {
+      ring.forEach((point, i) => {
+        const xy = screen(point);
+        if (i === 0) ctx.moveTo(...xy); else ctx.lineTo(...xy);
+      });
+      ctx.closePath();
+    }
+    ctx.fillStyle = 'rgba(174,136,64,.16)'; ctx.fill('evenodd');
+    ctx.strokeStyle = '#95722e'; ctx.lineWidth = 1.5; ctx.stroke();
+    const [x, y] = screen(polygon.labelAt);
+    ctx.strokeStyle = '#fafaf4'; ctx.lineWidth = 3; ctx.strokeText(polygon.name, x, y - 5);
+    ctx.fillStyle = '#664910'; ctx.fillText(polygon.name, x, y - 5);
+  }
+  const nearby = contextIndex(entries[selected]);
+  const selection = points[selected], contextPoint = points[nearby];
+  const marker = selection || contextPoint, accuracy = entries[selection ? selected : nearby]?.properties.accuracyMeters;
+  if (marker && accuracy > 0) {
+    const [x, y] = screen(marker); circle(x, y, accuracy * unit, 'rgba(36,119,108,.13)', true);
+  }
+  let last = null, lastTime = null;
+  points.forEach((p, i) => {
+    const entry = entries[i];
+    if (entry.properties.breaksRouteContinuity) last = null;
+    if (!isRoute(entry)) return;
+    if (!p) { last = null; return; }
+    const xy = screen(p), color = i <= selected ? '#126659' : '#a2b6aa';
+    if (last && entry.properties.at - lastTime <= trace.routeMaxGapMs) {
+      ctx.beginPath(); ctx.moveTo(...last); ctx.lineTo(...xy); ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+    }
+    circle(...xy, 2.3, color, true); last = xy; lastTime = entry.properties.at;
+  });
+  points.forEach((p, i) => {
+    if (p && !isRoute(entries[i]) && i <= selected) circle(...screen(p), isMonitor(entries[i]) ? 3.2 : 4.5, isMonitor(entries[i]) ? '#61549c' : '#ad5917', true);
+  });
+  if (selection) {
+    const xy = screen(selection);
+    ctx.lineWidth = 3; circle(...xy, 8, '#fff', false); ctx.lineWidth = 2; circle(...xy, 10, '#183f36', false);
+  } else if (contextPoint) {
+    ctx.setLineDash([4, 3]); ctx.lineWidth = 2;
+    circle(...screen(contextPoint), 11, '#14675b', false); ctx.setLineDash([]);
+  }
+  ctx.fillStyle = '#213832'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('↑ N', width - 28, 23);
+}
+function zoomBy(factor) {
+  const focus = points[selected] || points[contextIndex(entries[selected])];
+  if (zoom === 1 && factor > 1 && focus) [centerX, centerY] = focus;
+  zoom = Math.max(1, Math.min(64, zoom * factor));
+  if (zoom === 1) return fit();
+  draw();
+}
+el('zoom-in').onclick = () => zoomBy(2); el('zoom-out').onclick = () => zoomBy(.5); el('fit').onclick = fit;
+let drag = null;
+canvas.onpointerdown = event => {
+  if (!hasPoints) return;
+  drag = { x: event.clientX, y: event.clientY, cx: centerX, cy: centerY, moved: false };
+  canvas.setPointerCapture(event.pointerId);
+};
+canvas.onpointermove = event => {
+  if (!drag) return;
+  const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+  if (Math.hypot(dx, dy) < 4 && !drag.moved) return;
+  drag.moved = true; centerX = drag.cx - dx / unit; centerY = drag.cy + dy / unit; draw();
+};
+canvas.onpointercancel = () => { drag = null; };
+canvas.onpointerup = event => {
+  if (!drag || drag.moved) { drag = null; return; }
+  drag = null;
+  const box = canvas.getBoundingClientRect();
+  let nearest = -1, distance = 14;
+  points.forEach((p, i) => {
+    if (!p || (!isRoute(entries[i]) && i > selected)) return;
+    const [x, y] = screen(p), d = Math.hypot(x - event.clientX + box.left, y - event.clientY + box.top);
+    if (d <= distance) { nearest = i; distance = d; }
+  });
+  if (nearest >= 0) {
+    if (!visibleIndices.includes(nearest)) { el('filter').value = 'all'; refreshFilter(); }
+    select(nearest);
+  }
+};
+
+let visibleIndices = [], page = 0;
+const pageSize = 40;
+function refreshFilter() {
+  visibleIndices = [];
+  entries.forEach((entry, i) => {
+    if (el('filter').value === 'all' || (!isRoute(entry) && !isMonitor(entry))) visibleIndices.push(i);
+  });
+  el('seek').max = Math.max(0, visibleIndices.length - 1); el('seek').disabled = visibleIndices.length < 2;
+}
+function renderPage(scrollToCurrent) {
+  const list = el('timeline'); list.replaceChildren();
+  const totalPages = Math.ceil(visibleIndices.length / pageSize);
+  el('previous').disabled = !page; el('next').disabled = page + 1 >= totalPages;
+  el('page').textContent = totalPages ? (page + 1) + ' / ' + totalPages : '';
+  for (const i of visibleIndices.slice(page * pageSize, (page + 1) * pageSize)) {
+    const entry = entries[i], li = document.createElement('li'), button = document.createElement('button');
+    const time = document.createElement('time'), label = document.createElement('span');
+    time.dateTime = new Date(entry.properties.at).toISOString(); time.textContent = clock.format(entry.properties.at);
+    label.textContent = title(entry); button.className = 'item'; button.onclick = () => select(i);
+    button.setAttribute('aria-current', String(i === selected)); button.append(time, label); li.append(button); list.append(li);
+  }
+  const current = list.querySelector('[aria-current=true]');
+  if (scrollToCurrent && current) list.scrollTop += current.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientHeight / 3;
+  else if (!scrollToCurrent) list.scrollTop = 0;
+}
+function select(index) {
+  selected = index;
+  const focus = points[index] || points[contextIndex(entries[index])];
+  if (zoom > 1 && focus) [centerX, centerY] = focus;
+  const position = visibleIndices.indexOf(index); page = Math.max(0, Math.floor(position / pageSize));
+  el('seek').value = Math.max(0, position);
+  const entry = entries[index];
+  el('selected-title').textContent = entry ? dateTime.format(entry.properties.at) + ' · ' + title(entry) : 'لا توجد تسجيلات مطابقة.';
+  el('selected-details').textContent = entry && entry.properties.detail !== title(entry) ? entry.properties.detail : '';
+  let location = '';
+  if (entry) {
+    const coords = entry.geometry?.coordinates;
+    location = coords ? 'خط العرض ' + coords[1].toFixed(6) + ' · خط الطول ' + coords[0].toFixed(6) : 'لم يُسجّل موقع لهذا الحدث.';
+    if (coords && entry.properties.accuracyMeters != null) location += ' · دقّة الموقع ' + entry.properties.accuracyMeters.toFixed(1) + ' م';
+    const nearby = entries[contextIndex(entry)];
+    if (!coords && nearby) {
+      const seconds = (entry.properties.at - nearby.properties.at) / 1000;
+      location += ' الحلقة المتقطّعة تبيّن آخر نقطة مسار قبل الحدث بـ ' + seconds + ' ث';
+      if (nearby.properties.accuracyMeters != null) location += ' (دقّة ' + nearby.properties.accuracyMeters.toFixed(1) + ' م)';
+      location += '.';
+    }
+  }
+  el('selected-location').textContent = location;
+  renderPage(true); draw();
+}
+el('filter').onchange = () => {
+  refreshFilter();
+  const nearestPrevious = visibleIndices.findLast(i => i <= selected);
+  select(nearestPrevious ?? visibleIndices[0] ?? -1);
+};
+el('seek').oninput = () => select(visibleIndices[Number(el('seek').value)]);
+el('previous').onclick = () => { page--; renderPage(false); };
+el('next').onclick = () => { page++; renderPage(false); };
+refreshFilter(); fit(); select(selected);
+new ResizeObserver(draw).observe(canvas);
+</script>
+</html>

@@ -12,7 +12,13 @@
     <!-- Prayer tab hero: immediate phone control and the upcoming prayer's auto-silence window -->
     <string name="hero_phone_silence_title">إسكات الهاتف</string>
     <string name="hero_phone_unsilence_title">إعادة الصوت</string>
-    <string name="next_prayer_silence_window">الإسكات من %1$s إلى %2$s</string>
+    <string name="next_prayer_silence_window">الإسكات المجدول من %1$s إلى %2$s</string>
+    <string name="next_prayer_silence_mosque_window">عند وجودك في المسجد، يسكت الهاتف بين %1$s و%2$s</string>
+    <string name="next_prayer_silence_fallback_window">الموقع غير متاح. قد يسكت الهاتف حسب الوقت من %1$s إلى %2$s.</string>
+    <string name="prayer_silence_location_fallback">الموقع غير متاح. قد يسكت الهاتف حسب الوقت حتى يعود الموقع.</string>
+    <string name="next_prayer_silence_no_window">لم تتوفّر فترة إسكات لصلاة %1$s</string>
+    <string name="hero_finish_silence_setup">إكمال إعداد الإسكات</string>
+    <string name="next_prayer_silence_android_auto">يتوقف إسكات صلاة %1$s أثناء الاتصال بـ Android Auto.</string>
     <string name="next_prayer_silence_off_auto">الإسكات التلقائي متوقف</string>
     <string name="next_prayer_silence_off_prayer">بدون إسكات لصلاة %1$s</string>
 </resources>

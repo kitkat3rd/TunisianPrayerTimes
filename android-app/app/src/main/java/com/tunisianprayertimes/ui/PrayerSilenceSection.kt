@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,7 +52,9 @@ import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerSilenceConfig
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.silence.SilenceEnds
 import com.tunisianprayertimes.ui.theme.NextPrayerBg
+import java.time.Instant
 import kotlin.math.roundToInt
 
 /**
@@ -80,6 +83,7 @@ internal fun PrayerSilenceSection(
 ) {
     var expanded by rememberSaveable(prayer) { mutableStateOf(false) }
     val advanced = advancedContent
+    val clockChange = remember(anchor, config) { silenceEndsAt(anchor, config).takeIf(anchor::changesClockOffset) }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -113,25 +117,28 @@ internal fun PrayerSilenceSection(
                 prayerName = prayerName,
                 anchor = anchor,
                 window = window,
+                clockChange = clockChange,
                 config = config,
                 enabled = enabled,
                 onEditStart = { onEditEndpoint(SilenceEndpoint.START) },
                 onEditEnd = { onEditEndpoint(SilenceEndpoint.END) },
             )
-            // The slider maps offsets physically: earlier times on the right,
-            // later times on the left, independent of layout mirroring.
-            PrayerSilenceRangeSlider(
-                prayer = prayer,
-                prayerName = prayerName,
-                anchor = anchor,
-                config = config,
-                scale = scale,
-                window = window,
-                enabled = enabled,
-                onPreviewWindow = onPreviewWindow,
-                onCommitWindow = onCommitWindow,
-                onEditEndpoint = onEditEndpoint,
-            )
+            // A repeated/skipped wall-clock hour cannot be represented by this linear slider.
+            // Both endpoint fields above remain editable with their actual times and UTC offsets.
+            if (clockChange == null) {
+                PrayerSilenceRangeSlider(
+                    prayer = prayer,
+                    prayerName = prayerName,
+                    anchor = anchor,
+                    config = config,
+                    scale = scale,
+                    window = window,
+                    enabled = enabled,
+                    onPreviewWindow = onPreviewWindow,
+                    onCommitWindow = onCommitWindow,
+                    onEditEndpoint = onEditEndpoint,
+                )
+            }
         }
         if (advanced != null) {
             AnimatedVisibility(visible = expanded) {
@@ -495,38 +502,41 @@ private fun SilenceIntervalDetails(
     prayerName: String,
     anchor: PrayerTimelineAnchor,
     window: PrayerTimelineWindow,
+    clockChange: SilenceEnds?,
     config: PrayerSilenceConfig,
     enabled: Boolean,
     onEditStart: () -> Unit,
     onEditEnd: () -> Unit,
 ) {
-    val prayerMinutes = anchor.minutes
     val startIdentity = stringResource(R.string.prayer_silence_start_label)
     val endIdentity = stringResource(R.string.prayer_silence_end_label)
-    val startRule = endpointRuleCaption(config, window, SilenceEndpoint.START, prayerMinutes)
-    val endRule = endpointRuleCaption(config, window, SilenceEndpoint.END, prayerMinutes)
+    val startOffset = clockChange?.let { anchor.offsetAt(it.start) } ?: (window.startMinutes - anchor.minutes)
+    val endOffset = clockChange?.let { anchor.offsetAt(it.end) } ?: (window.endMinutes - anchor.minutes)
+    val startRule = endpointRuleCaption(config.startRuleMode(), startOffset)
+    val endRule = endpointRuleCaption(config.endRuleMode(), endOffset)
     val startCaption = stringResource(R.string.prayer_silence_endpoint_caption, startIdentity, startRule)
     val endCaption = stringResource(R.string.prayer_silence_endpoint_caption, endIdentity, endRule)
-    val startTime = silenceClockText(window.startMinutes)
-    val endTime = silenceClockText(window.endMinutes)
+    val startTime = if (clockChange == null) silenceClockText(window.startMinutes) else silenceEndpointClock(anchor, clockChange.start, true)
+    val endTime = if (clockChange == null) silenceClockText(window.endMinutes) else silenceEndpointClock(anchor, clockChange.end, true)
     val startDescription = stringResource(
         R.string.prayer_silence_start_field_desc,
         prayerName,
-        silenceEndpointState(config, window, SilenceEndpoint.START, prayerMinutes),
+        silenceEndpointState(config.startRuleMode(), startTime, startOffset, clockChange != null),
     )
     val endDescription = stringResource(
         R.string.prayer_silence_end_field_desc,
         prayerName,
-        silenceEndpointState(config, window, SilenceEndpoint.END, prayerMinutes),
+        silenceEndpointState(config.endRuleMode(), endTime, endOffset, clockChange != null),
     )
-    val invalid = window.durationMinutes < 0
+    val durationMinutes = clockChange?.elapsedMinutes ?: window.durationMinutes
+    val invalid = durationMinutes < 0
     val durationText = if (invalid) {
         "—"
     } else {
         pluralStringResource(
             R.plurals.prayer_silence_duration_minutes,
-            window.durationMinutes,
-            window.durationMinutes,
+            durationMinutes,
+            durationMinutes,
         )
     }
     val textMeasurer = rememberTextMeasurer()
@@ -588,7 +598,7 @@ private fun SilenceIntervalDetails(
                         onClick = onEditEnd,
                     )
                     SilenceDurationLabel(
-                        durationMinutes = window.durationMinutes,
+                        durationMinutes = durationMinutes,
                         invalid = invalid,
                     )
                 },
@@ -645,7 +655,7 @@ private fun SilenceIntervalDetails(
                     onClick = onEditEnd,
                 )
                 SilenceDurationLabel(
-                    durationMinutes = window.durationMinutes,
+                    durationMinutes = durationMinutes,
                     invalid = invalid,
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                 )
@@ -757,8 +767,6 @@ private fun StackedEndpointSummary(
             text = time,
             style = EndpointTimeTextStyle.copy(textDirection = TextDirection.Ltr),
             color = PrayerSilencePalette.PrimaryText,
-            maxLines = 1,
-            softWrap = false,
         )
         Text(
             text = rule,
@@ -770,20 +778,9 @@ private fun StackedEndpointSummary(
 }
 
 @Composable
-internal fun endpointRuleCaption(
-    config: PrayerSilenceConfig,
-    window: PrayerTimelineWindow,
-    endpoint: SilenceEndpoint,
-    prayerMinutes: Int,
-): String {
-    val mode = if (endpoint == SilenceEndpoint.START) config.startRuleMode() else config.endRuleMode()
+private fun endpointRuleCaption(mode: EndpointRuleMode, offset: Int): String {
     if (mode == EndpointRuleMode.FIXED_TIME) {
         return stringResource(R.string.prayer_silence_mode_fixed)
-    }
-    val offset = if (endpoint == SilenceEndpoint.START) {
-        window.startMinutes - prayerMinutes
-    } else {
-        window.endMinutes - prayerMinutes
     }
     return when {
         offset == 0 -> stringResource(R.string.prayer_silence_at_adhan)
@@ -832,25 +829,20 @@ private fun SilenceDurationLabel(
 }
 
 @Composable
-private fun silenceEndpointState(
-    config: PrayerSilenceConfig,
-    window: PrayerTimelineWindow,
-    endpoint: SilenceEndpoint,
-    prayerMinutes: Int,
-): String {
-    val mode = if (endpoint == SilenceEndpoint.START) config.startRuleMode() else config.endRuleMode()
+private fun silenceEndpointState(mode: EndpointRuleMode, clock: String, offset: Int, includeClock: Boolean): String {
     if (mode == EndpointRuleMode.FIXED_TIME) {
-        val clock = when (endpoint) {
-            SilenceEndpoint.START -> window.startMinutes
-            SilenceEndpoint.END -> window.endMinutes
-        }
-        return stringResource(R.string.prayer_silence_fixed_time_desc, prayerClockText(clock))
+        return stringResource(R.string.prayer_silence_fixed_time_desc, clock)
     }
-    val offset = when (endpoint) {
-        SilenceEndpoint.START -> window.startMinutes - prayerMinutes
-        SilenceEndpoint.END -> window.endMinutes - prayerMinutes
-    }
-    return endpointRelationText(offset)
+    val relation = endpointRelationText(offset)
+    return if (includeClock) stringResource(R.string.prayer_silence_endpoint_caption, clock, relation) else relation
+}
+
+@Composable
+internal fun silenceEndpointClock(anchor: PrayerTimelineAnchor, at: Instant, showOffset: Boolean): String {
+    val clock = silenceClockText(anchor.axisOf(at))
+    if (!showOffset) return clock
+    val offset = anchor.displayZone.rules.getOffset(at).id.replace("Z", "+00:00")
+    return stringResource(R.string.timetable_clock_offset, clock, offset)
 }
 
 @Composable

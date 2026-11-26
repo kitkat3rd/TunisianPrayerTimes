@@ -2,6 +2,8 @@ package com.tunisianprayertimes.ui
 
 import android.Manifest
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.provider.Settings
 import androidx.activity.compose.setContent
@@ -10,6 +12,8 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.wake.AwakeCheckService
+import com.tunisianprayertimes.wake.WakePlaybackService
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -28,6 +32,30 @@ import org.robolectric.shadows.ShadowAlarmManager
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class WakeAlarmAccessNoticeTest {
     @get:Rule val compose = createEmptyComposeRule()
+
+    @Test
+    fun quietRingingChannelAndBlockedOptionalAwakeCheckHaveIndependentActions() {
+        val controller = Robolectric.buildActivity(AppCompatActivity::class.java)
+        controller.get().setTheme(androidx.appcompat.R.style.Theme_AppCompat_Light_NoActionBar)
+        val activity = controller.setup().get()
+        val manager = activity.getSystemService(NotificationManager::class.java)
+        shadowOf(activity.application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        shadowOf(manager).setNotificationsEnabled(true)
+        manager.createNotificationChannel(NotificationChannel(WakePlaybackService.CHANNEL_ID, "Ringing", NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(AwakeCheckService.CHANNEL_ID, "Awake check", NotificationManager.IMPORTANCE_NONE))
+        assertNull(wakeAlarmAccess(activity).awakeCheckIssue)
+        activity.setContent { WakeAlarmAccessNotice(activity, saved = true, awakeCheckEnabled = true) }
+        compose.onNodeWithText(activity.getString(R.string.wake_access_notifications_detail)).assertDoesNotExist()
+        compose.onNodeWithText(activity.getString(R.string.wake_access_ringing_channel_action)).performClick()
+        val ringing = shadowOf(activity).nextStartedActivity
+        assertEquals(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, ringing.action)
+        assertEquals(WakePlaybackService.CHANNEL_ID, ringing.getStringExtra(Settings.EXTRA_CHANNEL_ID))
+        compose.onNodeWithText(activity.getString(R.string.wake_access_awake_check_action)).performClick()
+        val awake = shadowOf(activity).nextStartedActivity
+        assertEquals(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, awake.action)
+        assertEquals(AwakeCheckService.CHANNEL_ID, awake.getStringExtra(Settings.EXTRA_CHANNEL_ID))
+        controller.pause().stop().destroy()
+    }
 
     @Test
     fun settingsRequireAnExplicitTapAndNotificationDenialKeepsTheAlarmEditorOpen() {

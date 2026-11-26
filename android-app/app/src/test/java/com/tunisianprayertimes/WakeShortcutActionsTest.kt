@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
-import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.wake.PrayerWakeRepository
 import com.tunisianprayertimes.wake.WakeAlarmReceiver
@@ -107,11 +106,12 @@ class WakeShortcutActionsTest {
         assertEquals(secondTap.plusSeconds(20 * 60L).toEpochMilli(), scheduledRing(nap).triggerAtTime)
     }
 
-    @Test fun missingPermissionOpensExactAlarmSettingsWithoutSavingAnAlarm() = runBlocking {
+    @Test fun missingPermissionLeavesNapPendingWithoutSavingOrLaunchingSettingsAutomatically() = runBlocking {
         ShadowAlarmManager.setCanScheduleExactAlarms(false)
         val intent = Intent(context, WakeShortcutActivity::class.java).setAction(WakeShortcutActions.NAP)
         val activity = Robolectric.buildActivity(WakeShortcutActivity::class.java, intent).create().get()
-        assertEquals(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, shadowOf(activity).nextStartedActivity.action)
+        assertFalse(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
         assertTrue(repository.getCurrentStore().alarms.isEmpty())
     }
 

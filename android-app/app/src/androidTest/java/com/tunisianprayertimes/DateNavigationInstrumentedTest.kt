@@ -8,9 +8,11 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tunisianprayertimes.ui.TestTags
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -92,6 +94,20 @@ class DateNavigationInstrumentedTest {
 
         composeRule.onNodeWithTag(TestTags.DATE_LABEL)
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun previousDateSurvivesChangingTabsAndRecreation() {
+        val date = composeRule.onNodeWithTag(TestTags.DATE_LABEL)
+        composeRule.onNodeWithTag(TestTags.DATE_PREVIOUS_BUTTON).performScrollTo().performClick()
+        composeRule.waitUntilTagExists(TestTags.DATE_TODAY_BUTTON)
+        val previousDate = date.fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
+        composeRule.onNodeWithTag(TestTags.MAIN_TAB_ALARMS).performClick()
+        composeRule.onNodeWithTag(TestTags.MAIN_TAB_TODAY).performClick()
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntilTagExists(TestTags.DATE_LABEL)
+        assertEquals(previousDate, date.fetchSemanticsNode().config[SemanticsProperties.ContentDescription])
+        composeRule.onNodeWithTag(TestTags.DATE_TODAY_BUTTON).assertExists()
     }
 
     @Test

@@ -7,6 +7,15 @@ import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.WindowInfo
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.core.app.ActivityOptionsCompat
@@ -39,26 +48,56 @@ class FirstRunPlaceScreenTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         Shadows.shadowOf(context).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         val requested = mutableListOf<Set<String>>()
+        lateinit var denyRequest: () -> Unit
         val registry = object : ActivityResultRegistry() {
             override fun <I, O> onLaunch(
                 requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?,
             ) {
                 val permissions = (input as Array<*>).filterIsInstance<String>().toSet()
                 requested += permissions
-                dispatchResult(requestCode, permissions.associateWith { false })
+                denyRequest = { dispatchResult(requestCode, permissions.associateWith { false }) }
             }
         }
         val owner = object : ActivityResultRegistryOwner { override val activityResultRegistry = registry }
-        compose.setContent {
-            CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) { OnboardingScreen {} }
+        val keyboard = object : InputModeManager {
+            override val inputMode = InputMode.Keyboard
+            override fun requestInputMode(inputMode: InputMode) = inputMode == InputMode.Keyboard
         }
+        compose.setContent {
+            val window = LocalWindowInfo.current
+            val focusedWindow = remember(window) {
+                object : WindowInfo by window { override val isWindowFocused = true }
+            }
+            CompositionLocalProvider(
+                LocalActivityResultRegistryOwner provides owner,
+                LocalInputModeManager provides keyboard,
+                LocalWindowInfo provides focusedWindow,
+            ) { OnboardingScreen {} }
+        }
+        val opening = compose.onNodeWithText(context.getString(R.string.first_run_place_title)).fetchSemanticsNode()
+        assertTrue(opening.config.contains(SemanticsProperties.Heading))
+        assertFalse(opening.config.contains(SemanticsProperties.LiveRegion))
         compose.onNodeWithTag("onboarding_location_pick").assertIsDisplayed()
         compose.onNodeWithTag("onboarding_browse").assertIsDisplayed()
         assertTrue(requested.isEmpty())
-        compose.onNodeWithTag("onboarding_location_locate").performClick()
-        compose.onNodeWithText(context.getString(R.string.first_run_denied_title)).assertIsDisplayed()
-        compose.onNodeWithTag("onboarding_location_pick").assertIsEnabled()
+        val locationAction = compose.onNodeWithTag("onboarding_location_locate")
+        val launchingNodeId = locationAction.fetchSemanticsNode().id
+        locationAction.performClick()
+        locationAction.assertIsEnabled().performClick()
+        compose.runOnIdle { denyRequest() }
+        val recovery = compose.onNodeWithText(context.getString(R.string.first_run_denied_title))
+            .assertIsDisplayed().assert(hasText(context.getString(R.string.first_run_manual_help))).fetchSemanticsNode()
+        assertTrue(recovery.config.contains(SemanticsProperties.Heading))
+        assertEquals(LiveRegionMode.Polite, recovery.config[SemanticsProperties.LiveRegion])
+        val recoveryAction = compose.onNodeWithTag("onboarding_location_pick").assertIsEnabled().assertIsFocused()
+        assertEquals("TalkBack can restore the original action after the system dialog", launchingNodeId, recoveryAction.fetchSemanticsNode().id)
         compose.onNodeWithTag("onboarding_browse").assertIsEnabled()
+        compose.onNodeWithTag("onboarding_location_locate").assertDoesNotExist()
+        compose.onNodeWithTag("onboarding_location_pick").performClick()
+        compose.onNodeWithTag("locality_search").assertIsDisplayed()
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).performSemanticsAction(SemanticsActions.Dismiss)
+        compose.onNodeWithTag("locality_search").assertDoesNotExist()
+        compose.onNodeWithTag("onboarding_location_pick").assertIsFocused()
         compose.onNodeWithTag("onboarding_location_locate").assertDoesNotExist()
         assertEquals(listOf(setOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)), requested)
         assertTrue(PrefsManager.isFirstLaunch(context))

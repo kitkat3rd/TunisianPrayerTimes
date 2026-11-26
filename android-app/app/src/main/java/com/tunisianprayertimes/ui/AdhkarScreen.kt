@@ -2,7 +2,6 @@ package com.tunisianprayertimes.ui
 
 import androidx.compose.material3.MaterialTheme
 import com.tunisianprayertimes.PrefsManager
-import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,8 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -53,6 +50,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.adhkar.*
 import java.time.Instant
 import java.time.LocalDate
@@ -323,28 +321,18 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
             }
         }
     }
-    var permissionRequestedAt by remember { mutableLongStateOf(0L) }
-    // Set while the notification settings are being opened: the answer is only known on the way back.
-    var leavingForNotificationSettings by remember { mutableStateOf(false) }
-    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val notificationAccess = rememberReminderNotificationAccess(listOf(DhikrReminderScheduler.channelId(permissionPromptVibrate))) {
         now = System.currentTimeMillis()
         mutate({ DhikrReminderScheduler.refresh(activity, rearm = true) })
-        // Once refused for good, the system answers at once without asking; the settings are then the only way.
-        if (!granted && SystemClock.elapsedRealtime() - permissionRequestedAt < 500) {
-            leavingForNotificationSettings = true
-            openDhikrNotificationSettings(activity, permissionPromptVibrate)
-        } else afterNotificationPrompt()
+        afterNotificationPrompt()
     }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
-            // The resume that delivers the refusal comes before the settings open; the pause that follows is theirs.
-            if (event == Lifecycle.Event.ON_PAUSE) leavingForNotificationSettings = false
             if (event == Lifecycle.Event.ON_RESUME) {
                 now = System.currentTimeMillis()
                 DhikrReminderScheduler.ensureChannel(activity)
                 exactAlarmsAvailable = DhikrReminderScheduler.exactAlarmsEnabled(activity)
                 if (exactAlarmsAvailable) exactAlarmPromptDeclined = false
-                if (!permissionPrompt && !leavingForNotificationSettings) afterNotificationPrompt()
                 mutate({ DhikrReminderScheduler.refresh(activity, rearm = true) }, onFailure = {
                     scope.launch { snackbar.showSnackbar("تعذّر تحديث مواعيد تذكيرات الأذكار.") }
                 })
@@ -663,17 +651,18 @@ fun AdhkarScreen(activity: AppCompatActivity, requestedReminderId: String? = nul
                         } },
                         dismissButton = { TextButton(onClick = { pendingDraft = null }) { Text("متابعة التعديل") } })
                 }
-                if (placeRequired) PrayerPlaceRequiredDialog(onDismiss = { placeRequired = false })
+                if (placeRequired) PrayerPlaceRequiredDialog(
+                    onPlaceConfirmed = { now = System.currentTimeMillis() },
+                    onDismiss = { placeRequired = false },
+                )
                 if (permissionPrompt) AlertDialog(onDismissRequest = { permissionPrompt = false; afterNotificationPrompt() },
                     title = { Text("السماح بتذكيرات الأذكار") },
                     text = { Text("يمكنك قراءة الأذكار والعدّ دون إشعارات. اسمح بالإشعارات ليصلك التذكير في الأوقات التي اخترتها.") },
                     confirmButton = { TextButton(onClick = {
                         permissionPrompt = false
-                        if (Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                            permissionRequestedAt = SystemClock.elapsedRealtime()
-                            permissions.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } else openDhikrNotificationSettings(activity, permissionPromptVibrate)
-                    }) { Text("السماح") } }, dismissButton = { TextButton(onClick = {
+                        if (notificationAccess.action == ReminderNotificationAction.None) afterNotificationPrompt()
+                        else notificationAccess.perform()
+                    }) { Text(if (notificationAccess.action == ReminderNotificationAction.Request) "السماح" else "إعدادات الإشعارات") } }, dismissButton = { TextButton(onClick = {
                         permissionPrompt = false; afterNotificationPrompt()
                     }) { Text("لاحقًا") } })
                 if (exactAlarmPrompt && !permissionPrompt) AlertDialog(
@@ -1134,7 +1123,7 @@ private fun DhikrRemindersSheet(
         state.reminders.filter { rule -> suggestedSlots.none { it.second?.id == rule.id } }
     }
     // Blocked for the whole app, which no single reminder can change: said once, above the list.
-    val appNotificationsOff = remember(now) { !androidx.core.app.NotificationManagerCompat.from(activity).areNotificationsEnabled() }
+    val appNotificationsOff = remember(now) { NotificationAccess.issue(activity, null) != null }
     val notificationNotice = appNotificationsOff && state.reminders.any { it.enabled }
     val exactAlarmNotice = state.reminders.any { it.enabled } && !exactAlarmsAvailable
     // The reminders vibrate and make no sound, and Android does not vibrate while the ringer is on silent. The app's own
@@ -1592,13 +1581,8 @@ internal const val EMPTY_COLLECTION_HINT =
 internal fun collectionTitle(category: DhikrCategory) = if (category == DhikrCategory.SALAH) "أذكار بعد الصلاة" else "أذكار " + category.title
 internal fun openDhikrNotificationSettings(activity: AppCompatActivity, vibrate: Boolean = true) {
     DhikrReminderScheduler.ensureChannel(activity)
-    val enabled = androidx.core.app.NotificationManagerCompat.from(activity).areNotificationsEnabled()
-    // Blocked for the whole app, only the app's own page can lift it: the channel page's switch cannot.
-    activity.startActivity(if (!enabled) Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-            .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
-        else Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
-            .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
-            .putExtra(Settings.EXTRA_CHANNEL_ID, DhikrReminderScheduler.channelId(vibrate)))
+    val channel = DhikrReminderScheduler.channelId(vibrate)
+    activity.startActivity(NotificationAccess.settingsIntent(activity, channel))
 }
 
 internal fun openDhikrExactAlarmSettings(activity: AppCompatActivity) {

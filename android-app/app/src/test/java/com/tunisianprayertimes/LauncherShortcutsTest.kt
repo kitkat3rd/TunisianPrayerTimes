@@ -1,8 +1,10 @@
 package com.tunisianprayertimes
 
 import android.app.Application
+import android.app.AlertDialog
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.media.AudioManager
 import androidx.test.core.app.ApplicationProvider
@@ -12,9 +14,12 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowAlarmManager
+import org.robolectric.shadows.ShadowAlertDialog
 import org.robolectric.shadows.ShadowLooper
 
 @RunWith(RobolectricTestRunner::class)
@@ -102,7 +107,8 @@ class LauncherShortcutsTest {
         assertTrue(end <= after + 30 * 60_000L)
         assertEquals(ManualSilenceMode.DURATION, PrefsManager.getManualSilenceMode(context))
         assertEquals(30, PrefsManager.getManualSilenceDurationMinutes(context))
-        ManualSilenceScheduler.onTimerExpired(context)
+        ManualSilenceScheduler.scheduleAt(context, System.currentTimeMillis() - 1)
+        assertTrue(ManualSilenceScheduler.syncExpiredTimer(context))
         assertFalse(PrefsManager.isManualSilenceActive(context))
         assertEquals(AudioManager.RINGER_MODE_VIBRATE, audio.ringerMode)
         assertEquals(NotificationManager.INTERRUPTION_FILTER_PRIORITY, notifications.currentInterruptionFilter)
@@ -190,5 +196,35 @@ class LauncherShortcutsTest {
         assertFalse(PrefsManager.isManualSilenceActive(context))
         assertEquals(-1L, PrefsManager.getManualSilenceEndsAtMillis(context))
         assertEquals(NotificationManager.INTERRUPTION_FILTER_ALL, notifications.currentInterruptionFilter)
+    }
+
+    @Test fun launcherOffersDndSettingsAndClosingTheDialogLeavesThePhoneAlone() {
+        shadowOf(notifications).setNotificationPolicyAccessGranted(false)
+        val intent = Intent(context, SilenceShortcutActivity::class.java).setAction(SilenceShortcutActions.SILENCE)
+        val activity = Robolectric.buildActivity(SilenceShortcutActivity::class.java, intent).setup().get()
+        val dialog = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
+        assertEquals(context.getString(R.string.manual_dnd_open_settings), dialog.getButton(AlertDialog.BUTTON_POSITIVE).text)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
+        ShadowLooper.idleMainLooper()
+        assertTrue(activity.isFinishing)
+        assertNull(shadowOf(activity).nextStartedActivity)
+        assertFalse(PrefsManager.isManualSilenceActive(context))
+    }
+
+    @Test @Config(sdk = [33])
+    fun thirtyMinuteShortcutArmsFallbackAndExplainsThePossibleDelay() {
+        ShadowAlarmManager.setCanScheduleExactAlarms(false)
+        assertEquals(R.string.shortcut_silence_30_inexact, action(SilenceShortcutActions.SILENCE_30_MINUTES))
+        assertTrue(PrefsManager.isManualSilenceActive(context))
+        assertTrue(PrefsManager.getManualSilenceEndsAtMillis(context) > System.currentTimeMillis())
+    }
+
+    @Test @Config(sdk = [33])
+    fun missingManualRuleOffersRepairWithoutStartingTheTimer() {
+        com.tunisianprayertimes.mosque.MosqueSilenceSettings.enroll(context)
+        assertEquals(R.string.manual_rule_failed_body, action(SilenceShortcutActions.SILENCE_30_MINUTES))
+        assertFalse(PrefsManager.isManualSilenceActive(context))
+        assertEquals(-1L, PrefsManager.getManualSilenceEndsAtMillis(context))
     }
 }

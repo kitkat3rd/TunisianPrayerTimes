@@ -64,16 +64,15 @@ object ScheduleRefreshCoordinator {
                 .onFailure { Log.w("ScheduleRefresh", "Could not restore the adhans", it) }
         }
 
+        SilenceVerifyWorker.reconcileSchedule(appContext)
         if (!PrefsManager.isEnabled(appContext)) {
             SilenceScheduler.cancelAll(appContext)
-            SilenceVerifyWorker.cancel(appContext)
             SilenceGuardService.stop(appContext)
             return RESULT_DISABLED
         }
 
         if (!hasSilencePermissions(appContext)) {
             SilenceScheduler.cancelAll(appContext)
-            SilenceVerifyWorker.cancel(appContext)
             SilenceGuardService.stop(appContext)
             return RESULT_PERMISSION_MISSING
         }
@@ -84,7 +83,6 @@ object ScheduleRefreshCoordinator {
         }
 
         SilenceScheduler.scheduleAll(appContext)
-        SilenceVerifyWorker.enqueue(appContext)
         SilenceGuardService.stopIfNotNeeded(appContext)
 
         return RESULT_SUCCESS
@@ -92,15 +90,16 @@ object ScheduleRefreshCoordinator {
 
     suspend fun syncWake(context: Context): String {
         val appContext = context.applicationContext
-        return if (WakeAlarmScheduler.hasEnabledWakeAlarms(appContext)) {
+        val hasFutureAlarms = WakeAlarmScheduler.hasEnabledWakeAlarms(appContext)
+        // A timer can be due while Android is handing off its ring. Inspect its persisted
+        // registration before clearing silence, even if its one-off time has just passed.
+        if (hasFutureAlarms || WakeAlarmScheduler.silencedAlarmIds(appContext).isNotEmpty()) {
             WakeAlarmScheduler.scheduleAll(appContext)
-            WakeAlarmVerifyWorker.cancel(appContext)
-            RESULT_SUCCESS
         } else {
             WakeAlarmScheduler.cancelAll(appContext)
-            WakeAlarmVerifyWorker.cancel(appContext)
-            RESULT_WAKE_DISABLED
         }
+        WakeAlarmVerifyWorker.cancel(appContext)
+        return if (hasFutureAlarms) RESULT_SUCCESS else RESULT_WAKE_DISABLED
     }
 
     suspend fun syncAll(
@@ -122,7 +121,7 @@ object ScheduleRefreshCoordinator {
         )
     }
 
-    private fun hasSilencePermissions(context: Context): Boolean {
+    internal fun hasSilencePermissions(context: Context): Boolean {
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         return notificationManager.isNotificationPolicyAccessGranted && hasExactAlarmPermission(context)

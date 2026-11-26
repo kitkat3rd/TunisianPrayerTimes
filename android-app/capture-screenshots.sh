@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Capture Play Store screenshots from the installed phone and tablet apps.
-# A fresh install shows the place question. An established install starts at Today.
+# Capture the place and automatic-silence choices on fresh installs, then the real timetable.
 # Requires adb, Python 3, and a running device for each selected serial.
 set -euo pipefail
 
@@ -76,14 +76,21 @@ except ET.ParseError:
     sys.exit(1)
 package, *keys = sys.argv[1:]
 labels = {
-    "start": "مواقيت الصلاة في منطقتك",
-    "manual": "اختيار مدينة",
-    "picker": "ابحث عن مدينة أو حيّ…",
-    "today": "الصلاة القادمة",
-    "prayers": "الصلاة",
-    "worship": "عباداتي",
+    "start": ("إسكات الهاتف وقت الصلاة", "مواقيت الصلاة في منطقتك"),
+    "manual": ("اختيار مدينة",),
+    "picker": ("ابحث عن مدينة أو حيّ…",),
+    "silence": ("الإسكات وقت الصلاة", "لاحقًا، عرض المواقيت"),
+    "continue": ("المتابعة بدون إسكات تلقائي", "لاحقًا، عرض المواقيت", "عرض مواقيت الصلاة"),
+    "today": ("الصلاة القادمة",),
+    "prayers": ("الصلاة",),
+    "worship": ("عباداتي",),
 }
-tags = {"manual": "onboarding_location_pick", "picker": "locality_search"}
+tags = {
+    "manual": ("onboarding_location_pick",),
+    "picker": ("locality_search",),
+    "silence": ("onboarding_silence", "onboarding_silence_title", "onboarding_silence_continue"),
+    "continue": ("onboarding_silence_continue",),
+}
 place_sources = ("حسب الموقع المختار", "حسب آخر موقع معروف", "حسب موقعك الحالي")
 for key in keys:
     for node in root.iter("node"):
@@ -99,14 +106,21 @@ for key in keys:
             )
         elif key == "direction":
             matches = label.startswith(place_sources) or desc.startswith(place_sources)
+        elif key == "scroll":
+            matches = a.get("scrollable") == "true"
         else:
-            matches = labels[key] in (label, desc) or (key in tags and tag == tags[key])
+            matches = label in labels[key] or desc in labels[key] or tag in tags.get(key, ())
         if matches:
             bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", a.get("bounds", ""))
             if bounds:
                 left, top, right, bottom = map(int, bounds.groups())
                 if right > left and bottom > top:
-                    print(key, (left + right) // 2, (top + bottom) // 2)
+                    x = (left + right) // 2
+                    if key == "scroll":
+                        margin = (bottom - top) // 5
+                        print(key, x, bottom - margin, top + margin)
+                    else:
+                        print(key, x, (top + bottom) // 2)
                     sys.exit(0)
 sys.exit(1)
 ' "$pkg" "$@"
@@ -133,28 +147,51 @@ tap_node() {
 }
 
 capture_device() {
-    local serial="$1" prefix="$2" pkg first manual row worship
+    local serial="$1" prefix="$2" pkg first manual row step action area attempt key x lower upper worship
     pkg=$(detect_package "$serial")
     echo "Capturing $pkg on $serial."
     adb -s "$serial" shell am start -W -n "$pkg/com.tunisianprayertimes.MainActivity" >/dev/null
-    first=$(wait_node "$serial" "$pkg" start picker today prayers)
+    first=$(wait_node "$serial" "$pkg" picker start silence today prayers)
+    # The first-run picker and an established user's change-city sheet are the
+    # same component. Uncover their owner before selecting a city. Back may
+    # close the keyboard first.
+    for attempt in 1 2; do
+        [[ $first == picker\ * ]] || break
+        adb -s "$serial" shell input keyevent KEYCODE_BACK
+        first=$(wait_node "$serial" "$pkg" picker start silence today prayers)
+    done
+    if [[ $first == picker\ * ]]; then
+        echo "Could not identify which screen owns the open city picker on $serial." >&2
+        return 1
+    fi
 
     case "${first%% *}" in
         start)
             capture "$serial" "${prefix}-onboarding-place.png"
             manual=$(wait_node "$serial" "$pkg" manual)
             tap_node "$serial" "$manual"
+            wait_node "$serial" "$pkg" picker >/dev/null
+            row=$(wait_node "$serial" "$pkg" row)
+            capture "$serial" "${prefix}-onboarding-city-picker.png"
+            tap_node "$serial" "$row"
             ;;
         prayers)
             # A running, configured app may have reopened another tab.
             tap_node "$serial" "$first"
             ;;
     esac
-    if [[ $first == start\ * || $first == picker\ * ]]; then
-        wait_node "$serial" "$pkg" picker >/dev/null
-        row=$(wait_node "$serial" "$pkg" row)
-        capture "$serial" "${prefix}-onboarding-city-picker.png"
-        tap_node "$serial" "$row"
+    step=$(wait_node "$serial" "$pkg" silence today)
+    if [[ $step == silence\ * ]]; then
+        capture "$serial" "${prefix}-onboarding-silence.png"
+        # At large font sizes the secondary action can be below the fold.
+        for attempt in 1 2 3 4 5; do
+            if action=$(find_node "$serial" "$pkg" continue); then break; fi
+            area=$(find_node "$serial" "$pkg" scroll) || break
+            read -r key x lower upper <<< "$area"
+            adb -s "$serial" shell input swipe "$x" "$lower" "$x" "$upper" 400
+        done
+        action=$(wait_node "$serial" "$pkg" continue)
+        tap_node "$serial" "$action"
     fi
     wait_node "$serial" "$pkg" today >/dev/null
     capture "$serial" "${prefix}-main-screen.png"

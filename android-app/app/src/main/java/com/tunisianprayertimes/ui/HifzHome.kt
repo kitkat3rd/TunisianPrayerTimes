@@ -591,6 +591,13 @@ internal fun HifzSettingsSheet(
     val scroll = rememberScrollState()
     val context = LocalContext.current
     var placeRequired by rememberSaveable { mutableStateOf(false) }
+    var canUsePlace by remember(context) { mutableStateOf(PrefsManager.canUsePlaceForAutomation(context)) }
+    DisposableEffect(context) {
+        val unsubscribe = PrefsManager.observeLocationSelection(context) {
+            canUsePlace = PrefsManager.canUsePlaceForAutomation(context)
+        }
+        onDispose { unsubscribe() }
+    }
     AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         Column(
             Modifier.fillMaxWidth().nestedScroll(rememberSheetScrollGuard(scroll)).verticalScroll(scroll)
@@ -605,7 +612,7 @@ internal fun HifzSettingsSheet(
                 } else onChange(settings.copy(reminder = enabled))
             }
             HifzReminderSettingsControls(settings, onChange)
-            if (settings.reminder && settings.times.prayers.isNotEmpty() && !PrefsManager.canUsePlaceForAutomation(context)) {
+            if (settings.reminder && settings.times.prayers.isNotEmpty() && !canUsePlace) {
                 TextButton(onClick = { placeRequired = true }) { Text("أكّد مدينتك للتذكير بعد الصلاة") }
             }
             if (settings.reminder && reminderControl != null) {
@@ -621,7 +628,7 @@ internal fun HifzSettingsSheet(
             }
         }
     }
-    if (placeRequired) PrayerPlaceRequiredDialog(onChoosingPlace = onDismiss) { placeRequired = false }
+    if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
 }
 
 @Composable

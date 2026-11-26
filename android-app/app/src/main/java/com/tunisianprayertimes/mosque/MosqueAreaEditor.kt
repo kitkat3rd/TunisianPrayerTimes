@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,10 +56,10 @@ internal fun AreaEditor(initial: AreaDraft, saved: List<SavedSilenceArea>, onClo
     BackHandler(onBack = onClose) // Keep the recoverable draft; Cancel explicitly discards it.
     var draft by remember { mutableStateOf(initial) }
     var undo by remember { mutableStateOf(emptyList<String>()) }
-    var manual by remember { mutableStateOf(false) }
+    var manual by rememberSaveable(initial.key) { mutableStateOf(false) }
     var rectangle by remember { mutableStateOf(false) }
     var chooser by remember { mutableStateOf(false) }
-    var testArrival by remember { mutableStateOf(false) }
+    var testArrival by rememberSaveable(initial.key) { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     var locationFailed by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }

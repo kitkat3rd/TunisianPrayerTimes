@@ -2,6 +2,8 @@ package com.tunisianprayertimes.nap
 
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.mosque.SilenceCoordinator
+import com.tunisianprayertimes.mosque.SilenceOwner
+import com.tunisianprayertimes.mosque.observeSilenceSound
 
 import android.app.NotificationManager
 import android.content.Context
@@ -35,6 +37,7 @@ object NapSilenceController {
 
         notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
         audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        observeSilenceSound(context) { requested(context, SilenceOwner.WAKE) }
         AnalyticsTracker.phoneSilenced(context, source = "wake_alarm")
         return true
     }
@@ -53,6 +56,7 @@ object NapSilenceController {
         NapPrefs.savePreviousAudioState(context, previousRingerMode, previousInterruptionFilter)
         notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
         audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+        observeSilenceSound(context) { wakeTakeover(context) }
         return true
     }
 
@@ -74,6 +78,7 @@ object NapSilenceController {
             Thread.sleep(150)
         } catch (_: InterruptedException) {}
         audioManager.ringerMode = previousRinger
+        observeSilenceSound(context) { restored(context, SilenceOwner.WAKE) }
 
         return true
     }

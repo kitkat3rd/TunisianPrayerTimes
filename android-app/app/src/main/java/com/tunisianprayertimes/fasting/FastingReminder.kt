@@ -34,12 +34,14 @@ import com.tunisianprayertimes.WakeRepeatMode
 import com.tunisianprayertimes.adhkar.DhikrReminderScheduler
 import com.tunisianprayertimes.engine.TimeEvent
 import com.tunisianprayertimes.place.PrayerPlace
+import com.tunisianprayertimes.postReminderIfAllowed
 import com.tunisianprayertimes.quran.hifz.HifzPrayerSpans
 import com.tunisianprayertimes.quran.hifz.hifzOutsidePrayers
 import com.tunisianprayertimes.ui.FajrAlarmPersistence
 import com.tunisianprayertimes.ui.dayMonth
 import com.tunisianprayertimes.ui.fajrSuggestionAlarm
 import com.tunisianprayertimes.ui.ltr
+import com.tunisianprayertimes.ui.suhoorWakeAccessReady
 import com.tunisianprayertimes.wake.PrayerWakeRepository
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import java.time.DayOfWeek
@@ -446,7 +448,7 @@ object FastingReminder {
             if (own == null && options.isNotEmpty()) {
                 // Chosen once in the app, with alarm access granted and still in time; from then on one tap here.
                 val action = if (PrefsManager.hasConfirmedPlace(context) && suhoorChosen(context) && suhoorMinutes(context) in options &&
-                    WakeAlarmScheduler.canScheduleExactAlarms(context)
+                    suhoorWakeAccessReady(context, suhoorLevel(context))
                 ) {
                     broadcast(context, ACTION_SUHOOR, 2)
                 } else {
@@ -456,12 +458,12 @@ object FastingReminder {
             }
             builder.addAction(0, "أوقف التذكير أسبوعًا", broadcast(context, ACTION_PAUSE, 3))
         }
-        // What it says is kept, so a later change of alarms can bring it up to date.
+        // Keep the eve eligible until Fajr if access is granted after this attempt.
+        if (!manager.postReminderIfAllowed(context, NOTIFICATION_ID, builder.build())) return
         prefs(context).edit().putLong("posted_fast_day", eve.fastDay.toEpochDay())
             .putLong("posted_suhoor_at", suhoorAt?.toEpochMilli() ?: 0L)
             .putLong("posted_own_at", own?.toEpochMilli() ?: 0L)
             .apply()
-        manager.notify(NOTIFICATION_ID, builder.build())
     }
 
     // ---- Scheduling ----
@@ -687,9 +689,11 @@ object FastingReminder {
         when (action) {
             ACTION_REMIND -> refresh(context)
             ACTION_PAUSE -> pauseWeek(context)
-            ACTION_SUHOOR -> upcoming(context, count = 1).firstOrNull()?.takeIf { it.reminds }?.let { eve ->
-                // Tapped too late for the chosen minutes: the reminder comes back with what still fits.
-                if (!setSuhoor(context, eve)) post(context, eve, quiet = true)
+            ACTION_SUHOOR -> tonight(context)?.takeIf { isEnabled(context) && it.reminds && isChosen(context, it) }?.let { eve ->
+                // A changed grant or expired offset turns the next tap into a visit to setup.
+                if (!suhoorWakeAccessReady(context, suhoorLevel(context)) || !setSuhoor(context, eve)) {
+                    post(context, eve, quiet = true)
+                }
             }
         }
     }

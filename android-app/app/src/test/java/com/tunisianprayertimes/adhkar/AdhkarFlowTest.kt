@@ -2,6 +2,7 @@ package com.tunisianprayertimes.adhkar
 
 import android.app.Application
 import android.app.AlarmManager
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -19,7 +20,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowAlarmManager
+import org.robolectric.shadows.ShadowNotificationManager
 import java.time.*
 import java.util.TimeZone
 import org.json.JSONObject
@@ -1252,6 +1257,34 @@ class AdhkarFlowTest {
         deliver(released, window.startMillis + 1)
         assertEquals(1, context.getSystemService(NotificationManager::class.java).activeNotifications.size)
     }
+    @Test @Config(sdk = [33], shadows = [DhikrNotificationRevokedDuringPost::class])
+    fun revocationDuringPostingRetainsTheTaggedReminderUntilAccessReturns() {
+        Shadows.shadowOf(context as Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val rule = rule()
+        val window = window(rule)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val notifications = Shadow.extract<DhikrNotificationRevokedDuringPost>(manager)
+        notifications.setNotificationsEnabled(true)
+        repo.save(rule, window.startMillis - 1)
+        DhikrReminderScheduler.refresh(context, rearm = true, nowMillis = window.startMillis - 1)
+        val original = event()
+        val eventId = JSONObject(original).getString("eventId")
+        notifications.revokeNext = true
+        deliver(original, window.startMillis)
+        val prefs = context.getSharedPreferences("adhkar_schedule_v2", 0)
+        val held = JSONObject(requireNotNull(prefs.getString("event:" + rule.id, null)))
+        assertEquals(eventId, held.getString("eventId"))
+        assertEquals("notification_blocked", held.getString("deferredFor"))
+        assertFalse(prefs.contains("done:" + eventId))
+        assertEquals(0L, prefs.getLong("lastAlert", 0L))
+        notifications.setNotificationsEnabled(true)
+        DhikrReminderScheduler.refresh(context, nowMillis = window.startMillis + 1)
+        deliver(event(), window.startMillis + 1)
+        val posted = manager.activeNotifications.single()
+        assertEquals(held.getString("occurrence"), posted.tag)
+        assertEquals("shown", JSONObject(requireNotNull(prefs.getString("done:" + eventId, null))).getString("outcome"))
+    }
+
     @Test fun emptyCollectionSuspendsAndMembershipRestoresReminder() {
         val members = repo.state.value.collectionEntries(DhikrCategory.MORNING).map { it.id }
         val rule = rule(1).copy(dhikrId = members.first(), collection = DhikrCategory.MORNING, end = DhikrTime(minuteOfDay = 690))
@@ -1701,5 +1734,21 @@ class AdhkarFlowTest {
             start = DhikrTime(minuteOfDay = asr.hour * 60 + asr.minute - 4), end = DhikrTime(DhikrTimeKind.ASR))
         val error = DhikrReminderScheduler.validate(context, rule, today)
         assertTrue(error, error != null && error.startsWith("ابتداءً من") && "مواقيت الصلاة تتغيّر" in error)
+    }
+}
+
+/** Android can drop a notification without throwing if access changes inside the posting call. */
+@Implements(NotificationManager::class)
+class DhikrNotificationRevokedDuringPost : ShadowNotificationManager() {
+    var revokeNext = false
+
+    @Implementation
+    override fun notify(tag: String?, id: Int, notification: Notification) {
+        if (revokeNext) {
+            revokeNext = false
+            setNotificationsEnabled(false)
+        } else {
+            super.notify(tag, id, notification)
+        }
     }
 }

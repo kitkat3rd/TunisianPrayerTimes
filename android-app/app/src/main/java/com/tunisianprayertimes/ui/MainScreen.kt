@@ -8,11 +8,9 @@ import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,7 +31,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,6 +45,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -61,6 +59,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -81,6 +80,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -106,6 +106,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -119,7 +120,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -158,8 +158,6 @@ import androidx.core.content.ContextCompat
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
 import com.tunisianprayertimes.ClockTime
-import com.tunisianprayertimes.adhkar.MushafPassages
-import com.tunisianprayertimes.mosque.DisplayTexts
 import com.tunisianprayertimes.AnalyticsTracker
 import com.tunisianprayertimes.Delegation
 import com.tunisianprayertimes.DelegationLocationResult
@@ -197,6 +195,12 @@ import com.tunisianprayertimes.RamadanOverrideChecker
 import com.tunisianprayertimes.OfficialIslamicDates
 import com.tunisianprayertimes.RingtonePreset
 import com.tunisianprayertimes.ScheduleRefreshCoordinator
+import com.tunisianprayertimes.SilenceAccessSettings
+import com.tunisianprayertimes.mosque.MosqueReadiness
+import com.tunisianprayertimes.mosque.MosqueSettingsActivity
+import com.tunisianprayertimes.mosque.MosqueSilenceSettings
+import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
+import com.tunisianprayertimes.mosque.SilenceOwner
 import com.tunisianprayertimes.SilenceAlarmComputer
 import com.tunisianprayertimes.SilenceMode
 import com.tunisianprayertimes.SilenceModeController
@@ -245,6 +249,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -268,11 +273,18 @@ private enum class MainDestination(val labelRes: Int, val iconRes: Int, val sele
     Worship(R.string.main_tab_worship, R.drawable.ic_tab_qibla, R.drawable.ic_tab_qibla_filled),
 }
 
+private enum class ManualSilenceIssue { Dnd, Rule }
+
 private enum class WakeQuickPreset {
     PRAYER_RELATIVE,
     FIXED_TIME,
     TIMER,
 }
+
+private val WakeDraftSaver = Saver<PrayerWakeConfig?, String>(
+    save = { config -> config?.let { prayerWakeJson.encodeToString(PrayerWakeConfig.serializer(), it) } },
+    restore = { prayerWakeJson.decodeFromString(PrayerWakeConfig.serializer(), it) },
+)
 
 private data class WakeSilenceConflictEditorState(
     val draftConfig: PrayerWakeConfig,
@@ -347,10 +359,7 @@ private val WakeAlarmAddButtonShadowElevation = 8.dp
 private const val WakeAlarmAddButtonIdleRevealDelayMillis = 3_000L
 private const val WakeAlarmAddButtonBottomPullRevealDelayMillis = 3_000L
 private val MainHeroCardHeight = 148.dp
-private val SilencedHeroStart = Color(0xFF3A1F2E)
 private val SilencedHeroEnd = Color(0xFF6D3543)
-private val SilencedHeroPillBackground = Color(0xFFF7E8EC)
-private val SilencedHeroPillText = Color(0xFF3A1F2E)
 
 private fun MainDestination.analyticsName(): String = when (this) {
     MainDestination.Today -> "prayers"
@@ -383,15 +392,16 @@ private fun WakeQuickPreset.testTag(): String = when (this) {
     WakeQuickPreset.TIMER -> TestTags.WAKE_QUICK_PRESET_TIMER
 }
 
-/** The next prayer (6.9): its instant, its hour and minute in the phone's clock, and its prayer day. */
+/** Its scheduled instant can fall on a different civil date from the prayer day that owns it. */
 internal data class NextPrayerCountdownInfo(
     val prayer: Prayer,
-    val hour: Int,
-    val minute: Int,
-    val triggerAtMillis: Long,
-    val isTomorrow: Boolean,
+    val at: java.time.Instant,
     val prayerDay: LocalDate,
-)
+    val placeZone: java.time.ZoneId,
+) {
+    val triggerAtMillis: Long get() = at.toEpochMilli()
+    fun prayerOn(date: LocalDate): Prayer? = prayer.takeIf { prayerDay == date }
+}
 
 @Composable
 fun MainScreen(
@@ -414,26 +424,44 @@ fun MainScreen(
     }
     val currentDestinationIndex = selectedDestinationIndex.takeIf { it in mainDestinations.indices } ?: 0
     val selectedDestination = mainDestinations[currentDestinationIndex]
-    // The first-run location screen can replace the main content while an alarm draft waits.
-    var wakeDraftAwaitingPlace by rememberSaveable { mutableStateOf<String?>(null) }
     var needsPlaceDecision by remember { mutableStateOf(PrefsManager.isFirstLaunch(context)) }
-    if (needsPlaceDecision) {
+    var needsSilenceDecision by remember { mutableStateOf(PrefsManager.isFirstRunSilencePending(context)) }
+    fun refreshFirstRun() {
+        needsPlaceDecision = PrefsManager.isFirstLaunch(context)
+        needsSilenceDecision = PrefsManager.isFirstRunSilencePending(context)
+    }
+    if (needsPlaceDecision || needsSilenceDecision) {
         DisposableEffect(context) {
-            fun refresh() { needsPlaceDecision = PrefsManager.isFirstLaunch(context) }
-            val unsubscribe = PrefsManager.observeLocationSelection(context, ::refresh)
-            refresh()
+            val unsubscribe = PrefsManager.observeFirstRunDecisions(context, ::refreshFirstRun)
+            refreshFirstRun()
             onDispose { unsubscribe() }
         }
     }
-    // A place-free shortcut or notification can open its tab immediately. The question belongs to Prayer.
+    // First-run setup belongs to ordinary Prayer entry. A notification can still open its own tab or city picker.
     var handledPickerSequence by rememberSaveable { mutableIntStateOf(-1) }
+    var deferSilenceForPickerVisit by rememberSaveable { mutableStateOf(false) }
     val directedPicker = requestedDestination == MainTabNavigation.DESTINATION_PRAYERS &&
         requestedPrayersAction == MainTabNavigation.PRAYERS_ACTION_CHOOSE_PLACE &&
         handledPickerSequence != requestedDestinationSequence
+    LaunchedEffect(selectedDestination) {
+        if (selectedDestination != MainDestination.Today && !directedPicker) deferSilenceForPickerVisit = false
+    }
     if (needsPlaceDecision && selectedDestination == MainDestination.Today) {
         OnboardingScreen(pickerRequestId = requestedDestinationSequence.takeIf { directedPicker }) {
-            if (directedPicker) handledPickerSequence = requestedDestinationSequence
-            needsPlaceDecision = false
+            if (directedPicker) {
+                handledPickerSequence = requestedDestinationSequence
+                deferSilenceForPickerVisit = true
+            }
+            refreshFirstRun()
+        }
+        return
+    }
+    if (needsSilenceDecision && selectedDestination == MainDestination.Today &&
+        !directedPicker && !deferSilenceForPickerVisit
+    ) {
+        FirstRunSilenceScreen {
+            PrefsManager.finishFirstRunSilenceOffer(context)
+            refreshFirstRun()
         }
         return
     }
@@ -519,6 +547,7 @@ fun MainScreen(
         }
     }
     var prayerTabSettingsPage by rememberSaveable { mutableStateOf<PrayerTabSettingsPage?>(null) }
+    var featureNeedsPlace by rememberSaveable(requestedDestinationSequence, selectedDestination) { mutableStateOf(false) }
     var backgroundLocationDisclosureOpen by rememberSaveable { mutableStateOf(false) }
     val hasTravelLocation = remember(refreshTick) { DelegationLocator.hasLocationPermission(context) }
     val travelPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -534,6 +563,7 @@ fun MainScreen(
         onDispose { unsubscribe() }
     }
     var manualSilenceMode by rememberSaveable { mutableStateOf(PrefsManager.getManualSilenceMode(context)) }
+    var manualOptionsOpen by rememberSaveable { mutableStateOf(false) }
     var manualTargetPrayer by rememberSaveable {
         mutableStateOf(
             if (PrefsManager.getManualSilenceMode(context) == ManualSilenceMode.UNTIL_PRAYER) {
@@ -550,10 +580,12 @@ fun MainScreen(
     var manualDurationMinutes by rememberSaveable {
         mutableStateOf((PrefsManager.getManualSilenceDurationMinutes(context) % 60).toString())
     }
+    val selectedManualMinutes = (manualDurationHours.toIntOrNull() ?: 0) * 60 + (manualDurationMinutes.toIntOrNull() ?: 0)
     var autoSilenceActive by remember { mutableStateOf(PrefsManager.isAutoSilenceActive(context)) }
     var manualSilenceActive by remember { mutableStateOf(PrefsManager.isManualSilenceActive(context)) }
     // The hero and manual card share a pending action, so their writes cannot overlap.
     var silenceActionPending by remember { mutableStateOf(false) }
+    var manualSilenceIssue by rememberSaveable { mutableStateOf<ManualSilenceIssue?>(null) }
     var phoneSilenced by remember { mutableStateOf(SilenceStatus.isPhoneSilenced(context)) }
     var phoneDndActive by remember { mutableStateOf(SilenceStatus.isDoNotDisturbActive(context)) }
     var appControlledSilenceActive by remember { mutableStateOf(SilenceStatus.isAppControlledSilenceActive(context)) }
@@ -567,6 +599,13 @@ fun MainScreen(
         autoSilenceRequested = PrefsManager.isAutomaticSilenceRequested(context)
         autoSilenceActive = PrefsManager.isAutoSilenceActive(context)
         manualSilenceActive = PrefsManager.isManualSilenceActive(context)
+        if (!manualOptionsOpen || manualSilenceActive) {
+            manualSilenceMode = PrefsManager.getManualSilenceMode(context)
+            manualTargetPrayer = PrefsManager.getManualSilenceTargetPrayer(context)
+            val minutes = PrefsManager.getManualSilenceDurationMinutes(context)
+            manualDurationHours = (minutes / 60).toString()
+            manualDurationMinutes = (minutes % 60).toString()
+        }
         phoneSilenced = SilenceStatus.isPhoneSilenced(context)
         phoneDndActive = SilenceStatus.isDoNotDisturbActive(context)
         appControlledSilenceActive = SilenceStatus.isAppControlledSilenceActive(context)
@@ -574,16 +613,16 @@ fun MainScreen(
         manualSilenceEndsAtMillis = PrefsManager.getManualSilenceEndsAtMillis(context)
     }
 
-    fun toggleManualSilence(mode: ManualSilenceMode = manualSilenceMode) {
+    fun toggleManualSilence() {
+        val mode = manualSilenceMode
         if (!manualSilenceActive && !autoSilenceActive && mode == ManualSilenceMode.UNTIL_PRAYER &&
             !PrefsManager.hasConfirmedPlace(context)
         ) {
-            locationPickerRequested = true
-            Toast.makeText(context, R.string.prayer_entry_confirm_to_schedule, Toast.LENGTH_LONG).show()
+            featureNeedsPlace = true
             return
         }
         if (!notificationManager.isNotificationPolicyAccessGranted) {
-            Toast.makeText(context, context.getString(R.string.toast_dnd_permission), Toast.LENGTH_SHORT).show()
+            manualSilenceIssue = ManualSilenceIssue.Dnd
             return
         }
         if (silenceActionPending) return
@@ -603,12 +642,11 @@ fun MainScreen(
                             PrefsManager.isAutoSilenceActive(context) -> {
                                 // In turn with a re-plan, which reads the dismissals.
                                 synchronized(SilenceScheduler) {
-                                    SilenceModeController.disableAutoSilence(context)
-                                    SilenceScheduler.dismissCurrentWindows(
-                                        context, SilenceScheduler.currentSilenceWindowPrayer(context),
-                                    )
+                                    val prayer = SilenceScheduler.currentSilenceWindowPrayer(context)
+                                    SilenceModeController.disableAutoSilence(context).also { released ->
+                                        if (released) SilenceScheduler.dismissCurrentWindows(context, prayer)
+                                    }
                                 }
-                                true
                             }
                             else -> false
                         }
@@ -618,26 +656,25 @@ fun MainScreen(
                     refreshSilenceState()
                     if (restored) {
                         Toast.makeText(context, context.getString(if (com.tunisianprayertimes.mosque.MosqueSilenceSettings.usesOwnedRules(context)) R.string.mosque_request_released else R.string.toast_normal_restored), Toast.LENGTH_SHORT).show()
+                    } else {
+                        manualSilenceIssue = if (notificationManager.isNotificationPolicyAccessGranted) ManualSilenceIssue.Rule else ManualSilenceIssue.Dnd
                     }
                 } finally {
                     silenceActionPending = false
                 }
             }
         } else {
-            val totalMinutes = resolveManualTotalMinutes(
-                manualDurationHours, manualDurationMinutes,
-                PrefsManager.getManualSilenceDurationMinutes(context)
-            )
+            val totalMinutes = selectedManualMinutes
             if (mode == ManualSilenceMode.DURATION && totalMinutes <= 0) {
                 Toast.makeText(context, context.getString(R.string.error_manual_duration_required), Toast.LENGTH_SHORT).show()
                 return
             }
-            val prayerEndsAtMillis = if (mode == ManualSilenceMode.UNTIL_PRAYER) {
-                resolveManualSilencePrayerEndMillis(context, delegationId, manualTargetPrayer)
+            val prayerOccurrence = if (mode == ManualSilenceMode.UNTIL_PRAYER) {
+                nextManualSilenceOccurrence(context, manualTargetPrayer)
             } else {
                 null
             }
-            if (mode == ManualSilenceMode.UNTIL_PRAYER && prayerEndsAtMillis == null) {
+            if (mode == ManualSilenceMode.UNTIL_PRAYER && prayerOccurrence == null) {
                 Toast.makeText(context, context.getString(R.string.error_manual_prayer_time_unavailable), Toast.LENGTH_SHORT).show()
                 return
             }
@@ -648,26 +685,23 @@ fun MainScreen(
                     // In turn with the screen's other silence work, off the main thread, and run even if
                     // the screen goes meanwhile.
                     val endsAt = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
-                        SilenceModeController.setManualSilent(context)
-                        PrefsManager.setManualSilenceMode(context, mode)
-                        when (mode) {
-                            ManualSilenceMode.DURATION -> ManualSilenceScheduler.schedule(context, totalMinutes)
-                            ManualSilenceMode.UNTIL_PRAYER ->
-                                requireNotNull(prayerEndsAtMillis).also { ManualSilenceScheduler.scheduleAt(context, it) }
-                            ManualSilenceMode.UNTIL_STOPPED -> {
-                                ManualSilenceScheduler.cancel(context)
-                                -1L
-                            }
-                        }
+                        ManualSilenceScheduler.start(context, mode, totalMinutes, prayerOccurrence)
+                    }
+                    if (endsAt == null) {
+                        refreshSilenceState()
+                        manualSilenceIssue = if (notificationManager.isNotificationPolicyAccessGranted) ManualSilenceIssue.Rule else ManualSilenceIssue.Dnd
+                        return@launch
                     }
                     manualSilenceMode = mode
+                    val inexact = endsAt > 0L && !ManualSilenceScheduler.canScheduleExact(context)
                     when (mode) {
                         ManualSilenceMode.DURATION -> {
                             manualSilenceEndsAtMillis = endsAt
                             AnalyticsTracker.manualSilenceStarted(context, mode, totalMinutes)
                             Toast.makeText(
                                 context,
-                                context.getString(R.string.toast_silent_enabled_timed, formatDurationText(totalMinutes)),
+                                if (inexact) context.getString(R.string.manual_inexact_started)
+                                else context.getString(R.string.toast_silent_enabled_timed, formatDurationText(totalMinutes)),
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -677,8 +711,8 @@ fun MainScreen(
                             Toast.makeText(
                                 context,
                                 context.getString(
-                                    R.string.toast_silent_enabled_until_prayer,
-                                    prayerName(context, manualTargetPrayer)
+                                    if (inexact) R.string.manual_approximate_prayer else R.string.toast_silent_enabled_until_prayer,
+                                    prayerName(context, requireNotNull(prayerOccurrence).prayer),
                                 ),
                                 Toast.LENGTH_SHORT
                             ).show()
@@ -697,29 +731,59 @@ fun MainScreen(
         }
     }
 
+    manualSilenceIssue?.let { issue ->
+        val needsDnd = issue == ManualSilenceIssue.Dnd
+        AlertDialog(
+            onDismissRequest = { manualSilenceIssue = null },
+            title = { Text(stringResource(if (needsDnd) R.string.manual_dnd_access_title else R.string.manual_rule_failed_title)) },
+            text = { Text(stringResource(if (needsDnd) R.string.manual_dnd_access_body else R.string.manual_rule_failed_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    manualSilenceIssue = null
+                    if (needsDnd) SilenceAccessSettings.openDnd(context) else SilenceAccessSettings.openRules(context, SilenceOwner.MANUAL)
+                }) {
+                    Text(stringResource(if (needsDnd) R.string.manual_dnd_open_settings else R.string.manual_rule_settings))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { manualSilenceIssue = null }) { Text(stringResource(R.string.jomoaa_time_cancel)) }
+            },
+        )
+    }
+
+    var checkingSilenceOptIn by remember { mutableStateOf(false) }
     fun changeAutoSilence(enabled: Boolean) {
-        if (PrefsManager.isAutomaticSilenceRequested(context) == enabled) return
+        if (checkingSilenceOptIn || PrefsManager.isAutomaticSilenceRequested(context) == enabled) return
         if (enabled && !PrefsManager.hasConfirmedPlace(context)) {
-            prayerTabSettingsPage = null
-            locationPickerRequested = true
-            Toast.makeText(context, R.string.prayer_entry_confirm_to_schedule, Toast.LENGTH_LONG).show()
+            featureNeedsPlace = true
             return
         }
-        autoSilenceEnabled = enabled
-        autoSilenceRequested = enabled
-        PrefsManager.setEnabled(context, enabled)
-        AnalyticsTracker.autoSilenceStateChanged(context, enabled)
-        Toast.makeText(
-            context,
-            context.getString(when {
-                !enabled -> R.string.toast_auto_disabled
-                !hasDnd || !hasAlarm -> R.string.prayer_silence_permission_needed
-                else -> R.string.toast_auto_enabled
-            }),
-            Toast.LENGTH_SHORT,
-        ).show()
-        // Arming or cancelling every window (and restoring the ringer) off the main thread.
-        schedulerScope.launch {
+        schedulerScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            if (enabled) {
+                val mode = MosqueSilenceSettings.mode(context)
+                if (mode == null) {
+                    context.startActivity(Intent(context, MosqueSettingsActivity::class.java))
+                    return@launch
+                }
+                checkingSilenceOptIn = true
+                val ready = try {
+                    withContext(Dispatchers.IO) { MosqueReadiness.forMode(context, mode).isEmpty() }
+                } finally {
+                    checkingSilenceOptIn = false
+                }
+                if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@launch
+                if (!ready) {
+                    context.startActivity(MosqueSettingsActivity.enableIntent(context, mode))
+                    return@launch
+                }
+                if (!PrefsManager.activateConfiguredSilence(context, mode, firstRun = false)) return@launch
+            } else {
+                PrefsManager.setEnabled(context, false)
+            }
+            autoSilenceEnabled = enabled
+            autoSilenceRequested = enabled
+            AnalyticsTracker.autoSilenceStateChanged(context, enabled)
+            Toast.makeText(context, if (enabled) R.string.toast_auto_enabled else R.string.toast_auto_disabled, Toast.LENGTH_SHORT).show()
             withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
                 ScheduleRefreshCoordinator.syncSilence(context)
             }
@@ -735,7 +799,7 @@ fun MainScreen(
     // so execution order is deterministic and state is read only once.
     LaunchedEffect(refreshTick) {
         // The silence and alarm work off the main thread, in turn with the screen's other silence work.
-        withContext(ScheduleRefreshCoordinator.scheduling) { ManualSilenceScheduler.syncExpiredTimer(context) }
+        withContext(ScheduleRefreshCoordinator.scheduling) { ManualSilenceScheduler.restoreTimer(context) }
 
         // Auto-update location from last known GPS fix
         if (PrefsManager.isAutoLocationUpdateEnabled(context) &&
@@ -815,13 +879,15 @@ fun MainScreen(
     }
 
     // Reschedule helper
-    fun rescheduleIfEnabled() {
+    fun rescheduleIfEnabled(editedWake: PrayerWakeConfig? = null) {
         schedulerScope.launch {
             // Runs even if the screen goes before its turn comes: the change it follows is already saved.
-            withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
+            val silenceApplied = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
                 ScheduleRefreshCoordinator.syncSilence(context)
                 syncWakeScheduling()
+                editedWake == null || WakeAlarmScheduler.applyEditedTimerSilence(context, editedWake)
             }
+            if (!silenceApplied) Toast.makeText(context, R.string.wake_timer_silence_unapplied, Toast.LENGTH_LONG).show()
             // Sync UI after rescheduling — scheduleAll may have silenced the phone
             // if the current time now falls inside a silence window.
             refreshSilenceState()
@@ -829,30 +895,12 @@ fun MainScreen(
         }
     }
 
-    var editingWakeAlarm by remember { mutableStateOf<PrayerWakeConfig?>(null) }
+    var editingWakeAlarm by rememberSaveable(requestedDestinationSequence, stateSaver = WakeDraftSaver) {
+        mutableStateOf<PrayerWakeConfig?>(null)
+    }
     var quickAddVisible by rememberSaveable { mutableStateOf(false) }
     var wakeSilenceConflictEditor by remember { mutableStateOf<WakeSilenceConflictEditorState?>(null) }
-    var pendingReturnToPrayersAfterEdit by rememberSaveable { mutableStateOf(false) }
-    var wakePlaceRequest by remember { mutableStateOf<PrayerWakeConfig?>(null) }
-    wakePlaceRequest?.let { draft ->
-        PrayerPlaceRequiredDialog(onChoosingPlace = {
-            wakeDraftAwaitingPlace = prayerWakeJson.encodeToString(PrayerWakeConfig.serializer(), draft)
-            editingWakeAlarm = null
-            wakeSilenceConflictEditor = null
-            pendingReturnToPrayersAfterEdit = false
-            selectedDestinationIndex = MainDestination.Today.ordinal
-        }) { wakePlaceRequest = null }
-    }
-    LaunchedEffect(wakeDraftAwaitingPlace, needsPlaceDecision, placeProvisional, delegationId, selectedDestination) {
-        val encoded = wakeDraftAwaitingPlace ?: return@LaunchedEffect
-        if (selectedDestination != MainDestination.Today) {
-            wakeDraftAwaitingPlace = null
-        } else if (PrefsManager.hasConfirmedPlace(context)) {
-            wakeDraftAwaitingPlace = null
-            editingWakeAlarm = prayerWakeJson.decodeFromString(PrayerWakeConfig.serializer(), encoded)
-            selectedDestinationIndex = MainDestination.Alarms.ordinal
-        }
-    }
+    var pendingReturnToPrayersAfterEdit by rememberSaveable(requestedDestinationSequence) { mutableStateOf(false) }
 
     fun createWakeAlarm(preset: WakeQuickPreset) {
         quickAddVisible = false
@@ -864,6 +912,7 @@ fun MainScreen(
         // The travel notification opens the city picker (6.8).
         if (directedPicker) {
             locationPickerRequested = true
+            deferSilenceForPickerVisit = true
             handledPickerSequence = requestedDestinationSequence
         }
         // The fasting notification opens its card's sheet, or the suhoor alarm's questions.
@@ -878,20 +927,13 @@ fun MainScreen(
     val qiblaScrollState = rememberScrollState()
     val adhkarScrollState = rememberScrollState()
     val prayerDayZone = PrayerTimesRepository.place(context).zone
-    var prayerTableSelectedDate by rememberSaveable {
-        mutableLongStateOf(calendarDateMillis(LocalDate.now(prayerDayZone)))
+    val prayerToday = rememberCalendarToday(prayerDayZone)
+    // A chosen day survives tab changes and recreation. "Today" follows midnight in the selected place.
+    var pickedPrayerEpochDay by rememberSaveable { mutableStateOf<Long?>(null) }
+    LaunchedEffect(prayerToday) {
+        if (pickedPrayerEpochDay == prayerToday.toEpochDay()) pickedPrayerEpochDay = null
     }
-    var previousPrayerDayZone by rememberSaveable { mutableStateOf(prayerDayZone.id) }
-    LaunchedEffect(prayerDayZone) {
-        if (previousPrayerDayZone != prayerDayZone.id) {
-            val now = java.time.Instant.now()
-            val previousToday = now.atZone(java.time.ZoneId.of(previousPrayerDayZone)).toLocalDate()
-            if (calendarLocalDate(prayerTableSelectedDate) == previousToday) {
-                prayerTableSelectedDate = calendarDateMillis(now.atZone(prayerDayZone).toLocalDate())
-            }
-            previousPrayerDayZone = prayerDayZone.id
-        }
-    }
+    val prayerTableSelectedDate = calendarDateMillis(pickedPrayerEpochDay?.let(LocalDate::ofEpochDay) ?: prayerToday)
     val selectedDestinationScrollState = when (selectedDestination) {
         MainDestination.Today -> todayScrollState
         MainDestination.Alarms -> alarmsScrollState
@@ -919,7 +961,7 @@ fun MainScreen(
     // The Fajr suggestion saves straight away, as the editor's save would.
     fun addSuggestedFajrAlarm(config: PrayerWakeConfig) {
         if (!PrefsManager.hasConfirmedPlace(context)) {
-            wakePlaceRequest = config
+            featureNeedsPlace = true
             return
         }
         if (hasUnresolvedWakeSilenceConflict(context, delegationId, config)) {
@@ -942,7 +984,20 @@ fun MainScreen(
             onPresetSelected = ::createWakeAlarm,
         )
     }
-    val missingSilenceAccess = autoSilenceEnabled && (!hasDnd || !hasAlarm)
+    // Re-read the selected mode's prerequisites on opt-in and return from Settings.
+    // Reading private areas and checking platform rules stay off the main thread.
+    val configuredSilenceMode = remember(refreshTick) { MosqueSilenceSettings.mode(context) }
+    val silenceIssues by key(autoSilenceEnabled, configuredSilenceMode, refreshTick, selectedDestination) {
+        produceState<List<Int>?>(initialValue = null) {
+            if (autoSilenceEnabled && selectedDestination == MainDestination.Today) {
+                value = withContext(Dispatchers.IO) {
+                    if (configuredSilenceMode == null) listOf(R.string.mosque_invalid_mode)
+                    else MosqueReadiness.forMode(context, configuredSilenceMode)
+                }
+            }
+        }
+    }
+    val missingSilenceIssue = firstPrayerSilenceIssue(silenceIssues)
     val missingCallAccess = callEndVibrationEnabled && !hasPhoneState
     val usesPlaceOnboarding = remember { PrefsManager.usesPlaceOnboarding(context) }
     val methodConfirmation: @Composable () -> Unit = {
@@ -1090,12 +1145,11 @@ fun MainScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp, bottom = 10.dp),
+                            .padding(top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         LocationPickerCard(
-                            delegationId = delegationId,
                             openRequested = locationPickerRequested,
                             onOpenRequestHandled = { locationPickerRequested = false },
                             onDelegationSelected = { delegation ->
@@ -1126,6 +1180,25 @@ fun MainScreen(
 
                 when (selectedDestination) {
                     MainDestination.Today -> {
+                        var middayRevision by remember { mutableIntStateOf(0) }
+                        val nextMidday = remember(manualSilenceMode, manualSilenceActive, delegationId, prayerToday, refreshTick, middayRevision) {
+                            if (manualSilenceMode == ManualSilenceMode.UNTIL_PRAYER && !manualSilenceActive)
+                                nextManualSilenceOccurrence(context, Prayer.DHUHR)
+                            else null
+                        }
+                        LaunchedEffect(nextMidday) {
+                            nextMidday?.let {
+                                delay((it.at.toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1L))
+                                middayRevision++
+                            }
+                        }
+                        val middayName = nextMidday?.prayer ?: Prayer.DHUHR
+                        val namedManualPrayer = when {
+                            manualSilenceActive && manualSilenceMode == ManualSilenceMode.UNTIL_PRAYER ->
+                                PrefsManager.activeManualSilencePrayer(context)
+                            manualTargetPrayer == Prayer.DHUHR -> middayName
+                            else -> manualTargetPrayer
+                        }
                         TodayNextPrayerCard(
                             delegationId = delegationId,
                             isPhoneSilenced = phoneSilenced || phoneDndActive,
@@ -1134,12 +1207,26 @@ fun MainScreen(
                             autoSilenceActive = autoSilenceActive,
                             manualSilenceActive = manualSilenceActive,
                             manualSilenceMode = manualSilenceMode,
-                            manualTargetPrayer = manualTargetPrayer,
+                            manualTargetPrayer = namedManualPrayer,
                             manualSilenceEndsAtMillis = manualSilenceEndsAtMillis,
                             wakeSilenceUntilAlarmActive = wakeSilenceUntilAlarmActive,
-                            autoSilenceEnabled = autoSilenceEnabled,
+                            autoSilenceEnabled = autoSilenceRequested,
+                            configuredMode = configuredSilenceMode,
+                            setupIssues = if (autoSilenceRequested && !autoSilenceEnabled)
+                                listOf(R.string.mosque_waiting_for_place) else silenceIssues,
+                            onRepairSilence = {
+                                if (!autoSilenceEnabled) featureNeedsPlace = true
+                                else context.startActivity(MosqueSettingsActivity.setupIntent(context))
+                            },
                             silenceActionPending = silenceActionPending,
-                            onManualSilenceClick = { toggleManualSilence(ManualSilenceMode.UNTIL_STOPPED) },
+                            manualActionLabel = manualSilenceActionLabel(
+                                active = (manualSilenceActive || autoSilenceActive) && hasDnd,
+                                mode = manualSilenceMode, targetPrayer = namedManualPrayer,
+                                minutes = selectedManualMinutes,
+                                exact = hasAlarm,
+                            ),
+                            onManualSilenceClick = ::toggleManualSilence,
+                            onChooseManualDuration = { manualOptionsOpen = true },
                         )
 
                         PrayerSettingsCard(
@@ -1152,35 +1239,37 @@ fun MainScreen(
                             pendingMethodRow = if (usesPlaceOnboarding && methodQuestion != null && !placeProvisional) methodConfirmation else null,
                             selectedDate = prayerTableSelectedDate,
                             onSelectedDateChange = { selectedDate ->
-                                prayerTableSelectedDate = startOfDayMillis(selectedDate)
+                                pickedPrayerEpochDay = calendarLocalDate(selectedDate).takeUnless { it == prayerToday }?.toEpochDay()
                             },
                             onConfigChanged = {
                                 rescheduleIfEnabled()
                             },
-                            silencePermissionsGranted = hasDnd && hasAlarm,
-                            onEnableSilenceMaster = { changeAutoSilence(true) }
+                            silenceSetupIssues = if (autoSilenceRequested && !autoSilenceEnabled)
+                                listOf(R.string.mosque_waiting_for_place) else silenceIssues,
+                            onOpenSilenceSetup = {
+                                if (!PrefsManager.hasConfirmedPlace(context)) featureNeedsPlace = true
+                                else if (PrefsManager.isAutomaticSilenceRequested(context)) {
+                                    context.startActivity(MosqueSettingsActivity.setupIntent(context))
+                                } else changeAutoSilence(true)
+                            },
                         )
 
-                        if (missingSilenceAccess || missingCallAccess) {
+                        if (LocalDensity.current.fontScale > 1.3f) {
+                            NextPrayerHeroVerse(Modifier.fillMaxWidth().padding(vertical = 8.dp), color = GreenPrimaryDark)
+                        }
+                        if (missingCallAccess) {
                             PermissionBanner(
-                                hasDnd = !autoSilenceEnabled || hasDnd,
-                                hasAlarm = !autoSilenceEnabled || hasAlarm,
-                                hasPhoneState = !missingCallAccess,
-                                onRequestPhoneState = {
-                                    AnalyticsTracker.permissionStepResult(
-                                        context = context,
-                                        permissionType = "phone_state",
-                                        result = "request_opened",
-                                        entryPoint = "main_banner",
-                                    )
-                                    phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
-                                },
-                                context = context,
+                                message = stringResource(R.string.banner_phone_state_missing),
+                                onClick = { ensureCallTrackingPermission() },
                             )
                         }
 
-                        ManualSilenceCard(
+                        if (manualOptionsOpen) ManualSilenceOptionsSheet(
                             hasDnd = hasDnd,
+                            hasExactAlarm = hasAlarm,
+                            resolvedTotalMinutes = selectedManualMinutes,
+                            middayPrayer = middayName,
+                            namedTargetPrayer = namedManualPrayer,
                             manualSilenceMode = manualSilenceMode,
                             manualTargetPrayer = manualTargetPrayer,
                             manualDurationHours = manualDurationHours,
@@ -1220,7 +1309,16 @@ fun MainScreen(
                                 manualDurationMinutes = (totalMinutes % 60).toString()
                                 PrefsManager.setManualSilenceDurationMinutes(context, totalMinutes)
                             },
-                            onClick = { toggleManualSilence() },
+                            onDismiss = {
+                                val saved = PrefsManager.getManualSilenceDurationMinutes(context)
+                                manualDurationHours = (saved / 60).toString()
+                                manualDurationMinutes = (saved % 60).toString()
+                                manualOptionsOpen = false
+                            },
+                            onClick = {
+                                manualOptionsOpen = false
+                                toggleManualSilence()
+                            },
                         )
 
                         SunriseAndNightTimesCard(
@@ -1268,9 +1366,7 @@ fun MainScreen(
                                 autoLocationEnabled = autoLocationEnabled,
                                 onAutoLocationChange = { enabled ->
                                     if (enabled && !PrefsManager.hasConfirmedPlace(context)) {
-                                        Toast.makeText(context, R.string.travel_confirm_place, Toast.LENGTH_LONG).show()
-                                        prayerTabSettingsPage = null
-                                        locationPickerRequested = true
+                                        featureNeedsPlace = true
                                     } else {
                                         autoLocationEnabled = enabled
                                         PrefsManager.setAutoLocationUpdateEnabled(context, enabled)
@@ -1282,6 +1378,16 @@ fun MainScreen(
                                     }
                                 },
                                 access = PrayerSettingsAccess(
+                                    silenceSetupIssue = missingSilenceIssue,
+                                    silenceStatus = when {
+                                        !autoSilenceRequested -> null
+                                        !autoSilenceEnabled -> R.string.mosque_waiting_for_place
+                                        silenceIssues == null -> R.string.mosque_setup_checking
+                                        missingSilenceIssue != null && configuredSilenceMode == AutomaticSilenceMode.TIME_AND_MOSQUE &&
+                                            MosqueReadiness.locationIssue(missingSilenceIssue) -> R.string.prayer_silence_location_fallback
+                                        missingSilenceIssue != null -> R.string.prayer_silence_waiting_for_setup
+                                        else -> null
+                                    },
                                     hasPhoneState = hasPhoneState,
                                     hasForegroundLocation = hasTravelLocation,
                                     backgroundTravelActive = PrefsManager.isBackgroundTravelEnabled(context) &&
@@ -1291,9 +1397,7 @@ fun MainScreen(
                                 ),
                                 onBackgroundTravelChange = { enabled ->
                                     if (enabled && !PrefsManager.hasConfirmedPlace(context)) {
-                                        Toast.makeText(context, R.string.travel_confirm_place, Toast.LENGTH_LONG).show()
-                                        prayerTabSettingsPage = null
-                                        locationPickerRequested = true
+                                        featureNeedsPlace = true
                                     } else if (enabled) {
                                         backgroundLocationDisclosureOpen = true
                                     } else {
@@ -1313,30 +1417,20 @@ fun MainScreen(
                                 refreshTick++
                             }
                         }
-                        Text(
-                            text = stringResource(R.string.info_text),
-                            fontSize = 12.sp,
-                            color = TextMuted,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag(TestTags.INFO_TEXT)
-                                .padding(top = 12.dp)
-                        )
                     }
 
                     MainDestination.Alarms -> {
                         WakeAlarmCard(
                             wakeAlarms = storedWakeAlarms,
                             exactAlarmsAllowed = hasAlarm,
-                            onPlaceRequired = { wakePlaceRequest = it },
+                            onPlaceRequired = { featureNeedsPlace = true },
                             delegationId = delegationId,
                             activity = activity,
                             awakeCheckRunning = awakeCheckRunning,
                             onConfirmAwake = {
                                 AwakeCheckService.confirmAwake(context)
                             },
-                            onConfigChanged = { rescheduleIfEnabled() },
+                            onConfigChanged = ::rescheduleIfEnabled,
                             onPresetSelected = ::createWakeAlarm,
                             onEditAlarm = { config -> editingWakeAlarm = config },
                             onAddFajrAlarm = ::addSuggestedFajrAlarm,
@@ -1391,6 +1485,7 @@ fun MainScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(rowHeight)
+                            .selectableGroup()
                             .padding(horizontal = 8.dp, vertical = BottomNavigationVerticalPadding),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1413,10 +1508,11 @@ fun MainScreen(
                                     .padding(horizontal = 4.dp)
                                     .testTag(destination.testTag())
                                     .clip(RoundedCornerShape(12.dp))
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) { selectedDestinationIndex = index },
+                                    .selectable(
+                                        selected = selected,
+                                        role = Role.Tab,
+                                        onClick = { selectedDestinationIndex = index },
+                                    ),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
@@ -1432,7 +1528,7 @@ fun MainScreen(
                                             painter = painterResource(
                                                 if (selected) destination.selectedIconRes else destination.iconRes
                                             ),
-                                            contentDescription = label,
+                                            contentDescription = null,
                                             tint = tabContentColor,
                                             modifier = Modifier.size(24.dp)
                                         )
@@ -1505,7 +1601,10 @@ fun MainScreen(
             val isPersistedAlarm = wakeAlarms.any { existing -> existing.id == wakeAlarm.id }
             WakeEditorSheet(
                 activity = activity,
-                onPlaceRequired = { wakePlaceRequest = it },
+                onPlaceRequired = { draft ->
+                    editingWakeAlarm = draft
+                    featureNeedsPlace = true
+                },
                 delegationId = delegationId,
                 initialConfig = wakeAlarm,
                 isNewAlarm = !isPersistedAlarm,
@@ -1558,19 +1657,7 @@ fun MainScreen(
                         AnalyticsTracker.wakeAlarmSaved(context, config)
                         editingWakeAlarm = null
                         wakeSilenceConflictEditor = null
-                        rescheduleIfEnabled()
-                    }
-                    if (config.enabled &&
-                        config.mainAlarm.mode == WakeMainAlarmMode.FROM_NOW &&
-                        config.silenceUntilAlarm &&
-                        WakeAlarmScheduler.canScheduleExactAlarms(context) &&
-                        WakeAlarmComputer.compute(Calendar.getInstance(), config, emptyList()).allTriggers.isNotEmpty()
-                    ) {
-                        WakeAlarmScheduler.activateSilenceUntilAlarm(context, config.id)
-                        refreshSilenceState()
-                    } else if (com.tunisianprayertimes.wake.WakeAlarmScheduler.isSilencedAlarm(context, config.id)) {
-                        WakeAlarmScheduler.removeSilenceUntilAlarm(context, config.id)
-                        refreshSilenceState()
+                        rescheduleIfEnabled(config)
                     }
                 },
                 onEditSilenceWindowRequest = { draftConfig, conflict ->
@@ -1600,39 +1687,8 @@ fun MainScreen(
             )
         }
     }
-}
-
-@Composable
-private fun PhoneStatusNotice(
-    statusText: String,
-    missingAccess: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val accentColor by animateColorAsState(
-        targetValue = if (missingAccess) Color(0xFFFFD166) else Color(0xFFFFCDD2),
-        label = "phoneStatusAccent"
-    )
-
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(5.dp)
-                .clip(RoundedCornerShape(50))
-                .background(accentColor)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = statusText,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = accentColor,
-            maxLines = 1,
-            softWrap = false,
-            autoSize = TextAutoSize.StepBased(maxFontSize = 11.sp),
-        )
+    if (featureNeedsPlace) {
+        PrayerPlaceRequiredDialog(onPlaceConfirmed = { refreshTick++ }) { featureNeedsPlace = false }
     }
 }
 
@@ -1691,42 +1747,15 @@ private fun AwakeCheckBanner(onConfirm: () -> Unit) {
 
 @Composable
 private fun PermissionBanner(
-    hasDnd: Boolean,
-    hasAlarm: Boolean,
-    hasPhoneState: Boolean,
-    onRequestPhoneState: () -> Unit,
-    context: Context
+    message: String,
+    onClick: () -> Unit,
 ) {
     OutlinedCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag(TestTags.PERMISSION_BANNER)
             .padding(top = 12.dp)
-            .clickable {
-                if (!hasDnd) {
-                    AnalyticsTracker.permissionStepResult(
-                        context = context,
-                        permissionType = "dnd",
-                        result = "request_opened",
-                        entryPoint = "main_banner",
-                    )
-                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-                } else if (!hasAlarm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    AnalyticsTracker.permissionStepResult(
-                        context = context,
-                        permissionType = "exact_alarm",
-                        result = "request_opened",
-                        entryPoint = "main_banner",
-                    )
-                    // The app's own page, not the list of every app.
-                    context.startActivity(
-                        Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                            .setData(Uri.parse("package:" + context.packageName)),
-                    )
-                } else if (!hasPhoneState) {
-                    onRequestPhoneState()
-                }
-            },
+            .clickable(role = Role.Button, onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.outlinedCardColors(containerColor = BannerBg),
         border = androidx.compose.foundation.BorderStroke(1.dp, BannerStroke)
@@ -1744,12 +1773,7 @@ private fun PermissionBanner(
                     .size(22.dp),
             )
             Text(
-                text = when {
-                    !hasDnd && !hasAlarm -> stringResource(R.string.banner_both_missing)
-                    !hasDnd -> stringResource(R.string.banner_dnd_missing)
-                    !hasAlarm -> stringResource(R.string.banner_alarm_missing)
-                    else -> stringResource(R.string.banner_phone_state_missing)
-                },
+                text = message,
                 fontSize = 13.sp,
                 color = BannerText,
                 lineHeight = 18.sp,
@@ -1761,8 +1785,7 @@ private fun PermissionBanner(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LocationPickerCard(
-    delegationId: Int,
+internal fun LocationPickerCard(
     onDelegationSelected: (Delegation) -> Unit,
     openRequested: Boolean = false,
     onOpenRequestHandled: () -> Unit = {},
@@ -1818,12 +1841,11 @@ private fun LocationPickerCard(
         if (!pickerWanted) return@produceState
         value = withContext(Dispatchers.Default) { LocalityRepository.preparePicker(context, allDelegations) }
     }
-    val savedDelegation = remember(delegationId, allDelegations) { allDelegations.find { it.id == delegationId } }
     // Every country's cities (owner, 2026-10-19: all regions open), their names folded once, so the picker's search
     // never folds 26,000 names per key.
     val openRegionCities by produceState(CitySearch.Index.EMPTY, pickerWanted) {
         if (!pickerWanted) return@produceState
-        value = withContext(Dispatchers.IO) { CitySearch.Index(PlaceCatalogue.get(context).listedRows()) }
+        value = withContext(Dispatchers.IO) { PlaceCatalogue.get(context).pickerIndex }
     }
 
     var selectedLocation by remember { mutableStateOf(PrefsManager.getLocationSelection(context)) }
@@ -1831,12 +1853,19 @@ private fun LocationPickerCard(
         val unsubscribe = PrefsManager.observeLocationSelection(context) {
             selectedLocation = PrefsManager.getLocationSelection(context)
         }
+        selectedLocation = PrefsManager.getLocationSelection(context)
         onDispose { unsubscribe() }
     }
+    val savedPlace = selectedLocation.place
+    val delegationId = (savedPlace as? PrayerPlace.Inm)?.delegationId
+    val savedDelegation = remember(delegationId, allDelegations) { allDelegations.find { it.id == delegationId } }
+    // Only the most recent pick, lookup or locality repair is allowed to publish its result.
+    var placeChoice by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(sourcesChecked, allDelegations, selectedLocation) {
         val saved = selectedLocation
         // The source repair is for a Tunisian locality only (6.8).
-        if (!sourcesChecked || saved.fromGps || PrefsManager.getPlace(context) !is PrayerPlace.Inm) return@LaunchedEffect
+        if (!sourcesChecked || saved.fromGps || saved.place !is PrayerPlace.Inm) return@LaunchedEffect
+        val choice = placeChoice
         val id = saved.localityId ?: return@LaunchedEffect
         val sources = allDelegations
         val repaired = withContext(Dispatchers.Default) {
@@ -1849,25 +1878,29 @@ private fun LocationPickerCard(
         } ?: return@LaunchedEffect
         if (repaired.delegationId == saved.delegationId) return@LaunchedEffect
         val source = sources.find { it.id == repaired.delegationId } ?: return@LaunchedEffect
-        if (PrefsManager.getLocationSelection(context) != saved) return@LaunchedEffect
+        if (choice != placeChoice || PrefsManager.getLocationSelection(context) != saved) return@LaunchedEffect
         PrefsManager.setLocality(context, repaired)
         onDelegationSelected(source)
         selectedLocation = PrefsManager.getLocationSelection(context)
     }
-    val savedSourceUnavailable = sourcesChecked && PrefsManager.getPlace(context) is PrayerPlace.Inm &&
+    val savedSourceUnavailable = sourcesChecked && savedPlace is PrayerPlace.Inm &&
         selectedLocation.delegationId !in availableIds
     var showSheet by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
     // A city abroad picked by hand, its first days being computed before it is stored.
     var preparingPlace by remember { mutableStateOf(false) }
-    // Each choice of place (a pick, a lookup) takes a number: only the latest one is stored, whichever ends first.
-    var placeChoice by remember { mutableIntStateOf(0) }
+
+    fun openPicker() {
+        placeChoice++
+        preparingPlace = false
+        refreshSources()
+        pickerWanted = true
+        showSheet = true
+    }
 
     LaunchedEffect(openRequested) {
         if (openRequested) {
-            refreshSources()
-            pickerWanted = true
-            showSheet = true
+            openPicker()
             onOpenRequestHandled()
         }
     }
@@ -1879,13 +1912,15 @@ private fun LocationPickerCard(
 
         locating = true
         val choice = ++placeChoice
+        val initialSelection = PrefsManager.getLocationSelection(context)
         scope.launch {
-            val result = DelegationLocator.detectNearestDelegation(context)
-            if (choice != placeChoice) {
+            val detected = DelegationLocator.detectNearestDelegation(context)
+            if (choice != placeChoice || PrefsManager.getLocationSelection(context) != initialSelection) {
                 // A place picked by hand during the lookup stays.
                 locating = false
                 return@launch
             }
+            val result = if (DelegationLocator.hasLocationPermission(context)) detected else DelegationLocationResult.PermissionDenied
             if (result is DelegationLocationResult.Abroad) {
                 // Stored from the process's scope: leaving the tab while the new place's first days are computed (off the
                 // main thread: abroad they may scan a year of times, 6.5) must not lose the fix.
@@ -1895,7 +1930,9 @@ private fun LocationPickerCard(
                     } finally {
                         locating = false
                     }
-                    if (choice != placeChoice) return@launch
+                    if (choice != placeChoice || PrefsManager.getLocationSelection(context) != initialSelection ||
+                        !DelegationLocator.hasLocationPermission(context)
+                    ) return@launch
                     AnalyticsTracker.markDelegationSource(context, "gps_abroad")
                     val saved = PrefsManager.getPlace(context)
                     val savedLabel = PrefsManager.getPlaceNameSnapshot(context)
@@ -1961,39 +1998,9 @@ private fun LocationPickerCard(
         }
     }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-
-        if (granted) {
-            AnalyticsTracker.permissionStepResult(
-                context = context,
-                permissionType = "location",
-                result = "granted",
-                entryPoint = "delegation_picker",
-            )
-            startLocationLookup()
-        } else {
-            AnalyticsTracker.permissionStepResult(
-                context = context,
-                permissionType = "location",
-                result = "denied",
-                entryPoint = "delegation_picker",
-            )
-            Toast.makeText(
-                context,
-                context.getString(R.string.location_permission_denied),
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    val savedPlace = remember(selectedLocation) { PrefsManager.getPlace(context) }
     val abroad = savedPlace as? PrayerPlace.Coordinates
     val locationTitle = if (abroad != null) {
-        PrefsManager.getPlaceNameSnapshot(context) ?: stringResource(R.string.location_current_place)
+        selectedLocation.placeName ?: stringResource(R.string.location_current_place)
     } else selectedLocation.name ?: savedDelegation?.nomAr ?: stringResource(when {
         savedPlace == PrayerPlace.Inm(PlaceResolution.TUNIS_DELEGATION_ID) -> R.string.location_default_tunis
         selectedLocation.fromGps -> R.string.location_current_position
@@ -2016,7 +2023,11 @@ private fun LocationPickerCard(
         savedDelegation.nomAr != locationTitle && placeContext.isNotBlank()
     ) stringResource(R.string.prayer_entry_time_reference, placeContext) else placeContext
     val locationSubtitle = if (abroad != null) {
-        listOfNotNull(gpsSource, abroad.countryCode?.let { CitySearch.countryName(PlaceCountry.normalize(it)) }).joinToString(" · ")
+        val area = if (selectedLocation.fromGps) null else abroad.catalogueId?.let(openRegionCities::areaOf)
+        listOfNotNull(
+            gpsSource, area?.let { cityAreaLabel(it) },
+            abroad.countryCode?.let { CitySearch.countryName(PlaceCountry.normalize(it)) },
+        ).joinToString(" · ")
     } else listOfNotNull(gpsSource, sourceContext.takeIf { it.isNotEmpty() })
         .joinToString(" · ")
 
@@ -2035,22 +2046,12 @@ private fun LocationPickerCard(
                     .clickable(
                         role = Role.Button,
                         onClickLabel = stringResource(R.string.location_change_action),
-                    ) {
-                        refreshSources()
-                        pickerWanted = true
-                        showSheet = true
-                    }
+                        onClick = ::openPicker,
+                    )
                     .padding(vertical = 2.dp),
                 verticalArrangement = Arrangement.Center,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_location),
-                        contentDescription = null,
-                        tint = GreenPrimary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
                     Text(
                         text = locationTitle,
                         fontSize = 22.sp,
@@ -2072,47 +2073,16 @@ private fun LocationPickerCard(
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         color = PrayerSilencePalette.SecondaryText,
-                        modifier = Modifier.padding(start = 24.dp),
                     )
                 }
             }
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(GreenPrimary.copy(alpha = 0.08f))
-                    .clickable(enabled = !locating && !preparingPlace) {
-                        if (DelegationLocator.hasLocationPermission(context)) {
-                            startLocationLookup()
-                        } else {
-                            AnalyticsTracker.permissionStepResult(
-                                context = context,
-                                permissionType = "location",
-                                result = "request_opened",
-                                entryPoint = "delegation_picker",
-                            )
-                            locationPermissionLauncher.launch(DelegationLocator.requestedPermissions)
-                        }
-                    }
-            ) {
-                if (locating || preparingPlace) {
-                    // The lookup (or a city's first days) takes a moment: the button says it is working, not idle.
-                    val workingLabel = stringResource(if (locating) R.string.onboarding_location_locating else R.string.gps_auto_detect)
-                    CircularProgressIndicator(
-                        color = GreenPrimary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(22.dp).semantics { contentDescription = workingLabel },
-                    )
-                } else {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_my_location),
-                        contentDescription = stringResource(R.string.gps_auto_detect),
-                        tint = GreenPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
+            PrayerHeaderGpsAction(
+                placeChoice = placeChoice,
+                locating = locating,
+                preparingPlace = preparingPlace,
+                onLocate = ::startLocationLookup,
+                onChooseCity = ::openPicker,
+            )
         }
         if (savedSourceUnavailable) {
             Text(
@@ -2174,10 +2144,11 @@ private fun LocationPickerCard(
             cities = openRegionCities,
             loading = pickerCatalog === LocalityPickerCatalog.empty,
             citiesLoading = openRegionCities === CitySearch.Index.EMPTY,
-            selectedCityId = (savedPlace as? PrayerPlace.Coordinates)?.catalogueId,
+            selectedCityId = abroad?.catalogueId,
             onSelectCity = { row ->
                 showSheet = false
                 val choice = ++placeChoice
+                val initialSelection = PrefsManager.getLocationSelection(context)
                 preparingPlace = true
                 PlaceResolution.changes.launch {
                     val place = PlaceResolution.placeFromCatalogue(context, row)
@@ -2189,7 +2160,7 @@ private fun LocationPickerCard(
                         if (choice == placeChoice) preparingPlace = false
                     }
                     // A later choice of place wins.
-                    if (choice != placeChoice) return@launch
+                    if (choice != placeChoice || PrefsManager.getLocationSelection(context) != initialSelection) return@launch
                     val old = PrefsManager.getPlace(context)
                     val oldLabel = PrefsManager.getPlaceNameSnapshot(context)
                     AnalyticsTracker.markDelegationSource(context, "manual_abroad")
@@ -2231,6 +2202,11 @@ private fun TodayNextPrayerCard(
     manualSilenceEndsAtMillis: Long,
     wakeSilenceUntilAlarmActive: Boolean,
     autoSilenceEnabled: Boolean,
+    configuredMode: AutomaticSilenceMode?,
+    setupIssues: List<Int>?,
+    onRepairSilence: () -> Unit,
+    manualActionLabel: String,
+    onChooseManualDuration: () -> Unit,
     silenceActionPending: Boolean,
     onManualSilenceClick: () -> Unit,
 ) {
@@ -2266,6 +2242,7 @@ private fun TodayNextPrayerCard(
         manualSilenceEndsAtMillis,
         wakeSilenceUntilAlarmActive,
         currentTimeMillis,
+        configuredMode,
     ) {
         resolvePhoneSilenceReason(
             isPhoneSilenced = isPhoneSilenced,
@@ -2277,7 +2254,7 @@ private fun TodayNextPrayerCard(
             manualSilenceEndsAtMillis = manualSilenceEndsAtMillis,
             wakeSilenceUntilAlarmActive = wakeSilenceUntilAlarmActive,
             currentTimeMillis = currentTimeMillis,
-            combinedMode = com.tunisianprayertimes.mosque.MosqueSilenceSettings.combined(context),
+            combinedMode = configuredMode == AutomaticSilenceMode.TIME_AND_MOSQUE,
             doNotDisturbActive = doNotDisturbActive,
         )
     }
@@ -2294,20 +2271,23 @@ private fun TodayNextPrayerCard(
         }
     }
 
-    if (countdown != null) {
-        NextPrayerHeroCard(
-            countdown = countdown,
-            prayerName = prayerName(context, countdown.prayer),
-            currentTimeMillis = currentTimeMillis,
-            isPhoneSilenced = isPhoneSilenced,
-            hasDnd = hasDnd,
-            silenceReason = silenceReason,
-            autoSilenceEnabled = autoSilenceEnabled,
-            silenceActionPending = silenceActionPending,
-            silenceActive = (manualSilenceActive || autoSilenceActive) && hasDnd,
-            onManualSilenceClick = onManualSilenceClick,
-        )
-    }
+    NextPrayerHeroCard(
+        countdown = countdown,
+        prayerName = countdown?.let { prayerName(context, it.prayer) } ?: stringResource(R.string.prayer_data_unavailable_title),
+        currentTimeMillis = currentTimeMillis,
+        isPhoneSilenced = isPhoneSilenced,
+        hasDnd = hasDnd,
+        silenceReason = silenceReason,
+        autoSilenceEnabled = autoSilenceEnabled,
+        configuredMode = configuredMode,
+        setupIssues = setupIssues,
+        onRepairSilence = onRepairSilence,
+        silenceActionPending = silenceActionPending,
+        silenceActive = (manualSilenceActive || autoSilenceActive) && hasDnd,
+        manualActionLabel = manualActionLabel,
+        onManualSilenceClick = onManualSilenceClick,
+        onChooseManualDuration = onChooseManualDuration,
+    )
 }
 
 @Composable
@@ -2322,8 +2302,8 @@ private fun PrayerSettingsCard(
     selectedDate: Long,
     onSelectedDateChange: (Long) -> Unit,
     onConfigChanged: () -> Unit,
-    silencePermissionsGranted: Boolean,
-    onEnableSilenceMaster: () -> Unit,
+    silenceSetupIssues: List<Int>?,
+    onOpenSilenceSetup: () -> Unit,
 ) {
     val context = LocalContext.current
     var refreshTick by remember { mutableIntStateOf(0) }
@@ -2339,12 +2319,12 @@ private fun PrayerSettingsCard(
         Calendar.getInstance().apply { timeInMillis = currentTimeMillis }
     }
     val currentDayMillis = calendarDateMillis(java.time.Instant.ofEpochMilli(currentTimeMillis).atZone(displayedPlace.zone).toLocalDate())
-    var lastCurrentDayMillis by remember { mutableLongStateOf(currentDayMillis) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 currentTimeMillis = System.currentTimeMillis()
+                refreshTick++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -2362,24 +2342,6 @@ private fun PrayerSettingsCard(
                 currentTimeMillis = System.currentTimeMillis()
             }
         }
-    }
-
-    LaunchedEffect(currentDayMillis) {
-        // After process death, selectedDate is restored by the parent
-        // but lastCurrentDayMillis is re-initialized to currentDayMillis.
-        // Detect stale selectedDate that predates today and auto-advance it.
-        if (currentDayMillis == lastCurrentDayMillis) {
-            if (!isSameCalendarDay(selectedDate, currentDayMillis) &&
-                selectedDate < currentDayMillis
-            ) {
-                onSelectedDateChange(currentDayMillis)
-            }
-            return@LaunchedEffect
-        }
-        if (isSameCalendarDay(selectedDate, lastCurrentDayMillis)) {
-            onSelectedDateChange(currentDayMillis)
-        }
-        lastCurrentDayMillis = currentDayMillis
     }
 
     val selectedCal = remember(selectedDate) {
@@ -2470,35 +2432,16 @@ private fun PrayerSettingsCard(
     // Jumu'a and Eid times are edited from their rows: shown in the phone's clock, stored in the place's (6.6).
     var silenceTimesRevision by remember { mutableIntStateOf(0) }
     // Jumu'a's chooser (6.9, A18): the default, an hour before Asr (about one Tunisian user in ten), or a fixed time.
-    var jumuaChooserOpen by remember { mutableStateOf(false) }
+    var jumuaChooserOpen by rememberSaveable { mutableStateOf(false) }
+    var editorPrayer by rememberSaveable(delegationId, selectedDate) { mutableStateOf<Prayer?>(null) }
+    var moreTimetableSettings by rememberSaveable { mutableStateOf(false) }
 
-    // The next of the day's prayers, today only, by instant (Jumu'a in Dhuhr's place on a Friday).
-    val nextPrayer = if (isToday && dailyAnchors.isNotEmpty()) {
-        val now = java.time.Instant.ofEpochMilli(currentTimeMillis)
-        PrayerTimesRepository.prayerOccurrences(context, selectedLocalDate).firstOrNull { it.at > now }?.prayer
-    } else null
+    // Across midnight the hero can still be counting down to yesterday's Isha, or tomorrow's Fajr.
+    val nextPrayer = remember(delegationId, refreshTick, currentTimeMillis, dailyAnchors.isNotEmpty()) {
+        if (dailyAnchors.isEmpty()) null else resolveNextPrayerCountdown(context, currentTimeMillis)
+    }?.prayerOn(selectedLocalDate)
 
     val dailyPrayers = remember { listOf(Prayer.FAJR, Prayer.DHUHR, Prayer.ASR, Prayer.MAGHRIB, Prayer.ISHA) }
-    val canFoldEditors = remember { PrefsManager.usesPlaceOnboarding(context) } && !autoSilenceEnabled
-    var editorsRequested by rememberSaveable { mutableStateOf(false) }
-    val compactTimes = canFoldEditors && !editorsRequested
-    val friday = selectedLocalDate.dayOfWeek == java.time.DayOfWeek.FRIDAY
-    val sectionPrayers = remember(compactTimes, friday, isAidFitr, isAidAdha) {
-        buildList {
-            for (prayer in dailyPrayers) {
-                add(if (compactTimes && friday && prayer == Prayer.DHUHR) Prayer.JOMOAA else prayer)
-                if (prayer == Prayer.FAJR && compactTimes) {
-                    if (isAidFitr) add(Prayer.AID_FITR)
-                    if (isAidAdha) add(Prayer.AID_ADHA)
-                }
-            }
-            if (!compactTimes) {
-                add(Prayer.JOMOAA)
-                if (isAidFitr) add(Prayer.AID_FITR)
-                if (isAidAdha) add(Prayer.AID_ADHA)
-            }
-        }
-    }
     // The editors' anchors (6.9, D8): each adhan as an instant; Jumu'a on the Friday on or after the date shown.
     val sectionAnchors: Map<Prayer, PrayerTimelineAnchor> = remember(
         delegationId, selectedLocalDate, refreshTick, silenceTimesRevision, isAidFitr, isAidAdha, selectedHijriYear, correctedCalendar, phoneZone,
@@ -2516,21 +2459,12 @@ private fun PrayerSettingsCard(
             }
         }
     }
-    // The next adhan after each row's, for the overlap warning.
-    val nextAnchors: Map<Prayer, PrayerTimelineAnchor?> = remember(compactTimes, sectionAnchors) {
-        if (compactTimes) emptyMap() else sectionAnchors.mapValues { (_, anchor) -> nextTimelineAnchor(context, anchor) }
+    val sunrise = remember(displayedPlace, selectedLocalDate, dailyAnchors, refreshTick) {
+        if (dailyAnchors.isEmpty()) null else PrayerTimesRepository.prayerDay(context, selectedLocalDate, displayedPlace)
+            ?.get(com.tunisianprayertimes.engine.TimeEvent.SUNRISE)
     }
-    val timelineScale = remember(compactTimes, sectionAnchors, refreshTick, sectionPrayers) {
-        if (compactTimes) return@remember null
-        val entries = sectionPrayers.mapNotNull { prayer ->
-            sectionAnchors[prayer]
-                ?.let { anchor -> anchor to resolvePrayerTimelineWindow(anchor, PrefsManager.getEffectiveConfig(context, prayer)) }
-                ?.takeIf { (_, window) -> window.endMinutes >= window.startMinutes }
-        }
-        sharedPrayerTimelineScale(entries)
-    }
-    val anyPrayerEnabled = remember(selectedDate, refreshTick) {
-        dailyPrayers.any { PrefsManager.isPrayerSilenceEnabled(context, it) }
+    val timetable = remember(selectedLocalDate, sectionAnchors, sunrise, isAidFitr, isAidAdha) {
+        prayerTimetableOrder(selectedLocalDate, sectionAnchors, sunrise?.at, isAidFitr, isAidAdha)
     }
     LaunchedEffect(sharedUndoAfter) {
         if (sharedUndoAfter != null) {
@@ -2557,7 +2491,7 @@ private fun PrayerSettingsCard(
                     shape = RoundedCornerShape(PrayerSilenceDimens.ContainerCorner),
                 ),
         ) {
-            Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Box(modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
                 DateNavigationRow(
                     delegationId = delegationId,
                     selectedDate = selectedDate,
@@ -2582,33 +2516,15 @@ private fun PrayerSettingsCard(
                 )
             }
             // 6.11: the official zone the place maps to, and the place's UTC offset when the phone keeps another zone.
-            val listNotes = remember(delegationId, selectedLocalDate, phoneZone) {
+            val listNotes = remember(delegationId, selectedLocalDate, phoneZone, refreshTick) {
                 runCatching { timesListNotes(context, selectedLocalDate, phoneZone) }.getOrNull()
             }
-            val methodName = remember(delegationId, dailyAnchors.isNotEmpty()) {
+            val methodName = remember(delegationId, dailyAnchors.isNotEmpty(), refreshTick) {
                 if (dailyAnchors.isEmpty()) return@remember null
                 if (displayedPlace is PrayerPlace.Inm) context.getString(R.string.today_inm_source)
                 else PrayerTimesRepository.choice(context, displayedPlace)?.let { com.tunisianprayertimes.MethodPresentation.name(it.methodId) }
             }
-            if (pendingMethodRow != null) {
-                pendingMethodRow()
-            } else if (methodName != null && dailyAnchors.isNotEmpty()) {
-                Text(
-                    text = stringResource(R.string.today_calculation_method, methodName),
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                    color = PrayerSilencePalette.SecondaryText,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp).testTag("today_calculation_method"),
-                )
-            }
-            listNotes?.zoneName?.let { zone ->
-                Text(
-                    text = stringResource(R.string.list_zone_line, zone),
-                    fontSize = 12.sp,
-                    color = PrayerSilencePalette.SecondaryText,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp).testTag("times_zone_line"),
-                )
-            }
+            pendingMethodRow?.invoke()
             listNotes?.placeOffset?.let { offset ->
                 Text(
                     text = stringResource(R.string.today_phone_clock, offset),
@@ -2619,173 +2535,53 @@ private fun PrayerSettingsCard(
             }
 
             if (dailyAnchors.isNotEmpty()) {
-                sectionPrayers.forEachIndexed { index, prayer ->
-                    if (index > 0) {
-                        HorizontalDivider(color = PrayerSilencePalette.SoftBorder, thickness = 1.dp)
-                    }
-                    val anchor = sectionAnchors[prayer]
-                    val nextAnchor = nextAnchors[prayer]
-                    val onTimeClick: (() -> Unit)? = when (prayer) {
-                        Prayer.JOMOAA -> { { jumuaChooserOpen = true } }
-                        Prayer.AID_FITR -> {
-                            {
-                                val eid = sectionAnchors[Prayer.AID_FITR]
-                                val shown = eid?.let { Math.floorMod(it.minutes, 1440) } ?: (7 * 60)
-                                val picker = MaterialTimePicker.Builder()
-                                    .setTimeFormat(TimeFormat.CLOCK_24H)
-                                    .setHour(shown / 60)
-                                    .setMinute(shown % 60)
-                                    .setTitleText(context.getString(R.string.pick_aid_fitr_time))
-                                    .build()
-                                picker.addOnPositiveButtonClickListener {
-                                    val clock = pickedPlaceClock(eid, picker.hour, picker.minute)
-                                    PrefsManager.setAidFitrTime(context, clock.hour, clock.minute)
-                                    silenceTimesRevision++
-                                    refreshTick++
-                                    onConfigChanged()
-                                }
-                                picker.show(activity.supportFragmentManager, "aid_fitr_time_picker")
-                            }
-                        }
-                        Prayer.AID_ADHA -> {
-                            {
-                                val eid = sectionAnchors[Prayer.AID_ADHA]
-                                val shown = eid?.let { Math.floorMod(it.minutes, 1440) } ?: (7 * 60)
-                                val picker = MaterialTimePicker.Builder()
-                                    .setTimeFormat(TimeFormat.CLOCK_24H)
-                                    .setHour(shown / 60)
-                                    .setMinute(shown % 60)
-                                    .setTitleText(context.getString(R.string.pick_aid_adha_time))
-                                    .build()
-                                picker.addOnPositiveButtonClickListener {
-                                    val clock = pickedPlaceClock(eid, picker.hour, picker.minute)
-                                    PrefsManager.setAidAdhaTime(context, clock.hour, clock.minute)
-                                    silenceTimesRevision++
-                                    refreshTick++
-                                    onConfigChanged()
-                                }
-                                picker.show(activity.supportFragmentManager, "aid_adha_time_picker")
-                            }
-                        }
-                        else -> null
-                    }
-                    key(prayer) {
-                        val timeRowModifier = if (isToday && timetableUncovered && anchor?.prayerDay == selectedLocalDate) {
-                            firstTimetableRowModifier(activity, displayedPlace, placeConfirmed)
-                        } else Modifier
-                        if (compactTimes) {
-                            CompactPrayerTimeRow(
-                                prayer = prayer,
-                                name = prayerNames.getValue(prayer),
-                                anchor = anchor,
-                                isNext = nextPrayer == prayer,
-                                onTimeClick = onTimeClick,
-                                modifier = timeRowModifier,
-                            )
-                            if (prayer == Prayer.FAJR) {
-                                val sunrise = remember(displayedPlace, selectedLocalDate, refreshTick) {
-                                    PrayerTimesRepository.prayerDay(context, selectedLocalDate, displayedPlace)
-                                        ?.get(com.tunisianprayertimes.engine.TimeEvent.SUNRISE)
-                                }
-                                HorizontalDivider(color = PrayerSilencePalette.SoftBorder, thickness = 1.dp)
-                                CompactSunriseRow(sunrise, selectedLocalDate, phoneZone)
-                            }
-                        } else PrayerRow(
+                val mosqueMode = MosqueSilenceSettings.combined(context)
+                timetable.forEachIndexed { index, prayer ->
+                    if (index > 0) HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+                    if (prayer == null) {
+                        CompactSunriseRow(sunrise, selectedLocalDate, phoneZone)
+                    } else key(prayer) {
+                        val anchor = sectionAnchors[prayer]
+                        val summary = if (autoSilenceEnabled && anchor != null) {
+                            val config = remember(anchor, refreshTick) { PrefsManager.getEffectiveConfig(context, prayer) }
+                            val enabled = remember(prayer, refreshTick) { PrefsManager.isPrayerSilenceEnabled(context, prayer) }
+                            timetableSilenceSummary(anchor, config, enabled, silenceSetupIssues?.isEmpty() == true, mosqueMode)
+                        } else null
+                        CompactPrayerTimeRow(
                             prayer = prayer,
-                            prayerName = prayerNames[prayer] ?: prayer.name,
-                            modifier = timeRowModifier,
+                            name = prayerNames.getValue(prayer),
                             anchor = anchor,
-                            nextAnchor = nextAnchor,
-                            isNextPrayer = prayer == nextPrayer && prayer != Prayer.JOMOAA,
-                            onConfigChanged = {
-                                refreshTick++
-                                onConfigChanged()
-                            },
-                            onPrayerTimeClick = onTimeClick,
-                            timelineScale = timelineScale,
-                            silencePermissionsGranted = silencePermissionsGranted,
-                            onEnableSilenceMaster = {
-                                refreshTick++
-                                onEnableSilenceMaster()
-                            },
+                            isNext = nextPrayer == prayer,
+                            onOpenEditor = anchor?.let { { editorPrayer = prayer } },
+                            silenceSummary = summary,
+                            modifier = if (isToday && timetableUncovered && editorPrayer == null && anchor != null) {
+                                firstTimetableRowModifier(activity, displayedPlace, placeConfirmed)
+                            } else Modifier,
                         )
                     }
                 }
-
-                if (canFoldEditors) {
-                    TextButton(
-                        onClick = { editorsRequested = !editorsRequested },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("today_toggle_silence_editors"),
-                    ) {
-                        Text(stringResource(if (compactTimes) R.string.today_show_silence_editors else R.string.today_show_timetable), color = GreenPrimaryDark)
+                HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
+                Box {
+                    PrayerSettingsLink(
+                        title = stringResource(R.string.timetable_more_settings),
+                        onClick = { moreTimetableSettings = true },
+                        modifier = Modifier.testTag("timetable_more_settings"),
+                    )
+                    DropdownMenu(expanded = moreTimetableSettings, onDismissRequest = { moreTimetableSettings = false }) {
+                        // Weekly and upcoming holiday rules remain editable outside their dated timetable.
+                        val otherPrayers = listOf(Prayer.JOMOAA, Prayer.DHUHR, Prayer.AID_FITR, Prayer.AID_ADHA)
+                        otherPrayers.filter { it !in timetable && sectionAnchors[it] != null }.forEach { prayer ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.timetable_edit_prayer, prayerNames.getValue(prayer))) },
+                                onClick = { moreTimetableSettings = false; editorPrayer = prayer },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.prayer_silence_shared_title)) },
+                            onClick = { moreTimetableSettings = false; sharedSheetOpen = true },
+                        )
                     }
                 }
-                if (jumuaChooserOpen) {
-                    // Per country abroad (6.9, A18), today's keys in Tunisia; times shown in the phone's clock, as the rows.
-                    val place = PrayerTimesRepository.place(context)
-                    val jumua = sectionAnchors[Prayer.JOMOAA]
-                    val friday = jumua?.prayerDay ?: selectedLocalDate
-                    val fixed = PrefsManager.getJumuaTime(context, place)
-                    fun shown(at: java.time.Instant?) = at?.let { formatTimeOfDay(it.toEpochMilli()) }
-                    fun saved() {
-                        silenceTimesRevision++
-                        refreshTick++
-                        onConfigChanged()
-                    }
-                    JumuaTimeDialog(
-                        current = when {
-                            fixed != null -> JumuaMode.FIXED
-                            PrefsManager.getJumuaMinutesBeforeAsr(context, place) != null -> JumuaMode.BEFORE_ASR
-                            else -> JumuaMode.DEFAULT
-                        },
-                        defaultAt = shown(PrayerTimesRepository.defaultJumuaTime(context, place, friday)),
-                        defaultHint = if (place is PrayerPlace.Inm) stringResource(R.string.jomoaa_time_default_tunisia_hint) else null,
-                        beforeAsrAt = shown(PrayerTimesRepository.jumuaBeforeAsr(context, friday, place, PrayerTimesRepository.JUMUA_MINUTES_BEFORE_ASR)),
-                        fixedAt = if (fixed != null) shown(jumua?.adhan) else null,
-                        onPick = { mode ->
-                            jumuaChooserOpen = false
-                            when (mode) {
-                                JumuaMode.DEFAULT -> {
-                                    PrefsManager.setJumuaTime(context, place, null)
-                                    saved()
-                                }
-                                JumuaMode.BEFORE_ASR -> {
-                                    PrefsManager.setJumuaMinutesBeforeAsr(context, place, PrayerTimesRepository.JUMUA_MINUTES_BEFORE_ASR)
-                                    saved()
-                                }
-                                JumuaMode.FIXED -> {
-                                    val start = jumua?.let { Math.floorMod(it.minutes, 1440) } ?: (13 * 60)
-                                    val picker = MaterialTimePicker.Builder()
-                                        .setTimeFormat(TimeFormat.CLOCK_24H)
-                                        .setHour(start / 60)
-                                        .setMinute(start % 60)
-                                        .setTitleText(context.getString(R.string.pick_jomoaa_time))
-                                        .build()
-                                    picker.addOnPositiveButtonClickListener {
-                                        PrefsManager.setJumuaTime(context, place, pickedPlaceClock(jumua, picker.hour, picker.minute))
-                                        saved()
-                                    }
-                                    picker.show(activity.supportFragmentManager, "jomoaa_time_picker")
-                                }
-                            }
-                        },
-                        onDismiss = { jumuaChooserOpen = false },
-                    )
-                }
-
-                if (autoSilenceEnabled && !silencePermissionsGranted && anyPrayerEnabled) {
-                    Text(
-                        text = stringResource(R.string.prayer_silence_permission_needed),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(SilenceRed.copy(alpha = 0.06f))
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        fontSize = 12.sp,
-                        color = SilenceRed,
-                        lineHeight = 17.sp,
-                    )
-                }
-
                 if (sharedUndoBefore != null && sharedUndoAfter != null) {
                     FlowRow(
                         modifier = Modifier
@@ -2804,8 +2600,10 @@ private fun PrayerSettingsCard(
                         )
                         TextButton(
                             onClick = {
-                                sharedUndoBefore?.forEach { (prayer, config) ->
-                                    persistPrayerSilenceConfig(context, prayer, config, sectionAnchors[prayer])
+                                if (sharedUndoAfter?.all { (prayer, applied) -> PrefsManager.getEffectiveConfig(context, prayer) == applied } == true) {
+                                    sharedUndoBefore?.forEach { (prayer, config) ->
+                                        persistPrayerSilenceConfig(context, prayer, config, sectionAnchors[prayer])
+                                    }
                                 }
                                 sharedUndoBefore = null
                                 sharedUndoAfter = null
@@ -2828,11 +2626,126 @@ private fun PrayerSettingsCard(
                     )
                 }
             }
+            if (dailyAnchors.isNotEmpty() && (methodName != null || listNotes?.zoneName != null)) {
+                TimetableSourceDetails(
+                    methodName = methodName,
+                    officialSource = displayedPlace is PrayerPlace.Inm,
+                    zoneName = listNotes?.zoneName,
+                )
+            }
         }
     }
 
     if (placeConfirmed && isToday && dailyAnchors.isNotEmpty()) {
         FirstRunFeatureSuggestion()
+    }
+    editorPrayer?.let { prayer ->
+        val anchor = sectionAnchors[prayer]
+        if (anchor != null) {
+            val nextAnchor = remember(anchor) { nextTimelineAnchor(context, anchor) }
+            val scale = remember(sectionAnchors, refreshTick) {
+                val windows = sectionAnchors.values.map { entry ->
+                    entry to resolvePrayerTimelineWindow(entry, PrefsManager.getEffectiveConfig(context, entry.prayer))
+                }.filter { (_, window) -> window.endMinutes >= window.startMinutes }
+                sharedPrayerTimelineScale(windows)
+            }
+            TimetablePrayerEditorSheet(
+                onDismiss = { editorPrayer = null },
+                otherDate = anchor.prayerDay.takeIf { it != selectedLocalDate },
+            ) {
+                val setupIssue = firstPrayerSilenceIssue(silenceSetupIssues)
+                if (setupIssue != null || !autoSilenceEnabled) {
+                    PrayerSettingsLink(
+                        title = stringResource(if (setupIssue != null) R.string.hero_finish_silence_setup else R.string.mosque_enable_auto),
+                        summary = stringResource(setupIssue ?: R.string.timetable_rules_saved_while_off),
+                        onClick = onOpenSilenceSetup,
+                    )
+                }
+                PrayerRow(
+                    prayer = prayer,
+                    prayerName = prayerNames.getValue(prayer),
+                    anchor = anchor,
+                    nextAnchor = nextAnchor,
+                    timelineScale = scale,
+                    isNextPrayer = nextPrayer == prayer && anchor.prayerDay == selectedLocalDate,
+                    onConfigChanged = { refreshTick++; onConfigChanged() },
+                    onPrayerTimeClick = when (prayer) {
+                        Prayer.JOMOAA -> { { jumuaChooserOpen = true } }
+                        Prayer.AID_FITR, Prayer.AID_ADHA -> { {
+                            val shown = Math.floorMod(anchor.minutes, 1440)
+                            val fitr = prayer == Prayer.AID_FITR
+                            val picker = MaterialTimePicker.Builder()
+                                .setTimeFormat(TimeFormat.CLOCK_24H)
+                                .setHour(shown / 60).setMinute(shown % 60)
+                                .setTitleText(context.getString(if (fitr) R.string.pick_aid_fitr_time else R.string.pick_aid_adha_time))
+                                .build()
+                            picker.addOnPositiveButtonClickListener {
+                                val clock = pickedPlaceClock(anchor, picker.hour, picker.minute)
+                                if (fitr) PrefsManager.setAidFitrTime(context, clock.hour, clock.minute)
+                                else PrefsManager.setAidAdhaTime(context, clock.hour, clock.minute)
+                                silenceTimesRevision++
+                                refreshTick++
+                                onConfigChanged()
+                            }
+                            picker.show(activity.supportFragmentManager, "aid_time_picker")
+                        } }
+                        else -> null
+                    },
+                )
+            }
+        }
+    }
+    if (jumuaChooserOpen) {
+        // Per country abroad (6.9, A18), today's keys in Tunisia; times shown in the phone's clock, as the rows.
+        val place = PrayerTimesRepository.place(context)
+        val jumua = sectionAnchors[Prayer.JOMOAA]
+        val friday = jumua?.prayerDay ?: selectedLocalDate
+        val fixed = PrefsManager.getJumuaTime(context, place)
+        fun shown(at: java.time.Instant?) = at?.let { formatTimeOfDay(it.toEpochMilli()) }
+        fun saved() {
+            silenceTimesRevision++
+            refreshTick++
+            onConfigChanged()
+        }
+        JumuaTimeDialog(
+            current = when {
+                fixed != null -> JumuaMode.FIXED
+                PrefsManager.getJumuaMinutesBeforeAsr(context, place) != null -> JumuaMode.BEFORE_ASR
+                else -> JumuaMode.DEFAULT
+            },
+            defaultAt = shown(PrayerTimesRepository.defaultJumuaTime(context, place, friday)),
+            defaultHint = if (place is PrayerPlace.Inm) stringResource(R.string.jomoaa_time_default_tunisia_hint) else null,
+            beforeAsrAt = shown(PrayerTimesRepository.jumuaBeforeAsr(context, friday, place, PrayerTimesRepository.JUMUA_MINUTES_BEFORE_ASR)),
+            fixedAt = if (fixed != null) shown(jumua?.adhan) else null,
+            onPick = { mode ->
+                jumuaChooserOpen = false
+                when (mode) {
+                    JumuaMode.DEFAULT -> {
+                        PrefsManager.setJumuaTime(context, place, null)
+                        saved()
+                    }
+                    JumuaMode.BEFORE_ASR -> {
+                        PrefsManager.setJumuaMinutesBeforeAsr(context, place, PrayerTimesRepository.JUMUA_MINUTES_BEFORE_ASR)
+                        saved()
+                    }
+                    JumuaMode.FIXED -> {
+                        val start = jumua?.let { Math.floorMod(it.minutes, 1440) } ?: (13 * 60)
+                        val picker = MaterialTimePicker.Builder()
+                            .setTimeFormat(TimeFormat.CLOCK_24H)
+                            .setHour(start / 60)
+                            .setMinute(start % 60)
+                            .setTitleText(context.getString(R.string.pick_jomoaa_time))
+                            .build()
+                        picker.addOnPositiveButtonClickListener {
+                            PrefsManager.setJumuaTime(context, place, pickedPlaceClock(jumua, picker.hour, picker.minute))
+                            saved()
+                        }
+                        picker.show(activity.supportFragmentManager, "jomoaa_time_picker")
+                    }
+                }
+            },
+            onDismiss = { jumuaChooserOpen = false },
+        )
     }
     if (sharedSheetOpen) {
         val sharedAnchors = dailyPrayers.mapNotNull { prayer -> sectionAnchors[prayer]?.let { prayer to it } }.toMap()
@@ -2917,7 +2830,7 @@ private fun PrayerSettingsCard(
                     ).show()
                 } else {
                     sharedUndoBefore = previous
-                    sharedUndoAfter = intended.map { (prayer, config) -> prayer to config }
+                    sharedUndoAfter = intended.keys.map { prayer -> prayer to PrefsManager.getEffectiveConfig(context, prayer) }
                 }
                 sharedSheetOpen = false
                 refreshTick++
@@ -3085,12 +2998,12 @@ private fun SunriseAndNightTimesCard(
 private fun WakeAlarmCard(
     wakeAlarms: List<PrayerWakeConfig>?,
     exactAlarmsAllowed: Boolean,
-    onPlaceRequired: (PrayerWakeConfig) -> Unit,
+    onPlaceRequired: () -> Unit,
     delegationId: Int,
     activity: androidx.appcompat.app.AppCompatActivity,
     awakeCheckRunning: Boolean,
     onConfirmAwake: () -> Unit,
-    onConfigChanged: () -> Unit,
+    onConfigChanged: (PrayerWakeConfig?) -> Unit,
     onPresetSelected: (WakeQuickPreset) -> Unit,
     onEditAlarm: (PrayerWakeConfig) -> Unit,
     onAddFajrAlarm: (PrayerWakeConfig) -> Unit,
@@ -3176,7 +3089,7 @@ private fun WakeAlarmCard(
                 WakeAlarmScheduler.removeSilenceUntilAlarm(context, alarmId)
                 coroutineScope.launch {
                     wakeRepository.deleteWakeAlarm(alarmId)
-                    onConfigChanged()
+                    onConfigChanged(null)
                 }
             },
         )
@@ -3189,15 +3102,15 @@ private fun WakeAlarmCard(
             .fillMaxWidth(),
     ) {
         val pendingAlarms = loadedWakeAlarms.filter { it.hasFutureWakeTriggers(nowMillis) }
-        if (!canUsePrayerTimes) {
-            pendingAlarms.firstOrNull { it.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE }?.let { alarm ->
-                OutlinedButton(onClick = { onPlaceRequired(alarm) }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                    Text(stringResource(R.string.wake_access_confirm_place))
-                }
+        if (!canUsePrayerTimes && pendingAlarms.any { it.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE }) {
+            OutlinedButton(onClick = onPlaceRequired, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                Text(stringResource(R.string.wake_access_confirm_place))
             }
         }
-        if (pendingAlarms.any { canUsePrayerTimes || it.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE }) {
-            WakeAlarmAccessNotice(activity, saved = true, modifier = Modifier.padding(bottom = 12.dp))
+        val eligibleAlarms = pendingAlarms.filter { canUsePrayerTimes || it.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE }
+        if (eligibleAlarms.isNotEmpty()) {
+            WakeAlarmAccessNotice(activity, saved = true, modifier = Modifier.padding(bottom = 12.dp),
+                awakeCheckEnabled = eligibleAlarms.any { it.playback.awakeCheckEnabled })
         }
         if (heroAlarm != null) {
             val (alarm, alarmNow) = heroAlarm
@@ -3268,12 +3181,12 @@ private fun WakeAlarmCard(
                 onEnabledChange = { wakeAlarm, enabled ->
                     val updatedAlarm = wakeAlarm.copy(enabled = enabled)
                     if (enabled && wakeAlarm.mainAlarm.mode == WakeMainAlarmMode.PRAYER_RELATIVE && !PrefsManager.hasConfirmedPlace(context)) {
-                        onPlaceRequired(updatedAlarm)
+                        onPlaceRequired()
                     } else {
                         coroutineScope.launch {
                             wakeRepository.saveWakeConfig(updatedAlarm)
                             AnalyticsTracker.wakeAlarmSaved(context, updatedAlarm)
-                            onConfigChanged()
+                            onConfigChanged(updatedAlarm)
                         }
                     }
                 },
@@ -3288,7 +3201,7 @@ private fun WakeAlarmCard(
                 onStop = { alarm ->
                     coroutineScope.launch {
                         WakeAlarmScheduler.stopWakeAlarm(context, alarm.id)
-                        onConfigChanged()
+                        onConfigChanged(null)
                     }
                 },
             )
@@ -3938,353 +3851,6 @@ private fun wakeAlarmPrayerName(prayer: Prayer): String = when (prayer) {
 }
 
 @Composable
-internal fun NextPrayerHeroCard(
-    countdown: NextPrayerCountdownInfo,
-    prayerName: String,
-    currentTimeMillis: Long,
-    isPhoneSilenced: Boolean,
-    hasDnd: Boolean,
-    silenceReason: PhoneSilenceReason?,
-    autoSilenceEnabled: Boolean,
-    silenceActionPending: Boolean,
-    silenceActive: Boolean,
-    onManualSilenceClick: () -> Unit,
-) {
-    val context = LocalContext.current
-    val prayerTimeText = String.format(Locale.US, "%02d:%02d", countdown.hour, countdown.minute)
-    val remainingText = stringResource(
-        R.string.next_prayer_countdown_remaining,
-        formatCountdownRemaining(countdown.triggerAtMillis, currentTimeMillis),
-    )
-    // Re-read the upcoming prayer's silence rule whenever it is edited in the list below.
-    var silenceRuleRevision by remember { mutableIntStateOf(0) }
-    DisposableEffect(context, countdown.prayer) {
-        val stopObservingConfig = PrefsManager.observeConfigChanges(context, countdown.prayer) {
-            silenceRuleRevision++
-        }
-        val stopObservingEnabled = PrefsManager.observePrayerEnabledChanges(context, countdown.prayer) {
-            silenceRuleRevision++
-        }
-        onDispose {
-            stopObservingConfig()
-            stopObservingEnabled()
-        }
-    }
-    val upcomingSilence = remember(countdown, autoSilenceEnabled, silenceRuleRevision) {
-        resolveUpcomingSilence(context, countdown)
-    }
-    // Always say what will happen at the next prayer; a missing Do Not Disturb
-    // permission is already explained by the phone-status notice above.
-    val timesOnly = !autoSilenceEnabled && remember { PrefsManager.usesPlaceOnboarding(context) }
-    val silenceLine = if (!hasDnd || timesOnly) null else when (val plan = upcomingSilence) {
-        is UpcomingSilence.Window -> HeroSilenceLine(
-            text = stringResource(
-                R.string.next_prayer_silence_window,
-                silenceClockText(plan.window.startMinutes),
-                silenceClockText(plan.window.endMinutes),
-            ),
-            scheduled = true,
-        )
-        UpcomingSilence.AutoSilenceOff -> HeroSilenceLine(
-            text = stringResource(R.string.next_prayer_silence_off_auto),
-            scheduled = false,
-        )
-        UpcomingSilence.PrayerOff -> HeroSilenceLine(
-            text = stringResource(R.string.next_prayer_silence_off_prayer, prayerName),
-            scheduled = false,
-        )
-        null -> null
-    }
-    val silencedOverlayColor by animateColorAsState(
-        targetValue = if (isPhoneSilenced) SilencedHeroStart.copy(alpha = 0.3f) else Color.Transparent,
-        label = "nextPrayerHeroSilencedOverlay"
-    )
-    val countdownPillBackgroundColor by animateColorAsState(
-        targetValue = if (isPhoneSilenced) SilencedHeroPillBackground else Color.White.copy(alpha = 0.90f),
-        label = "nextPrayerHeroPillBackground"
-    )
-    val countdownPillTextColor by animateColorAsState(
-        targetValue = if (isPhoneSilenced) SilencedHeroPillText else GreenPrimaryDark,
-        label = "nextPrayerHeroPillText"
-    )
-
-    HeroCardSurface(
-        modifier = Modifier
-            .heightIn(min = 148.dp)
-            .testTag(TestTags.STATUS_CARD),
-        overlay = SolidColor(silencedOverlayColor),
-    ) {
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 17.dp, vertical = 13.dp)
-                .heightIn(min = 122.dp),
-        ) {
-            val sideBySide = maxWidth >= 270.dp && LocalDensity.current.fontScale <= 1.3f
-            val silenceControl: @Composable () -> Unit = {
-                PrayerHeroSilenceControl(
-                    silenced = silenceActive,
-                    onClick = onManualSilenceClick,
-                    enabled = !silenceActionPending,
-                )
-            }
-            if (sideBySide) {
-                // The control ends the prayer line, level with its icon, on the edge of the artwork column.
-                NextPrayerHeroDetails(
-                    prayer = countdown.prayer,
-                    prayerName = prayerName,
-                    prayerTimeText = prayerTimeText,
-                    isTomorrow = countdown.isTomorrow,
-                    silenceLine = silenceLine,
-                    remainingText = remainingText,
-                    countdownPillBackgroundColor = countdownPillBackgroundColor,
-                    countdownPillTextColor = countdownPillTextColor,
-                    isPhoneSilenced = isPhoneSilenced,
-                    hasDnd = hasDnd,
-                    showMissingDnd = autoSilenceEnabled,
-                    silenceReason = silenceReason,
-                    modifier = Modifier.fillMaxWidth().align(Alignment.TopStart),
-                    textWidthFraction = 0.6f,
-                    prayerAction = silenceControl,
-                )
-                NextPrayerHeroVerse(
-                    modifier = Modifier
-                        .width(maxWidth * 0.4f)
-                        .padding(bottom = 4.dp)
-                        .align(Alignment.BottomEnd),
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NextPrayerHeroDetails(
-                        prayer = countdown.prayer,
-                        prayerName = prayerName,
-                        prayerTimeText = prayerTimeText,
-                        isTomorrow = countdown.isTomorrow,
-                        silenceLine = silenceLine,
-                        remainingText = remainingText,
-                        countdownPillBackgroundColor = countdownPillBackgroundColor,
-                        countdownPillTextColor = countdownPillTextColor,
-                        isPhoneSilenced = isPhoneSilenced,
-                        hasDnd = hasDnd,
-                        showMissingDnd = autoSilenceEnabled,
-                        silenceReason = silenceReason,
-                        modifier = Modifier.fillMaxWidth(),
-                        headerAction = silenceControl,
-                    )
-                    NextPrayerHeroVerse(modifier = Modifier.fillMaxWidth())
-                }
-            }
-        }
-    }
-}
-
-/**
- * The lines of the hero card. [textWidthFraction] is the share of the width they may take; with a
- * [prayerAction] the rest of the prayer line holds it, beside the artwork. A [headerAction] ends
- * the label line instead, for the layout that stacks the card's rows.
- */
-@Composable
-private fun NextPrayerHeroDetails(
-    prayer: Prayer,
-    prayerName: String,
-    prayerTimeText: String,
-    isTomorrow: Boolean,
-    remainingText: String,
-    silenceLine: HeroSilenceLine?,
-    countdownPillBackgroundColor: Color,
-    countdownPillTextColor: Color,
-    isPhoneSilenced: Boolean,
-    hasDnd: Boolean,
-    showMissingDnd: Boolean,
-    silenceReason: PhoneSilenceReason?,
-    modifier: Modifier = Modifier,
-    textWidthFraction: Float = 1f,
-    headerAction: (@Composable () -> Unit)? = null,
-    prayerAction: (@Composable () -> Unit)? = null,
-) {
-    require(prayerAction == null || textWidthFraction < 1f) { "The prayer action needs the width the text leaves" }
-    val largeText = LocalDensity.current.fontScale > 1.3f
-    val prayerIconSize = 34.dp
-    val prayerIconSpacing = 8.dp
-    val iconRes = prayerHeroIconRes(prayer)
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(textWidthFraction),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            itemVerticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.next_prayer_countdown_title),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White.copy(alpha = 0.78f),
-            )
-            headerAction?.invoke()
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier.weight(textWidthFraction),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(prayerIconSpacing),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(prayerIconSize)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.13f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(iconRes),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                // Prayer and adhan time always share one line: the time keeps its size and a
-                // long name shrinks to fit instead of pushing the time onto a second line.
-                Row(
-                    modifier = Modifier.weight(1f, fill = false),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = prayerName,
-                        fontSize = 29.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        maxLines = if (largeText) 2 else 1,
-                        softWrap = largeText,
-                        autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 29.sp),
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Text(
-                        text = prayerTimeText,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = GoldLight,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                    if (isTomorrow) {
-                        Text(
-                            text = stringResource(R.string.next_prayer_countdown_tomorrow),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White.copy(alpha = 0.82f),
-                            maxLines = 1,
-                            softWrap = false,
-                        )
-                    }
-                }
-            }
-            if (prayerAction != null) {
-                Box(
-                    modifier = Modifier.weight(1f - textWidthFraction).padding(start = prayerIconSpacing),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    prayerAction()
-                }
-            }
-        }
-        Column(
-            modifier = Modifier.fillMaxWidth(textWidthFraction),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(countdownPillBackgroundColor)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = remainingText,
-                    fontSize = 13.sp,
-                    color = countdownPillTextColor,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    softWrap = false,
-                    autoSize = TextAutoSize.StepBased(maxFontSize = 13.sp),
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Icon(
-                    painter = painterResource(R.drawable.ic_adhkar_clock),
-                    contentDescription = null,
-                    tint = countdownPillTextColor,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-            // A single status line, most urgent first: what the phone is doing right now
-            // (silenced, or missing Do Not Disturb access), otherwise what this prayer brings.
-            val phoneStatusText = phoneStatusNoticeText(
-                context = LocalContext.current,
-                isPhoneSilenced = isPhoneSilenced,
-                hasDnd = hasDnd,
-                silenceReason = silenceReason,
-                showMissingDnd = showMissingDnd,
-            )
-            if (phoneStatusText != null) {
-                PhoneStatusNotice(
-                    statusText = phoneStatusText,
-                    missingAccess = !hasDnd && showMissingDnd,
-                )
-            } else if (silenceLine != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(
-                            if (silenceLine.scheduled) R.drawable.ic_bell_off else R.drawable.ic_adhkar_bell,
-                        ),
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = if (silenceLine.scheduled) 0.86f else 0.7f),
-                        modifier = Modifier.size(13.dp),
-                    )
-                    Text(
-                        text = silenceLine.text,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White.copy(alpha = if (silenceLine.scheduled) 0.9f else 0.72f),
-                        maxLines = if (largeText) 2 else 1,
-                        softWrap = largeText,
-                        autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 11.sp),
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Taha 13 as the mushaf prints it, in its font: a size up from the card's 13sp, its letters being smaller. */
-@Composable
-private fun NextPrayerHeroVerse(modifier: Modifier = Modifier) {
-    val largeText = LocalDensity.current.fontScale > 1.3f
-    val verse = DisplayTexts.PRAYER_VERSES.first { it.id == "taha_13" }
-    Text(
-        text = "﴿ " + (MushafPassages.text(verse.id) ?: verse.text) + " ﴾",
-        modifier = modifier.semantics { contentDescription = verse.text },
-        fontFamily = QuranMushafFont,
-        fontSize = 15.sp,
-        color = Color.White.copy(alpha = 0.91f),
-        textAlign = TextAlign.Center,
-        maxLines = if (largeText) Int.MAX_VALUE else 1,
-        softWrap = largeText,
-        autoSize = if (largeText) null else TextAutoSize.StepBased(maxFontSize = 15.sp),
-    )
-}
-
-@Composable
 private fun WakeAlarmEmptyState(
     onPresetSelected: (WakeQuickPreset) -> Unit,
     onFajrSetup: (() -> Unit)?,
@@ -4361,8 +3927,6 @@ private fun PrayerRow(
     onPrayerTimeClick: (() -> Unit)? = null,
     timelineScale: PrayerTimelineScale? = null,
     showEnableSwitch: Boolean = true,
-    silencePermissionsGranted: Boolean = true,
-    onEnableSilenceMaster: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val usesDraft = draftSilenceConfig != null && onDraftSilenceConfigChange != null
@@ -4373,6 +3937,8 @@ private fun PrayerRow(
         mutableStateOf(PrefsManager.isPrayerSilenceEnabled(context, prayer))
     }
     var editorEndpoint by rememberSaveable(prayer) { mutableStateOf<SilenceEndpoint?>(null) }
+    var placeRequired by rememberSaveable(prayer) { mutableStateOf(false) }
+    if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
     var previewWindow by remember(prayer) { mutableStateOf<PrayerTimelineWindow?>(null) }
     var undoBefore by remember(prayer) { mutableStateOf<PrayerSilenceConfig?>(null) }
     var undoAfter by remember(prayer) { mutableStateOf<PrayerSilenceConfig?>(null) }
@@ -4486,7 +4052,9 @@ private fun PrayerRow(
         }
     }
 
-    val savedWindow = anchor?.let { resolvePrayerTimelineWindow(it, config) }
+    val savedEnds = remember(anchor, config) { anchor?.let { silenceEndsAt(it, config) } }
+    val savedWindow = if (anchor != null && savedEnds != null)
+        PrayerTimelineWindow(anchor.axisOf(savedEnds.start), anchor.axisOf(savedEnds.end)) else null
     val window = previewWindow ?: savedWindow
     val scale = timelineScale ?: remember(anchor, savedWindow) {
         if (anchor != null && savedWindow != null) {
@@ -4498,17 +4066,16 @@ private fun PrayerRow(
             )
         }
     }
-    val warningRes = when {
-        window == null -> null
-        window.endMinutes < window.startMinutes -> R.string.prayer_timeline_invalid_window
-        anchor != null && nextAnchor != null -> {
+    val warningRes = if (anchor != null && savedEnds != null) {
+        val start = previewWindow?.let { anchor.instantAt(it.startMinutes) } ?: savedEnds.start
+        val end = previewWindow?.let { anchor.instantAt(it.endMinutes) } ?: savedEnds.end
+        if (end <= start) R.string.prayer_timeline_invalid_window else if (nextAnchor != null) {
             // The next prayer's silence can start before its adhan, so compare with whichever comes first.
             val nextSilenceStart = nextPrayerConfig?.let { silenceEndsAt(nextAnchor, it).start }
             val nextStart = minOf(nextAnchor.adhan, nextSilenceStart ?: nextAnchor.adhan)
-            R.string.warning_overlaps_next_prayer.takeIf { window.endMinutes > anchor.axisOf(nextStart) }
-        }
-        else -> null
-    }
+            R.string.warning_overlaps_next_prayer.takeIf { end > nextStart }
+        } else null
+    } else null
     Column(
         modifier = modifier.fillMaxWidth()
             .background(if (highlighted) GoldLight.copy(alpha = 0.30f) else Color.Transparent),
@@ -4526,23 +4093,12 @@ private fun PrayerRow(
                 isNextPrayer = isNextPrayer,
                 onEnabledChange = changePrayer@{ newValue ->
                     if (newValue && !PrefsManager.hasConfirmedPlace(context)) {
-                        com.tunisianprayertimes.MainActivityPendingIntents.choosePlace(context).send()
-                        Toast.makeText(context, R.string.prayer_entry_confirm_to_schedule, Toast.LENGTH_LONG).show()
+                        placeRequired = true
                         return@changePrayer
                     }
                     prayerEnabled = newValue
                     PrefsManager.setPrayerSilenceEnabled(context, prayer, newValue)
-                    if (newValue && !PrefsManager.isEnabled(context)) {
-                        onEnableSilenceMaster?.invoke()
-                    }
                     onConfigChanged()
-                    if (newValue && !silencePermissionsGranted) {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.prayer_silence_permission_needed),
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
                 },
                 onPreviewWindow = { previewWindow = it },
                 onCommitWindow = { candidate ->
@@ -4789,7 +4345,6 @@ internal fun WakeAlarmRow(
         }
         if (playback.awakeCheckEnabled) add(context.getString(R.string.wake_alarm_feature_awake_check))
         if (playback.vibrationOnly) add(context.getString(R.string.wake_alarm_feature_vibration))
-        if (wakeConfig.silenceUntilAlarm) add(context.getString(R.string.wake_alarm_feature_silence))
     }
 
     Card(
@@ -4873,6 +4428,9 @@ internal fun WakeAlarmRow(
                         .testTag(TestTags.wakeAlarmEnabledSwitch(wakeConfig.id))
                         .semantics { contentDescription = alarmName },
                 )
+            }
+            if (enabled && isTimer && wakeConfig.silenceUntilAlarm && wakeConfig.hasFutureWakeTriggers(nowMillis)) {
+                WakeTimerSilenceNotice(savedTimer = wakeConfig)
             }
             HorizontalDivider(color = GreenPrimary.copy(alpha = 0.1f))
             Row(
@@ -5151,13 +4709,14 @@ private fun RamadanBadge() {
 /** Durations offered as one-tap choices before the custom hours/minutes fields. */
 private val ManualSilenceDurationPresets = listOf(15, 30, 60, 120)
 
-/**
- * Manual silencing: choose when ringing returns, then one clear action. While any
- * silence is active the card collapses to what is happening and a stop action.
- */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ManualSilenceCard(
+private fun ManualSilenceOptionsSheet(
     hasDnd: Boolean,
+    hasExactAlarm: Boolean,
+    resolvedTotalMinutes: Int,
+    middayPrayer: Prayer,
+    namedTargetPrayer: Prayer,
     manualSilenceMode: ManualSilenceMode,
     manualTargetPrayer: Prayer,
     manualDurationHours: String,
@@ -5170,16 +4729,12 @@ private fun ManualSilenceCard(
     onDurationHoursChange: (String) -> Unit,
     onDurationMinutesChange: (String) -> Unit,
     onDurationPresetSelected: (Int) -> Unit,
+    onDismiss: () -> Unit,
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val silenceActive = (manualSilenceActive || autoSilenceActive) && hasDnd
-    val resolvedTotalMinutes = resolveManualTotalMinutes(
-        manualDurationHours, manualDurationMinutes,
-        PrefsManager.getManualSilenceDurationMinutes(context),
-    )
-    val durationText = formatDurationText(resolvedTotalMinutes)
-    val targetPrayerName = manualSilencePrayerName(manualTargetPrayer)
+    val targetPrayerName = manualSilencePrayerName(namedTargetPrayer)
     var customDurationOpen by rememberSaveable { mutableStateOf(false) }
     val showCustomDuration = customDurationOpen || resolvedTotalMinutes !in ManualSilenceDurationPresets
     val accent by animateColorAsState(
@@ -5190,174 +4745,179 @@ private fun ManualSilenceCard(
         !silenceActive -> stringResource(R.string.manual_silence_subtitle_idle)
         !manualSilenceActive -> stringResource(R.string.manual_silence_active_auto)
         manualSilenceMode == ManualSilenceMode.UNTIL_PRAYER ->
-            stringResource(R.string.manual_silence_active_until_prayer, targetPrayerName)
+            stringResource(if (hasExactAlarm) R.string.manual_silence_active_until_prayer else R.string.manual_approximate_prayer, targetPrayerName)
         manualSilenceMode == ManualSilenceMode.DURATION && manualSilenceEndsAtMillis > 0L ->
-            stringResource(R.string.manual_silence_active_until_time, formatTimeOfDay(manualSilenceEndsAtMillis))
+            stringResource(if (hasExactAlarm) R.string.manual_silence_active_until_time else R.string.manual_approximate_time, formatTimeOfDay(manualSilenceEndsAtMillis))
         else -> stringResource(R.string.manual_silence_active_until_stopped)
     }
-    val shape = RoundedCornerShape(PrayerSilenceDimens.ContainerCorner)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp)
-            .clip(shape)
-            .background(PrayerSilencePalette.Surface)
-            .border(1.dp, PrayerSilencePalette.SoftBorder, shape)
-            .animateContentSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    AppModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = PrayerSilencePalette.Surface,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Column(
+            modifier = Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Box(
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(accent.copy(alpha = 0.1f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_bell_off),
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = stringResource(
+                            if (silenceActive) R.string.manual_silence_active_title else R.string.manual_silence_title,
+                        ),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrayerSilencePalette.PrimaryText,
+                    )
+                    Text(
+                        text = subtitle,
+                        fontSize = 12.5.sp,
+                        lineHeight = 17.sp,
+                        color = PrayerSilencePalette.SecondaryText,
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(painterResource(R.drawable.ic_close), stringResource(R.string.prayer_control_close))
+                }
+            }
+
+            if (!silenceActive) {
+                val modes = listOf(
+                    ManualSilenceMode.UNTIL_STOPPED,
+                    ManualSilenceMode.DURATION,
+                    ManualSilenceMode.UNTIL_PRAYER,
+                )
+                EndpointModeChoices(
+                    choices = listOf(
+                        stringResource(R.string.manual_silence_mode_until_short),
+                        stringResource(R.string.manual_silence_mode_duration),
+                        stringResource(R.string.manual_silence_mode_prayer_short),
+                    ),
+                    selected = modes.indexOf(manualSilenceMode),
+                    enabled = true,
+                    onSelected = { index -> onModeChange(modes[index]) },
+                    optionTestTags = listOf(
+                        TestTags.MANUAL_SILENCE_MODE_UNTIL,
+                        TestTags.MANUAL_SILENCE_MODE_DURATION,
+                        TestTags.MANUAL_SILENCE_MODE_PRAYER,
+                    ),
+                )
+                when (manualSilenceMode) {
+                    ManualSilenceMode.DURATION -> {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ManualSilenceDurationPresets.forEach { minutes ->
+                                ManualSilenceOptionChip(
+                                    text = formatDurationText(minutes),
+                                    selected = !showCustomDuration && resolvedTotalMinutes == minutes,
+                                    onClick = {
+                                        customDurationOpen = false
+                                        onDurationPresetSelected(minutes)
+                                    },
+                                )
+                            }
+                            ManualSilenceOptionChip(
+                                text = stringResource(R.string.manual_silence_duration_custom),
+                                selected = showCustomDuration,
+                                onClick = { customDurationOpen = true },
+                            )
+                        }
+                        if (showCustomDuration) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                ManualSilenceDurationField(
+                                    label = stringResource(R.string.manual_silence_hours_label),
+                                    value = manualDurationHours,
+                                    onValueChange = onDurationHoursChange,
+                                    inputTestTag = TestTags.MANUAL_SILENCE_DURATION_INPUT,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                ManualSilenceDurationField(
+                                    label = stringResource(R.string.manual_silence_minutes_label),
+                                    value = manualDurationMinutes,
+                                    onValueChange = onDurationMinutesChange,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                    ManualSilenceMode.UNTIL_PRAYER -> {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            WAKE_SUPPORTED_PRAYERS.forEach { prayer ->
+                                ManualSilenceOptionChip(
+                                    text = manualSilencePrayerName(if (prayer == Prayer.DHUHR) middayPrayer else prayer),
+                                    selected = prayer == manualTargetPrayer,
+                                    onClick = { onTargetPrayerChange(prayer) },
+                                    modifier = Modifier.testTag(TestTags.manualSilenceTargetPrayer(prayer.name)),
+                                )
+                            }
+                        }
+                    }
+                    ManualSilenceMode.UNTIL_STOPPED -> Unit
+                }
+            }
+
+            if (!hasExactAlarm && manualSilenceMode != ManualSilenceMode.UNTIL_STOPPED && (!silenceActive || manualSilenceActive)) {
+                Text(stringResource(R.string.manual_exact_delay_detail), color = PrayerSilencePalette.SecondaryText)
+                TextButton(onClick = { SilenceAccessSettings.openExactAlarms(context) }) {
+                    Text(stringResource(R.string.manual_exact_open_settings))
+                }
+            }
+
+            Button(
+                onClick = onClick,
+                enabled = silenceActive || manualSilenceMode != ManualSilenceMode.DURATION || resolvedTotalMinutes > 0,
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(accent.copy(alpha = 0.1f)),
-                contentAlignment = Alignment.Center,
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .testTag(TestTags.MANUAL_SILENCE_BUTTON),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.White),
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_bell_off),
+                    painter = painterResource(if (silenceActive) R.drawable.ic_adhkar_bell else R.drawable.ic_bell_off),
                     contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(20.dp),
                 )
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = stringResource(
-                        if (silenceActive) R.string.manual_silence_active_title else R.string.manual_silence_title,
-                    ),
+                    text = if (!silenceActive && manualSilenceMode == ManualSilenceMode.DURATION && resolvedTotalMinutes <= 0)
+                        stringResource(R.string.error_manual_duration_required)
+                    else manualSilenceActionLabel(silenceActive, manualSilenceMode, namedTargetPrayer, resolvedTotalMinutes, hasExactAlarm),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = PrayerSilencePalette.PrimaryText,
-                )
-                Text(
-                    text = subtitle,
-                    fontSize = 12.5.sp,
-                    lineHeight = 17.sp,
-                    color = PrayerSilencePalette.SecondaryText,
+                    textAlign = TextAlign.Center,
                 )
             }
-        }
-
-        if (!silenceActive) {
-            val modes = listOf(
-                ManualSilenceMode.UNTIL_STOPPED,
-                ManualSilenceMode.DURATION,
-                ManualSilenceMode.UNTIL_PRAYER,
-            )
-            EndpointModeChoices(
-                choices = listOf(
-                    stringResource(R.string.manual_silence_mode_until_short),
-                    stringResource(R.string.manual_silence_mode_duration),
-                    stringResource(R.string.manual_silence_mode_prayer_short),
-                ),
-                selected = modes.indexOf(manualSilenceMode),
-                enabled = true,
-                onSelected = { index -> onModeChange(modes[index]) },
-                optionTestTags = listOf(
-                    TestTags.MANUAL_SILENCE_MODE_UNTIL,
-                    TestTags.MANUAL_SILENCE_MODE_DURATION,
-                    TestTags.MANUAL_SILENCE_MODE_PRAYER,
-                ),
-            )
-            when (manualSilenceMode) {
-                ManualSilenceMode.DURATION -> {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        ManualSilenceDurationPresets.forEach { minutes ->
-                            ManualSilenceOptionChip(
-                                text = formatDurationText(minutes),
-                                selected = !showCustomDuration && resolvedTotalMinutes == minutes,
-                                onClick = {
-                                    customDurationOpen = false
-                                    onDurationPresetSelected(minutes)
-                                },
-                            )
-                        }
-                        ManualSilenceOptionChip(
-                            text = stringResource(R.string.manual_silence_duration_custom),
-                            selected = showCustomDuration,
-                            onClick = { customDurationOpen = true },
-                        )
-                    }
-                    if (showCustomDuration) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            ManualSilenceDurationField(
-                                label = stringResource(R.string.manual_silence_hours_label),
-                                value = manualDurationHours,
-                                onValueChange = onDurationHoursChange,
-                                inputTestTag = TestTags.MANUAL_SILENCE_DURATION_INPUT,
-                                modifier = Modifier.weight(1f),
-                            )
-                            ManualSilenceDurationField(
-                                label = stringResource(R.string.manual_silence_minutes_label),
-                                value = manualDurationMinutes,
-                                onValueChange = onDurationMinutesChange,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                }
-                ManualSilenceMode.UNTIL_PRAYER -> {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        WAKE_SUPPORTED_PRAYERS.forEach { prayer ->
-                            ManualSilenceOptionChip(
-                                text = manualSilencePrayerName(prayer),
-                                selected = prayer == manualTargetPrayer,
-                                onClick = { onTargetPrayerChange(prayer) },
-                                modifier = Modifier.testTag(TestTags.manualSilenceTargetPrayer(prayer.name)),
-                            )
-                        }
-                    }
-                }
-                ManualSilenceMode.UNTIL_STOPPED -> Unit
-            }
-        }
-
-        Button(
-            onClick = onClick,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .testTag(TestTags.MANUAL_SILENCE_BUTTON),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.White),
-        ) {
-            Icon(
-                painter = painterResource(if (silenceActive) R.drawable.ic_adhkar_bell else R.drawable.ic_bell_off),
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = when {
-                    silenceActive -> stringResource(R.string.manual_silence_action_stop)
-                    manualSilenceMode == ManualSilenceMode.DURATION ->
-                        stringResource(R.string.manual_silence_action_duration, durationText)
-                    manualSilenceMode == ManualSilenceMode.UNTIL_PRAYER ->
-                        stringResource(R.string.manual_silence_action_prayer, targetPrayerName)
-                    else -> stringResource(R.string.manual_silence_action_now)
-                },
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-            )
         }
     }
 }
@@ -5425,6 +4985,26 @@ private fun ManualSilenceDurationField(
 }
 
 @Composable
+private fun manualSilenceActionLabel(
+    active: Boolean,
+    mode: ManualSilenceMode,
+    targetPrayer: Prayer,
+    minutes: Int,
+    exact: Boolean,
+): String = when {
+    active -> stringResource(R.string.manual_silence_action_stop)
+    mode == ManualSilenceMode.DURATION -> stringResource(
+        if (exact) R.string.manual_silence_action_duration else R.string.manual_silence_approx_duration,
+        formatDurationText(minutes),
+    )
+    mode == ManualSilenceMode.UNTIL_PRAYER -> stringResource(
+        if (exact) R.string.manual_silence_action_prayer else R.string.manual_silence_approx_prayer,
+        manualSilencePrayerName(targetPrayer),
+    )
+    else -> stringResource(R.string.manual_silence_action_indefinite)
+}
+
+@Composable
 private fun manualSilencePrayerName(prayer: Prayer): String = when (prayer) {
     Prayer.FAJR -> stringResource(R.string.prayer_fajr)
     Prayer.DHUHR -> stringResource(R.string.prayer_dhuhr)
@@ -5458,14 +5038,11 @@ private fun resolveNextPrayerCountdown(
     val place = PrayerTimesRepository.place(context)
     val now = java.time.Instant.ofEpochMilli(nowMillis)
     val next = PrayerTimesRepository.upcomingPrayers(context, now, place).firstOrNull() ?: return null
-    val local = next.at.atZone(java.time.ZoneId.systemDefault())
     return NextPrayerCountdownInfo(
         prayer = next.prayer,
-        hour = local.hour,
-        minute = local.minute,
-        triggerAtMillis = next.at.toEpochMilli(),
-        isTomorrow = next.prayerDay > now.atZone(place.zone).toLocalDate(),
+        at = next.at,
         prayerDay = next.prayerDay,
+        placeZone = place.zone,
     )
 }
 
@@ -5487,49 +5064,17 @@ private fun resolveUpcomingManualSilencePrayer(
     .firstOrNull()?.prayer?.let { if (it == Prayer.JOMOAA) Prayer.DHUHR else it }
 
 /** The next adhan of [prayer] after now (6.9), Jumu'a standing for Dhuhr on a Friday. */
-private fun resolveManualSilencePrayerEndMillis(
+internal fun nextManualSilenceOccurrence(
     context: Context,
-    @Suppress("UNUSED_PARAMETER") delegationId: Int,
     prayer: Prayer,
     nowMillis: Long = System.currentTimeMillis()
-): Long? {
+): PrayerTimesRepository.PrayerOccurrence? {
     if (prayer !in WAKE_SUPPORTED_PRAYERS) return null
     return PrayerTimesRepository.upcomingPrayers(context, java.time.Instant.ofEpochMilli(nowMillis))
         .firstOrNull { (if (it.prayer == Prayer.JOMOAA) Prayer.DHUHR else it.prayer) == prayer }
-        ?.at?.toEpochMilli()
 }
 
-/** What the auto-silence scheduler will do at the upcoming prayer. */
-private sealed interface UpcomingSilence {
-    data class Window(val window: PrayerTimelineWindow) : UpcomingSilence
-    /** Auto-silence is off globally or was stopped outside Tunisia. */
-    data object AutoSilenceOff : UpcomingSilence
-    /** This prayer's own silence switch is off. */
-    data object PrayerOff : UpcomingSilence
-}
-
-/** One line under the hero countdown; [scheduled] is false when the phone will keep ringing. */
-private data class HeroSilenceLine(val text: String, val scheduled: Boolean)
-
-/** Null only when the saved window is invalid; the prayer list already warns about that. */
-private fun resolveUpcomingSilence(
-    context: Context,
-    countdown: NextPrayerCountdownInfo,
-): UpcomingSilence? {
-    if (!PrefsManager.isEnabled(context)) {
-        return UpcomingSilence.AutoSilenceOff
-    }
-    if (!PrefsManager.isPrayerSilenceEnabled(context, countdown.prayer)) return UpcomingSilence.PrayerOff
-    // The window the scheduler arms for that prayer day (6.9), on the editors' axis: the phone's clock (D8).
-    val window = SilenceScheduler.windowOf(context, countdown.prayer, countdown.prayerDay) ?: return null
-    val place = PrayerTimesRepository.place(context)
-    val anchor = PrayerTimelineAnchor(
-        countdown.prayer, countdown.prayerDay, java.time.Instant.ofEpochMilli(countdown.triggerAtMillis), place.zone, place is PrayerPlace.Inm,
-    )
-    return UpcomingSilence.Window(PrayerTimelineWindow(anchor.axisOf(window.start), anchor.axisOf(window.end)))
-}
-
-private fun formatCountdownRemaining(targetAtMillis: Long, currentTimeMillis: Long): String {
+internal fun formatCountdownRemaining(targetAtMillis: Long, currentTimeMillis: Long): String {
     val remainingMillis = (targetAtMillis - currentTimeMillis).coerceAtLeast(0L)
     if (remainingMillis < 60_000L) {
         val remainingSeconds = ((remainingMillis + 999L) / 1_000L)
@@ -5600,13 +5145,6 @@ private fun isSameCalendarDay(firstTimeInMillis: Long, secondTimeInMillis: Long)
 
 private fun resolveManualDurationMinutes(value: String, fallback: Int): Int {
     return value.toIntOrNull()?.coerceAtLeast(1) ?: fallback.coerceAtLeast(1)
-}
-
-private fun resolveManualTotalMinutes(hours: String, minutes: String, fallback: Int): Int {
-    val h = hours.toIntOrNull() ?: 0
-    val m = minutes.toIntOrNull() ?: 0
-    val total = h * 60 + m
-    return if (total > 0) total else fallback.coerceAtLeast(1)
 }
 
 private fun formatDurationText(totalMinutes: Int): String {
@@ -5708,9 +5246,7 @@ internal fun scheduledWakeAlarmTriggersForDay(
 private fun ProvisionalPlaceBanner(onConfirm: () -> Unit, onChange: () -> Unit) {
     val context = LocalContext.current
     val place = PrefsManager.getPlace(context)
-    val label = PrefsManager.getPlaceNameSnapshot(context)
-        ?: PrefsManager.getLocationSelection(context).name
-        ?: context.getString(R.string.location_default_tunis).takeIf { place == PrayerPlace.Inm(PlaceResolution.TUNIS_DELEGATION_ID) }
+    val label = PlaceResolution.suggestedPlaceLabel(context, place)
     // Inside the page's own 16 dp margins, under the place header.
     Column(
         modifier = Modifier

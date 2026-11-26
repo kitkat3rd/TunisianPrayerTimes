@@ -1,5 +1,6 @@
 package com.tunisianprayertimes.remembrance
 
+import android.Manifest
 import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
@@ -31,7 +32,8 @@ class DeathRemembranceNotificationTest {
 
     @Test
     fun scheduledNotificationsOpenTheirOwnHeadlineDeedAndSource() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         context.getSharedPreferences("death_remembrance", Context.MODE_PRIVATE).edit()
             .putBoolean("enabled", true).putString("frequency", "daily").commit()
         val manager = context.getSystemService(NotificationManager::class.java)

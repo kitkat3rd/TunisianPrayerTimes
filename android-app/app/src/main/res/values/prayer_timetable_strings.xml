@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="timetable_edit_prayer">إعدادات صلاة %1$s</string>
+    <string name="timetable_more_settings">خيارات أخرى لجدول الإسكات</string>
+    <string name="timetable_silence_settings">إعدادات الإسكات</string>
+    <string name="timetable_rules_saved_while_off">الإسكات التلقائي متوقّف. تُحفَظ اختياراتك إلى أن تفعّله.</string>
+    <string name="timetable_silence_window">إسكات ⁦%1$s – %2$s⁩</string>
+    <string name="timetable_mosque_window">في المسجد ⁦%1$s – %2$s⁩</string>
+    <string name="timetable_saved_window">الفترة المحفوظة ⁦%1$s – %2$s⁩</string>
+    <string name="timetable_clock_offset">%1$s (UTC%2$s)</string>
+    <string name="timetable_silence_disabled">الإسكات متوقّف لهذه الصلاة</string>
+</resources>

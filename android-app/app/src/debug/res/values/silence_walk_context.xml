@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="walk_context_enabled">الإسكات التلقائي مفعّل</string>
+    <string name="walk_context_car">الإسكات التلقائي معلّق أثناء الاتصال بـ Android Auto.</string>
+    <string name="walk_context_alarm">الإسكات التلقائي معلّق للتحقّق من الاستيقاظ.</string>
+    <string name="walk_context_no_owners">لا يوجد طلب إسكات نشط من التطبيق.</string>
+    <string name="walk_context_owners">طلبات الإسكات النشطة من التطبيق: %1$s</string>
+    <string name="walk_context_incomplete">تعذّرت قراءة بعض إعدادات الإسكات عند بدء التسجيل.</string>
+    <string name="walk_schedule_no_watch">لم تبدأ فترة التحقّق من الوصول إلى المسجد أو انتهت.</string>
+    <string name="walk_schedule_watch">فترة التحقّق الحالية من %1$s إلى %2$s.</string>
+    <string name="walk_schedule_no_silence">لا توجد فترة إسكات مجدولة جارية الآن.</string>
+    <string name="walk_schedule_dismissed">سبق تخطّي الإسكات لصلاة %1$s.</string>
+    <string name="walk_schedule_current">فترة الإسكات الجارية لصلاة %1$s\nموعد الصلاة %2$s\nالإسكات من %3$s إلى %4$s</string>
+    <string name="walk_schedule_next">فترة الإسكات التالية لصلاة %1$s\nموعد الصلاة %2$s\nالإسكات من %3$s إلى %4$s</string>
+    <string name="walk_schedule_observing">فترة الإسكات المرتبطة بالتحقّق الجاري لصلاة %1$s\nموعد الصلاة %2$s\nالإسكات من %3$s إلى %4$s</string>
+    <string name="walk_schedule_none_upcoming">لا توجد فترة إسكات قادمة في الجدول المحسوب حتى الغد.</string>
+</resources>

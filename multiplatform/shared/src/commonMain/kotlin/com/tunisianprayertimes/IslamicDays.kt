@@ -143,6 +143,8 @@ object HijriLabels {
 
     fun monthLabel(year: Int, month: Int): String = "${monthName(year, month)} $year هـ"
 
-    fun dateLabel(date: HijriCalendarDate): String =
-        "${date.day} ${GENITIVE[date.month] ?: monthName(date.year, date.month)} ${date.year} هـ"
+    fun dayMonthLabel(date: HijriCalendarDate): String =
+        "${date.day} ${GENITIVE[date.month] ?: monthName(date.year, date.month)}"
+
+    fun dateLabel(date: HijriCalendarDate): String = "${dayMonthLabel(date)} ${date.year} هـ"
 }

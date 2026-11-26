@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="first_run_place_title">مواقيت الصلاة في منطقتك</string>
-    <string name="first_run_place_description">اختر مدينتك أو حيّك لمعرفة وقت الصلاة القادمة.</string>
+    <string name="first_run_place_title">إسكات الهاتف وقت الصلاة</string>
+    <string name="first_run_place_description">اختر مدينتك أو حيّك لعرض مواقيت الصلاة. يمكنك بعدها إعداد إسكات الهاتف وقت الصلاة إذا رغبت.</string>
+    <string name="first_run_location_only_description">اختر مدينتك أو حيّك لتُحسب مواقيت الصلاة وفترات الإسكات بحسب منطقتك.</string>
     <string name="first_run_use_location">استخدام موقعي مرة واحدة</string>
     <string name="first_run_location_help">نستخدم موقعك هذه المرّة لاقتراح منطقة تؤكّدها بنفسك.</string>
-    <string name="first_run_browse">التصفّح الآن</string>
+    <string name="first_run_browse">تحديد منطقتي لاحقًا</string>
     <string name="first_run_match_title">هل هذه منطقتك؟</string>
-    <string name="first_run_show_times">عرض مواقيت %1$s</string>
+    <string name="first_run_show_times">تأكيد %1$s والمتابعة</string>
     <string name="first_run_choose_another">اختيار مدينة أخرى</string>
     <string name="first_run_denied_title">اختر مدينتك يدويًا</string>
     <string name="first_run_unavailable_title">تعذّر تحديد الموقع</string>
@@ -18,4 +19,5 @@
     <string name="first_run_source_error">تعذّر إعداد المواقيت. أعد المحاولة أو اختر مدينة أخرى.</string>
     <string name="first_run_catalog_error">تعذّر تحميل بعض أسماء الأماكن.</string>
     <string name="first_run_retry">إعادة المحاولة</string>
+    <string name="first_run_window_example">فترة إسكات %1$s في جدول منطقتك تبدأ %2$s وتنتهي %3$s.</string>
 </resources>

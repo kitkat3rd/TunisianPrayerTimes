@@ -22,6 +22,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.tunisianprayertimes.OfficialIslamicDates
 import java.time.Duration
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.chrono.HijrahChronology
 import java.time.temporal.ChronoField
@@ -122,11 +123,11 @@ internal fun LoadOfficialCalendarYear(year: Int) {
 
 /** Updates at local midnight, after clock/time-zone changes, and when returning to the app. */
 @Composable
-internal fun rememberCalendarToday(): LocalDate {
+internal fun rememberCalendarToday(zone: ZoneId? = null): LocalDate {
     val context = LocalContext.current.applicationContext
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var today by remember { mutableStateOf(LocalDate.now()) }
-    LaunchedEffect(context, lifecycle) {
+    var today by remember(zone) { mutableStateOf(LocalDate.now(zone ?: ZoneId.systemDefault())) }
+    LaunchedEffect(context, lifecycle, zone) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             val changes = Channel<Unit>(Channel.CONFLATED)
             val observer = LifecycleEventObserver { _, event ->
@@ -154,7 +155,7 @@ internal fun rememberCalendarToday(): LocalDate {
                 receiverRegistered = true
                 changes.trySend(Unit)
                 for (change in changes) {
-                    val now = ZonedDateTime.now()
+                    val now = ZonedDateTime.now(zone ?: ZoneId.systemDefault())
                     today = now.toLocalDate()
                     midnightRefresh?.cancel()
                     midnightRefresh = launch {

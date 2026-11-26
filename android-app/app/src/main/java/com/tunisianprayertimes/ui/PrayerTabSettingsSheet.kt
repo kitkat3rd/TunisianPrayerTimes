@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.tunisianprayertimes.MethodPresentation
+import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.PlaceResolution
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.R
@@ -78,6 +79,8 @@ internal data class PrayerSettingsAccess(
     val hasForegroundLocation: Boolean,
     val backgroundTravelActive: Boolean,
     val offerBatteryHelp: Boolean,
+    val silenceSetupIssue: Int? = null,
+    val silenceStatus: Int? = null,
 )
 
 @Composable
@@ -201,11 +204,20 @@ internal fun PrayerTabSettingsSheet(
                     PrayerSettingsGroup(title = stringResource(R.string.prayer_settings_sound_group)) {
                         PrayerSettingsSwitch(
                             title = stringResource(R.string.auto_silence),
+                            summary = access.silenceStatus?.let { stringResource(it) },
                             checked = autoSilenceEnabled,
                             onCheckedChange = onAutoSilenceChange,
                             modifier = Modifier.testTag(TestTags.AUTO_SILENCE_SWITCH),
                         )
                         PrayerSettingsDivider()
+                        if (autoSilenceEnabled && access.silenceSetupIssue != null) {
+                            PrayerSettingsLink(
+                                title = stringResource(R.string.mosque_readiness_title),
+                                summary = stringResource(access.silenceSetupIssue),
+                                onClick = { context.startActivity(MosqueSettingsActivity.setupIntent(context)) },
+                            )
+                            PrayerSettingsDivider()
+                        }
                         PrayerSettingsLink(
                             title = stringResource(R.string.mosque_settings_title),
                             summary = when (silenceMode) {
@@ -262,6 +274,7 @@ internal fun PrayerTabSettingsSheet(
                                 onCheckedChange = onBackgroundTravelChange,
                             )
                         }
+                        if (autoLocationEnabled) TravelNotificationSettings()
                         PrayerSettingsDivider()
                         if (abroad == null) {
                             PrayerSettingsLink(
@@ -308,6 +321,26 @@ internal fun PrayerTabSettingsSheet(
             onDismiss = { showInmExplanation = false },
         )
     }
+}
+
+@Composable
+private fun TravelNotificationSettings() {
+    val context = LocalContext.current
+    val channel = PlaceResolution.LOCATION_CHANNEL
+    var issue by remember(context) { mutableStateOf(NotificationAccess.issue(context, channel)) }
+    val refresh = { issue = NotificationAccess.issue(context, channel) }
+    LifecycleResumeEffect(context) {
+        refresh()
+        onPauseOrDispose { }
+    }
+    if (issue == null) return
+    val repair = rememberNotificationAccessAction(onReturn = refresh)
+    PrayerSettingsDivider()
+    PrayerSettingsLink(
+        title = stringResource(R.string.travel_notification_enable),
+        summary = stringResource(R.string.travel_notification_help),
+        onClick = { repair(channel) },
+    )
 }
 
 @Composable

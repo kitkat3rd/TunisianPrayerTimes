@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tunisianprayertimes.CitySearch
 import com.tunisianprayertimes.Gouvernorat
 import com.tunisianprayertimes.Locality
 import com.tunisianprayertimes.LocalityKindClass
@@ -288,10 +289,13 @@ internal fun LocalityPickerSheet(
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        row.arabic.ifEmpty { row.name }, fontSize = 15.sp,
+                                        row.displayName, fontSize = 15.sp,
                                         color = if (selected) GreenPrimaryDark else TextDark,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                     )
+                                    cities.areaOf(row.ref.id)?.let { area ->
+                                        Text(cityAreaLabel(area), fontSize = 13.sp, color = TextDark)
+                                    }
                                     if (row.arabic.isNotEmpty() && row.name != row.arabic) {
                                         Text(row.name, fontSize = 12.sp, color = TextMuted)
                                     }
@@ -309,6 +313,17 @@ internal fun LocalityPickerSheet(
             }
         }
     }
+}
+
+@Composable
+internal fun cityAreaLabel(area: CitySearch.Area): String {
+    val nearby = area.nearby?.let { stringResource(R.string.picker_city_near, it) }
+    val coordinates = area.coordinates?.let {
+        val latitude = it.latitude.toBigDecimal().stripTrailingZeros().toPlainString()
+        val longitude = it.longitude.toBigDecimal().stripTrailingZeros().toPlainString()
+        stringResource(R.string.picker_city_coordinates, latitude, longitude)
+    }
+    return listOfNotNull(area.region, nearby, coordinates).joinToString(" · ")
 }
 
 private fun localityKindLabel(kind: String): Int = when (localityKindClass(kind)) {

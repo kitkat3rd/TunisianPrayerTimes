@@ -631,7 +631,7 @@ fun WakeEditorSheet(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (draftConfig.enabled && (draftConfig.mainAlarm.mode != WakeMainAlarmMode.PRAYER_RELATIVE || PrefsManager.hasConfirmedPlace(context))) {
-                        WakeAlarmAccessNotice(activity, saved = false)
+                        WakeAlarmAccessNotice(activity, saved = false, awakeCheckEnabled = draftConfig.playback.awakeCheckEnabled)
                     }
                     val heroAnchorAtMillis = heroTimes.anchorAtMillis
                     val heroEffectivePrayer = heroTimes.anchorEffectivePrayer
@@ -1412,6 +1412,7 @@ private fun WakeFromNowModeControls(
         checked = silenceUntilAlarm,
         onCheckedChange = onSilenceUntilAlarmChange,
     )
+    if (silenceUntilAlarm) WakeTimerSilenceNotice()
 }
 
 @Composable

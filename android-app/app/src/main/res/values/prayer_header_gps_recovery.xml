@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="prayer_header_gps_denied_help">اختر مدينتك يدويًا، أو اسمح باستخدام موقعك من إعدادات التطبيق لتحديد منطقتك هذه المرّة.</string>
+</resources>

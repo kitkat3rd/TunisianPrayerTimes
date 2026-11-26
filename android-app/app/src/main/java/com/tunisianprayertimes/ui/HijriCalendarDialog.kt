@@ -79,6 +79,7 @@ import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
 import com.tunisianprayertimes.ui.theme.TextDark
 import com.tunisianprayertimes.ui.theme.TextMuted
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DecimalStyle
 import java.time.format.TextStyle
@@ -96,6 +97,7 @@ internal fun HijriCalendarDialog(
     dateRange: Pair<Long, Long>?,
     onDateSelected: (Long) -> Unit,
     onDismiss: () -> Unit,
+    todayZone: ZoneId? = null,
 ) {
     val calendar = rememberTunisianHijriCalendar()
     val bounds = remember(dateRange, calendar) { calendarBounds(dateRange, calendar) }
@@ -127,7 +129,7 @@ internal fun HijriCalendarDialog(
         List(hijriMonth.lengthOfMonth) { monthStart.plusDays(it.toLong()) }
     }
     LoadOfficialCalendarYear(viewedYear)
-    val today = rememberCalendarToday()
+    val today = rememberCalendarToday(todayZone)
     val previousMonth = remember(hijriMonth, calendar) { calendar.adjacentMonth(viewedYear, viewedMonth, -1) }
     val nextMonth = remember(hijriMonth, calendar) { calendar.adjacentMonth(viewedYear, viewedMonth, 1) }
     val navigateToMonth: (HijriCalendarMonth) -> Unit = {
@@ -141,7 +143,7 @@ internal fun HijriCalendarDialog(
     }
     val currentSwipeToMonth by rememberUpdatedState(swipeToMonth)
     val goToToday: () -> Unit = {
-        val currentToday = LocalDate.now()
+        val currentToday = LocalDate.now(todayZone ?: ZoneId.systemDefault())
         if (bounds.contains(currentToday)) {
             pickedEpoch = currentToday.toEpochDay()
             navigateToMonth(calendar.monthFor(currentToday))

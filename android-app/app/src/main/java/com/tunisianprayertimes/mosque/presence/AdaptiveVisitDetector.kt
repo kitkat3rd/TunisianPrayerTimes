@@ -4,7 +4,7 @@ import kotlin.math.hypot
 
 /** Evidence stays in memory, separately for each component of each saved mosque. Times are elapsed milliseconds. */
 internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
-    enum class Arrival { INSIDE, EDGE, EARLIER_PRECISE, NEARBY }
+    enum class Arrival { INSIDE, EDGE, EARLIER_PRECISE, NEARBY, WALKED_IN }
     private data class Reading(val point: GeoPoint, val at: Long, val accuracy: Double, val distance: Double) {
         fun separation(other: Reading): Double {
             val (x, y) = project(point, other.point)
@@ -33,12 +33,81 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
             spans(if (readings.any { it.accuracy > 10 }) 25_000 else 15_000)
     }
 
-    private class Component(val polygon: SilencePolygon, val stricter: Boolean) {
+    /** A measured walk from clearly outside to confidently inside this one polygon. */
+    private class WalkIn {
+        private var outsideReference: Reading? = null
+        private var approach: Reading? = null
+        private var firstInside: Reading? = null
+        private var secondInsideAt: Long? = null
+        private var firstDeepAt: Long? = null
+        private var last: Reading? = null
+
+        fun clear() {
+            outsideReference = null
+            approach = null
+            firstInside = null
+            secondInsideAt = null
+            firstDeepAt = null
+            last = null
+        }
+
+        // Allow for the uncertainty of both endpoints around a brisk walking speed.
+        private fun reachable(from: Reading, to: Reading) =
+            from.separation(to) <= from.accuracy + to.accuracy + 4.0 * (to.at - from.at) / 1_000.0
+
+        private fun outside(r: Reading) {
+            if (r.distance <= r.accuracy + 8) return
+            val reference = outsideReference
+            if (reference == null || r.at - reference.at > 60_000 || r.distance > reference.distance + 3) {
+                outsideReference = r
+                approach = null
+            } else if (r.at - reference.at >= 1_500 && reference.distance - r.distance >= 3 && reachable(reference, r)) {
+                approach = r
+                outsideReference = r
+            }
+        }
+
+        fun observe(r: Reading): Boolean {
+            if (r.accuracy > 10) { clear(); return false }
+            val previous = last
+            val entry = firstInside
+            // A balanced outside reading can be up to a minute old. The inside evidence must
+            // come from one uninterrupted sequence, and an actual excursion starts a new attempt.
+            val maxGap = if (entry == null) 60_000L else 12_000L
+            val brokenSequence = previous != null && (r.at - previous.at > maxGap || !reachable(previous, r))
+            val endedPassage = entry != null && (r.distance >= 0 || r.at - entry.at > 30_000)
+            if (brokenSequence || endedPassage) clear()
+            last = r
+            if (r.distance >= 0) { outside(r); return false }
+            val anchor = approach ?: return false
+            val start = firstInside ?: run {
+                if (r.at - anchor.at > 60_000 || !reachable(anchor, r)) { clear(); return false }
+                firstInside = r
+                r
+            }
+            if (secondInsideAt == null && r.at - start.at >= 1_500) secondInsideAt = r.at
+            // Between two strong fixes, the accuracy circle must stay inside. The points can
+            // settle on the same coordinates after the measured advance through the entrance.
+            if (r.distance >= -r.accuracy) {
+                firstDeepAt = null
+                return false
+            }
+            if (!r.inside) return false
+            val deepStart = firstDeepAt ?: r.at.also { firstDeepAt = it }
+            val middle = secondInsideAt ?: return false
+            return r.at - middle >= 1_500 && r.at - deepStart >= 3_000 && r.at - start.at >= 8_000 &&
+                start.separation(r) >= maxOf(2.0, minOf(start.accuracy, r.accuracy) / 2) &&
+                reachable(anchor, r) && reachable(start, r)
+        }
+    }
+
+    private class Component(val areaId: String, val polygon: SilencePolygon, val stricter: Boolean) {
         private val history = ArrayDeque<Reading>()
         private val inside = Stop()
         private val edge = Stop()
         private val drift = Stop()
         private val nearby = Stop()
+        private val walkIn = if (stricter) null else WalkIn()
         private var firstDoor: Reading? = null
         private var door: Reading? = null
         private var lastAt: Long? = null
@@ -46,6 +115,11 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
             private set
 
         fun clear() {
+            walkIn?.clear()
+            clearDwellEvidence()
+        }
+
+        private fun clearDwellEvidence() {
             history.clear()
             inside.clear(); edge.clear(); drift.clear(); nearby.clear()
             firstDoor = null; door = null; lastAt = null; arrival = null
@@ -62,7 +136,7 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
 
         fun observe(r: Reading, holding: Arrival?): Boolean {
             if (r.accuracy > 30 || polygon.inHole(r.point)) { clear(); return false }
-            if (lastAt?.let { r.at - it > 12_000 } == true) clear()
+            if (lastAt?.let { r.at - it > 12_000 } == true) clearDwellEvidence()
             lastAt = r.at
             if (holding != null) {
                 edge.add(r, r.nearEdge || edge.started, edgeException = true)
@@ -88,6 +162,7 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
             nearby.add(r, !stricter && r.nearby && (nearby.started || approach))
             arrival = when {
                 inside.spans(15_000) -> Arrival.INSIDE
+                walkIn?.observe(r) == true -> Arrival.WALKED_IN
                 edge.edgeComplete() -> Arrival.EDGE
                 drift.spans(25_000) -> Arrival.EARLIER_PRECISE
                 nearby.spans(45_000) -> Arrival.NEARBY
@@ -98,9 +173,10 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
     }
 
     private val components = areas.filter { it.enabled }.flatMap { area ->
-        area.polygons.map { Component(it, area.requireStrongerEvidence) }
+        area.polygons.map { Component(area.id, it, area.requireStrongerEvidence) }
     }
     private var source: Component? = null
+    val confirmedAreaId get() = source?.areaId
     private var lastTimestamp = -1L
     var arrival: Arrival? = null
         private set

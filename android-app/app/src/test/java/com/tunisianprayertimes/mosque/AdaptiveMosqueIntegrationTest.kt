@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
+import com.tunisianprayertimes.AndroidAtomicFileShadow
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.SilenceReceiver
@@ -37,6 +38,14 @@ class AdaptiveMosqueIntegrationTest {
     private val originalClock = SilenceScheduler.clock
     @After fun resetClock() { SilenceScheduler.clock = originalClock }
 
+    @Test fun onlyAPreciseArrivalCheckRequestsTwoSecondUpdates() {
+        val plan = MosqueObservationPlan("session", 120_000, 120_000, true, PresenceState.ACQUIRING, emptyList())
+        assertEquals(2_000L, plan.intervalMillis)
+        assertEquals(60_000L, plan.copy(highAccuracy = false).intervalMillis)
+        assertEquals(5_000L, plan.copy(state = PresenceState.EXITING).intervalMillis)
+        assertEquals(5_000L, plan.copy(state = PresenceState.VISIT_CONFIRMED).intervalMillis)
+    }
+
     @Test fun existingMosqueMethodObservesArrivalBeforePrayerWithoutTheOldOptIn() {
         assertPrePrayerObservation()
     }
@@ -53,6 +62,7 @@ class AdaptiveMosqueIntegrationTest {
             Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACCESS_BACKGROUND_LOCATION,
         )
+        PrefsManager.markFirstLaunchDone(c)
         PrefsManager.setEnabled(c, true)
         assertTrue(MosqueSilenceSettings.saveMode(c, AutomaticSilenceMode.TIME_AND_MOSQUE))
         MosqueSilenceSettings.acceptBackgroundDisclosure(c)
@@ -78,6 +88,7 @@ class AdaptiveMosqueIntegrationTest {
     }
 
     @Test fun timeOnlyNeverSchedulesMosqueObservationEvenWithTheOldOptIn() {
+        PrefsManager.markFirstLaunchDone(c)
         PrefsManager.setEnabled(c, true)
         shadowOf(c.getSystemService(NotificationManager::class.java)).setNotificationPolicyAccessGranted(true)
         val simulatedTime = Calendar.getInstance().apply { timeInMillis = noon.toEpochMilli() }
@@ -165,7 +176,9 @@ class AdaptiveMosqueIntegrationTest {
         assertNull(MosquePeriods.from(later,noon.plusSeconds(1_000).toEpochMilli()).observation)
     }
 
-    @Test fun strongerEvidenceDefaultsOffAndSurvivesAnAreaEdit() {
+    @Test
+    @Config(shadows = [AndroidAtomicFileShadow::class])
+    fun strongerEvidenceDefaultsOffAndSurvivesAnAreaEdit() {
         val shape = SilencePolygon(listOf(GeoPoint(36.0,10.0),GeoPoint(36.001,10.0),GeoPoint(36.0,10.001)))
         val draft = AreaDraft("mosque", "Test", "", enabled = true).withPolygons(listOf(shape))
         PrivateSilenceAreaStore.save(c,draft,listOf(shape))

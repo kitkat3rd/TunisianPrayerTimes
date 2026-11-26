@@ -1,7 +1,11 @@
 package com.tunisianprayertimes.ui
 
+import android.Manifest
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.provider.Settings
 import android.view.inspector.WindowInspector
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.runtime.CompositionLocalProvider
@@ -20,6 +24,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ApplicationProvider
+import com.tunisianprayertimes.PlaceResolution
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.place.PrayerPlace
@@ -32,6 +37,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -84,6 +90,20 @@ class PrayerTabSettingsSheetTest {
     }
 
     private fun row(id: Int) = compose.onNodeWithText(context.getString(id))
+
+    @Test
+    fun blockedMosqueChannelIsShownAlongsideTheSelectedSilenceSetting() {
+        val issue = R.string.mosque_observation_notifications_blocked
+        showSettings(tunis, access = PrayerSettingsAccess(true, true, false, false,
+            silenceSetupIssue = issue, silenceStatus = R.string.prayer_silence_waiting_for_setup))
+        row(R.string.prayer_silence_waiting_for_setup).performScrollTo().assertIsDisplayed()
+        row(issue).performScrollTo().assertIsDisplayed()
+        row(R.string.mosque_readiness_title).performClick()
+        val expected = com.tunisianprayertimes.mosque.MosqueSettingsActivity.setupIntent(context)
+        val started = shadowOf(ApplicationProvider.getApplicationContext<Application>()).nextStartedActivity
+        assertEquals(expected.component, started.component)
+        assertEquals(expected.action, started.action)
+    }
 
     @Test
     fun tunisianCalculationExplanationReturnsToSettings() {
@@ -141,10 +161,33 @@ class PrayerTabSettingsSheetTest {
 
     @Test
     fun grantedAccessLeavesRepairActionsHidden() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        shadowOf(app.getSystemService(NotificationManager::class.java)).setNotificationsEnabled(true)
         showSettings(tunis)
         row(R.string.call_feedback_allow_phone_state).assertDoesNotExist()
         row(R.string.travel_allow_foreground).assertDoesNotExist()
         row(R.string.prayer_check_battery).assertDoesNotExist()
+        row(R.string.travel_notification_enable).assertDoesNotExist()
+    }
+
+    @Test
+    fun blockedTravelChannelCanBeRepairedWithoutTurningOffTravel() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        shadowOf(manager).setNotificationsEnabled(true)
+        manager.createNotificationChannel(NotificationChannel(PlaceResolution.LOCATION_CHANNEL, "Travel", NotificationManager.IMPORTANCE_NONE))
+        showSettings(tunis)
+
+        row(R.string.travel_notification_enable).performScrollTo().performClick()
+        val repair = shadowOf(app).nextStartedActivity
+        assertEquals(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, repair.action)
+        assertEquals(PlaceResolution.LOCATION_CHANNEL, repair.getStringExtra(Settings.EXTRA_CHANNEL_ID))
+        assertEquals(app.packageName, repair.getStringExtra(Settings.EXTRA_APP_PACKAGE))
+
+        compose.onNodeWithTag(TestTags.AUTO_LOCATION_SWITCH).performScrollTo().performClick()
+        row(R.string.travel_notification_enable).assertDoesNotExist()
     }
 
     private fun pressSheetBack() {

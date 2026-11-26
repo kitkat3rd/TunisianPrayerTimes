@@ -1,5 +1,6 @@
 package com.tunisianprayertimes.adhan
 
+import android.Manifest
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,7 @@ import android.provider.Settings
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -55,6 +57,22 @@ class AdhanSettingsUiTest {
     private fun allPrayersSwitch() = compose.onNodeWithText(context.getString(R.string.adhan_all_prayers))
 
     @Test
+    fun cityConfirmationReturnsToTheRequestedAdhanAndWaitsForExplicitEnable() {
+        PrefsManager.setPlaceProvisional(context, true)
+        val fajr = AdhanSettings.prayerName(context, Prayer.FAJR)
+        compose.onNodeWithText(fajr).performScrollTo().performClick()
+        compose.onNodeWithTag("feature_cancel_place").performClick()
+        compose.onNodeWithText(fajr).assertIsOff().performClick()
+        controller.recreate()
+        compose.waitForIdle()
+        compose.onNodeWithTag("feature_confirm_suggested_place").performClick()
+        compose.onNodeWithText(context.getString(R.string.adhan_enable_prayer_question, fajr)).assertExists()
+        assertEquals(emptyList<Prayer>(), AdhanSettings.enabledPrayers(context))
+        compose.onNodeWithText(context.getString(R.string.adhan_enable_confirm)).performClick()
+        assertEquals(listOf(Prayer.FAJR), AdhanSettings.enabledPrayers(context))
+    }
+
+    @Test
     fun provisionalPlaceCannotStartAnAdhanButAnExistingChoiceCanBeTurnedOff() {
         allPrayersSwitch().performClick()
         PrefsManager.setPlaceProvisional(context, true)
@@ -80,6 +98,7 @@ class AdhanSettingsUiTest {
 
     @Test
     fun disabledChannelOffersItsOwnSystemSettingOnlyForAnEnabledAdhan() {
+        shadowOf(context as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         val manager = context.getSystemService(NotificationManager::class.java)
         shadowOf(manager).setNotificationsEnabled(true)
         val channelId = AdhanPlaybackService.CHANNEL_PLAYING
@@ -94,6 +113,28 @@ class AdhanSettingsUiTest {
         val systemSettings = shadowOf(controller.get()).nextStartedActivity
         assertEquals(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, systemSettings.action)
         assertEquals(channelId, systemSettings.getStringExtra(Settings.EXTRA_CHANNEL_ID))
+    }
+
+    @Test
+    fun downgradedAdvanceChannelOnlyNeedsHigherImportanceForAnEnabledWarning() {
+        shadowOf(context as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        shadowOf(manager).setNotificationsEnabled(true)
+        val warning = context.getString(R.string.adhan_channel_soon)
+        val quiet = context.getString(R.string.adhan_channel_quiet)
+        manager.createNotificationChannel(NotificationChannel(AdhanPlaybackService.CHANNEL_SOON, warning, NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(AdhanPlaybackService.CHANNEL_QUIET, quiet, NotificationManager.IMPORTANCE_LOW))
+        controller.pause().resume()
+        allPrayersSwitch().performClick()
+        val message = context.getString(R.string.adhan_low_full_screen_channel, warning)
+        compose.onNodeWithText(message).assertExists()
+        compose.onNodeWithText(context.getString(R.string.adhan_low_full_screen_channel, quiet)).assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.adhan_open_channel)).performScrollTo().performClick()
+        val channel = shadowOf(controller.get()).nextStartedActivity
+        assertEquals(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, channel.action)
+        assertEquals(AdhanPlaybackService.CHANNEL_SOON, channel.getStringExtra(Settings.EXTRA_CHANNEL_ID))
+        compose.onNodeWithText(context.getString(R.string.adhan_warn_before)).performScrollTo().performClick()
+        compose.onNodeWithText(message).assertDoesNotExist()
     }
 
     @Test

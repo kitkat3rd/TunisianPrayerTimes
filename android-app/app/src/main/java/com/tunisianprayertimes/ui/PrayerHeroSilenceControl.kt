@@ -1,69 +1,74 @@
 package com.tunisianprayertimes.ui
 
-import androidx.annotation.DrawableRes
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.R
-import com.tunisianprayertimes.ui.theme.GoldLight
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
 
-/** The speaker shows the state, as a mute button does: crossed out while the phone is silenced. */
-@DrawableRes
-internal fun heroSilenceIcon(silenced: Boolean): Int =
-    if (silenced) R.drawable.ic_volume_off else R.drawable.ic_volume_on
-
-/**
- * The speaker shows the state ([heroSilenceIcon]) and the label names what a tap does. The layout
- * makes room for the 34 dp circle alone and the 48 dp touch target overflows it, so the control
- * never makes its row taller.
- */
 @Composable
 internal fun PrayerHeroSilenceControl(
     silenced: Boolean,
+    actionLabel: String,
     onClick: () -> Unit,
+    onChooseDuration: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    val background by animateColorAsState(
-        GreenPrimaryDark.copy(alpha = if (silenced) 0.96f else 0.84f),
-        label = "heroSilenceBackground",
-    )
-    val border by animateColorAsState(
-        GoldLight.copy(alpha = if (silenced) 0.75f else 0.4f),
-        label = "heroSilenceBorder",
-    )
-    Box(modifier = modifier.size(34.dp), contentAlignment = Alignment.Center) {
-        IconButton(
+    val outline = BorderStroke(1.dp, Color.White.copy(alpha = 0.64f))
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(
             onClick = onClick,
             enabled = enabled,
-            modifier = Modifier.requiredSize(48.dp).testTag(TestTags.HERO_PHONE_SILENCE_BUTTON),
+            modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp).testTag(TestTags.HERO_PHONE_SILENCE_BUTTON),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimaryDark, contentColor = Color.White),
+            border = outline,
         ) {
-            Box(
-                modifier = Modifier.size(34.dp).clip(CircleShape)
-                    .background(background).border(1.dp, border, CircleShape),
-                contentAlignment = Alignment.Center,
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    painterResource(if (silenced) R.drawable.ic_volume_on else R.drawable.ic_bell_off),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(actionLabel, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        if (!silenced) {
+            OutlinedIconButton(
+                onClick = onChooseDuration,
+                enabled = enabled,
+                modifier = Modifier.size(48.dp).testTag(TestTags.HERO_SILENCE_DURATION),
+                border = outline,
             ) {
                 Icon(
-                    painter = painterResource(heroSilenceIcon(silenced)),
-                    contentDescription = stringResource(if (silenced) R.string.hero_phone_unsilence_title else R.string.hero_phone_silence_title),
-                    tint = GoldLight.copy(alpha = if (enabled) 1f else 0.45f),
-                    modifier = Modifier.size(20.dp),
+                    painterResource(R.drawable.ic_adhkar_clock),
+                    contentDescription = stringResource(R.string.manual_silence_choose_end),
+                    tint = Color.White,
                 )
             }
         }

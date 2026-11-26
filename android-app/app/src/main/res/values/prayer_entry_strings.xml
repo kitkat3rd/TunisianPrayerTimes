@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="adhan_enable_prayer_question">هل تريد تفعيل أذان %1$s؟</string>
+    <string name="adhan_enable_all_question">هل تريد تفعيل الأذان لكل الصلوات؟</string>
+    <string name="adhan_enable_confirm">تفعيل الأذان</string>
     <string name="prayer_entry_confirm_to_schedule">أكّد مدينتك أولًا لتحديد وقت الصلاة.</string>
     <string name="prayer_entry_time_reference">مرجع المواقيت: %1$s</string>
 </resources>

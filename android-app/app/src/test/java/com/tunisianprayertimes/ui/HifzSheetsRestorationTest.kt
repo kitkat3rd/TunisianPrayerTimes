@@ -21,6 +21,10 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.work.testing.WorkManagerTestInitHelper
+import com.tunisianprayertimes.FirstRunPlaceChoice
+import com.tunisianprayertimes.PrefsManager
+import com.tunisianprayertimes.place.PrayerPlace
 import com.tunisianprayertimes.quran.hifz.HifzCheck
 import com.tunisianprayertimes.quran.hifz.HifzGrade
 import com.tunisianprayertimes.quran.hifz.HifzPace
@@ -47,6 +51,30 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class HifzSheetsRestorationTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun confirmingACityReturnsToReviewSettingsWithTheReminderStillOff() {
+        val app: Application = RuntimeEnvironment.getApplication()
+        WorkManagerTestInitHelper.initializeTestWorkManager(app)
+        PrefsManager.initializeFirstRun(app)
+        PrefsManager.completeFirstRun(app, FirstRunPlaceChoice.Browse(PrayerPlace.Inm(615), null))
+        val settings = mutableStateOf(HifzSettings(reminder = false, times = HifzTimesPreset.Once.times))
+        var dismissed = false
+        compose.setContent {
+            AdhkarTheme {
+                HifzSettingsSheet(settings.value, { settings.value = it }, { dismissed = true }, today = 0L)
+            }
+        }
+        val toggle = compose.onNodeWithText("التذكير بالمراجعة")
+        toggle.performClick()
+        compose.onNodeWithTag("feature_confirm_suggested_place").performClick()
+        compose.waitUntil { PrefsManager.hasConfirmedPlace(app) }
+        compose.onNodeWithTag("hifz_settings_sheet").assertExists()
+        assertFalse(dismissed)
+        assertFalse(settings.value.reminder)
+        toggle.performClick()
+        assertTrue(settings.value.reminder)
+    }
 
     @Test
     fun addingAPrayerToAFixedReminderRequiresPlaceAndRetainsTheClockChoice() {

@@ -7,7 +7,7 @@
     <string name="shortcut_wake_confirmed">ضُبط منبّه «%1$s» على %2$s.</string>
     <string name="shortcut_wake_too_late">فات موعد التنبيه قبل أذان %1$s بعشر دقائق.</string>
     <string name="shortcut_wake_missing_prayer">تعذّر تحديد وقت الأذان القادم. تحقّق من الموقع في تبويب الصلاة.</string>
-    <string name="shortcut_wake_permission">اسمح بالمنبّهات الدقيقة ثم اضغط على الاختصار مجدّدًا.</string>
+    <string name="shortcut_wake_permission">اسمح بالمنبّهات الدقيقة في إعدادات الهاتف، ثم عُد لحفظ المنبّه.</string>
     <string name="shortcut_wake_failed">تعذّر ضبط المنبّه. تحقّق من تبويب المنبّهات.</string>
     <string name="shortcut_silence">إسكات الهاتف</string>
     <string name="shortcut_unsilence">إيقاف الإسكات</string>
@@ -16,6 +16,8 @@
     <string name="shortcut_review">مراجعة اليوم</string>
     <string name="shortcut_review_long">ابدأ مراجعة اليوم</string>
     <string name="shortcut_silence_30_confirmed">تم ضبط الإسكات لمدة 30 دقيقة من الآن 🔇</string>
+    <string name="shortcut_silence_30_inexact">بدأ الإسكات. قد يتأخّر رجوع الصوت بعد مرور 30 دقيقة. للسماح بإعادته في الموعد، فعّل المنبّهات الدقيقة.</string>
+    <string name="shortcut_dnd_retry">يحتاج تغيير وضع الهاتف إلى إذن «عدم الإزعاج». اسمح للتطبيق في الإعدادات، ثم اضغط على الاختصار مجددًا.</string>
     <string name="shortcut_silence_already_off">الإسكات متوقف بالفعل</string>
     <string name="shortcut_silence_failed">تعذّر تغيير وضع الإسكات. افتح التطبيق للتحقّق من الإعدادات.</string>
 </resources>

@@ -70,8 +70,6 @@ private object WorshipQiblaPrefs {
 @Composable
 internal fun WorshipPage(placeRevision: Int) {
     val context = LocalContext.current
-    // Opened by a reminder's notification: its sheet comes up, without the location dialog over it.
-    val openedForFasting = remember { FastingRequests.sheet || FastingRequests.suhoor || RemembranceRequests.sheet }
     var qiblaExpanded by remember { mutableStateOf(WorshipQiblaPrefs.expanded(context)) }
     // Opened by the reader's own tap, the Qibla may ask for the location, whatever opened the tab.
     var qiblaOpenedByTap by remember { mutableStateOf(false) }
@@ -97,7 +95,7 @@ internal fun WorshipPage(placeRevision: Int) {
             enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
             exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
         ) {
-            QiblaCard(placeRevision = placeRevision, askLocation = qiblaOpenedByTap || !openedForFasting)
+            QiblaCard(placeRevision = placeRevision, askLocation = qiblaOpenedByTap)
         }
         WorshipSectionHeader(stringResource(R.string.worship_voluntary_title), R.drawable.ic_prayer_dhuhr_sun)
         VoluntaryPrayerTools(placeRevision = placeRevision)

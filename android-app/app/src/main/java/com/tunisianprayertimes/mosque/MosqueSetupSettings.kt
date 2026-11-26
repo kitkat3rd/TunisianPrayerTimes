@@ -21,6 +21,8 @@ internal fun MosqueSetupSettings(
     combined: Boolean,
     issues: List<Int>?,
     enrollmentFailed: Boolean,
+    repairOwner: SilenceOwner?,
+    onManageDisabledRule: (() -> Unit)?,
     onPrepareRules: () -> Unit,
     onDnd: () -> Unit,
     onPrecise: () -> Unit,
@@ -30,8 +32,19 @@ internal fun MosqueSetupSettings(
     onLocation: () -> Unit,
     onAppSettings: () -> Unit,
     onAreas: () -> Unit,
+    showSystemShortcuts: Boolean = true,
 ) {
     val supportsRules = Build.VERSION.SDK_INT >= 29
+    if (repairOwner != null) SetupMessage(repairOwner.title)
+    if (onManageDisabledRule != null) {
+        PrayerSettingsGroup {
+            PrayerSettingsLink(
+                title = stringResource(R.string.mosque_open_disabled_rule),
+                summary = stringResource(if (Build.VERSION.SDK_INT >= 35) R.string.mosque_disabled_rule_hint else R.string.mosque_disabled_rule_legacy_hint),
+                onClick = onManageDisabledRule,
+            )
+        }
+    }
     if (enrollmentFailed) {
         PrayerSettingsGroup(title = stringResource(R.string.mosque_setup_enrollment_failed)) {
             if (supportsRules) {
@@ -72,10 +85,9 @@ internal fun MosqueSetupSettings(
                 R.string.mosque_needs_disclosure, R.string.mosque_needs_background ->
                     SetupRow(R.string.mosque_allow_background, issue, onBackground)
                 R.string.mosque_needs_exact -> SetupRow(R.string.mosque_allow_exact, issue, onExact)
-                R.string.mosque_needs_notifications -> SetupRow(
-                    R.string.mosque_allow_notifications, issue,
-                    if (Build.VERSION.SDK_INT >= 33) onNotifications else onAppSettings,
-                )
+                R.string.mosque_needs_notifications -> SetupRow(R.string.mosque_allow_notifications, issue, onNotifications)
+                R.string.mosque_observation_notifications_blocked ->
+                    SetupRow(R.string.mosque_open_observation_notifications, issue, onNotifications)
                 R.string.mosque_needs_location -> SetupRow(R.string.mosque_location_settings, issue, onLocation)
                 R.string.mosque_background_restricted -> SetupRow(R.string.mosque_app_settings, issue, onAppSettings)
                 R.string.mosque_no_areas, R.string.mosque_too_many_areas, R.string.mosque_store_unavailable ->
@@ -88,12 +100,22 @@ internal fun MosqueSetupSettings(
             }
             add(row)
         }
-    }.distinctBy { it.title }.sortedBy { if (it.title == R.string.mosque_allow_dnd) 0 else 1 }
+    }.distinctBy { it.title }.sortedBy {
+        when (it.title) {
+            R.string.mosque_allow_dnd -> 0
+            R.string.mosque_allow_exact -> 1
+            else -> 2
+        }
+    }
     if (required.isNotEmpty()) {
         SetupGroup(R.string.mosque_status_setup, required)
     } else if (issues.isEmpty() && !enrollmentFailed) {
         PrayerSettingsGroup {
-            SetupMessage(if (combined) R.string.mosque_setup_mosque_ready else R.string.mosque_setup_time_ready)
+            SetupMessage(when {
+                repairOwner != null -> R.string.mosque_owned_rule_ready
+                combined -> R.string.mosque_setup_mosque_ready
+                else -> R.string.mosque_setup_time_ready
+            })
         }
     }
 
@@ -103,7 +125,7 @@ internal fun MosqueSetupSettings(
         if (supportsRules && !enrollmentFailed) add(SetupRow(R.string.mosque_prepare_rules, onClick = onPrepareRules))
         add(SetupRow(R.string.mosque_app_settings, onClick = onAppSettings))
     }.filter { row -> required.none { it.title == row.title } }
-    if (system.isNotEmpty()) SetupGroup(R.string.mosque_setup_phone_settings, system)
+    if (showSystemShortcuts && system.isNotEmpty()) SetupGroup(R.string.mosque_setup_phone_settings, system)
     if (combined) SetupMessage(R.string.mosque_provider_note)
 }
 

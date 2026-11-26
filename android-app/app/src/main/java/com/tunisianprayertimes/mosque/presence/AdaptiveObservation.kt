@@ -25,11 +25,14 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
     private var lastMovementBurst: Long? = null
     private var lastGeofence: Pair<Int, Long>? = null
     private var supportingBurst: Long? = null
+    private data class ApproachFix(val at: Long, val distance: Double, val accuracy: Double)
+    private val balancedApproach = ArrayDeque<ApproachFix>()
 
     private fun change(next: Sampling, force: Boolean = false) {
         if (next != sampling || force) {
             generation++
             acceptedAt = null
+            balancedApproach.clear()
             sampling = next
         }
     }
@@ -91,9 +94,9 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         if (diagnosticStart == null && lastValid == null) diagnosticStart = now
     }
 
-    fun observe(fix: PresenceFix, now: Long) {
+    fun observe(fix: PresenceFix, now: Long): Boolean {
         tick(now)
-        if (sampling == Sampling.PARKED || unavailable || !detector.observe(fix, now, openedAt)) return
+        if (sampling == Sampling.PARKED || unavailable || !detector.observe(fix, now, openedAt)) return false
         lastValid = now; diagnosticStart = null; retried = false
         val radius = requireNotNull(fix.accuracyMeters)
         val distance = detector.distance
@@ -111,14 +114,38 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
             }
         } else if (!fallback) {
             if (!near) park()
-            else if (sampling == Sampling.BALANCED && (lastDistance == null ||
-                    lastDistance!! - distance > maxOf(6.0, radius + lastRadius) &&
-                    (lastMovementBurst == null || now - lastMovementBurst!! >= 300_000))) {
-                lastMovementBurst = now; burst(now)
+            else if (sampling == Sampling.BALANCED) {
+                val gradual = cumulativeApproach(fix.elapsedRealtimeMillis, distance, radius)
+                val singleStep = lastDistance?.let { it - distance > maxOf(6.0, radius + lastRadius) } == true
+                if (lastDistance == null || (singleStep || gradual) &&
+                    (lastMovementBurst == null || now - lastMovementBurst!! >= 300_000)) {
+                    lastMovementBurst = now; burst(now)
+                }
             }
         }
         lastDistance = distance; lastRadius = radius
         tick(now)
+        return true
+    }
+
+    /** A gradual approach can cross the error margin over several balanced updates without crossing it in one.
+     * Use it only near a boundary, where the existing two-minute burst can cover the final approach. */
+    private fun cumulativeApproach(at: Long, distance: Double, accuracy: Double): Boolean {
+        if (accuracy > 30.0) {
+            balancedApproach.clear()
+            return false
+        }
+        while (balancedApproach.isNotEmpty() && at - balancedApproach.first().at > 120_000L) {
+            balancedApproach.removeFirst()
+        }
+        val previous = balancedApproach.lastOrNull()
+        val approaching = distance <= 30.0 && previous != null && previous.distance > distance &&
+            balancedApproach.any { anchor ->
+                anchor.distance > previous.distance && anchor.distance - distance > maxOf(6.0, anchor.accuracy + accuracy)
+            }
+        if (balancedApproach.size >= 6) balancedApproach.removeFirst()
+        balancedApproach.addLast(ApproachFix(at, distance, accuracy))
+        return approaching
     }
 
     private fun endFallback() {

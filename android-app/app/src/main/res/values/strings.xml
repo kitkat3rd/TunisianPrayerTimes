@@ -25,7 +25,6 @@
     <string name="btn_silence_for_duration">تفعيل الإسكات لمدة %1$s 🔇</string>
     <string name="btn_silence_until_prayer">تفعيل الإسكات حتى %1$s 🔇</string>
     <string name="btn_unsilence">إيقاف الإسكات 🔔</string>
-    <string name="info_text">يقوم هذا التطبيق بتفعيل وضع عدم الإزعاج تلقائيًا عند دخول وقت كل صلاة.</string>
     <string name="toast_silent_enabled">تم تفعيل الإسكات 🔇</string>
     <string name="toast_silent_enabled_timed">تم تفعيل الإسكات لمدة %1$s 🔇</string>
     <string name="toast_silent_enabled_until_prayer">تم تفعيل الإسكات حتى %1$s 🔇</string>

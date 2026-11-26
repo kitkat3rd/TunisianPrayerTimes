@@ -2,6 +2,7 @@ package com.tunisianprayertimes.wake
 
 import android.app.AlarmManager
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
@@ -14,6 +15,7 @@ import com.tunisianprayertimes.WakeMainAlarmConfig
 import com.tunisianprayertimes.WakeMainAlarmMode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -46,6 +48,92 @@ class WakeAlarmDisableTest {
         alarms = Shadows.shadowOf(context.getSystemService(AlarmManager::class.java))
         ShadowAlarmManager.setCanScheduleExactAlarms(true)
         now = Calendar.getInstance()
+    }
+
+    @Test
+    fun aTimerRingsWithoutDndAndOnlyAnExplicitRetryCanStartItsSilence() = runBlocking {
+        val timer = alarm("timer").copy(silenceUntilAlarm = true)
+        val policy = Shadows.shadowOf(context.getSystemService(NotificationManager::class.java))
+        policy.setNotificationPolicyAccessGranted(false)
+        repository.saveWakeConfig(timer)
+        schedule(timer)
+        assertFalse(WakeAlarmScheduler.applyEditedTimerSilence(context, timer))
+        assertFalse(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        assertTrue(wakeMainEventId(timer.id) in scheduledWakeIntents())
+        assertEquals(true, repository.getWakeAlarm(timer.id)?.silenceUntilAlarm)
+
+        policy.setNotificationPolicyAccessGranted(true)
+        assertFalse(WakeAlarmScheduler.isSilenceUntilAlarmActive(context))
+        assertTrue(WakeAlarmScheduler.applyEditedTimerSilence(context, timer))
+        assertTrue(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        repository.saveWakeConfig(timer.copy(enabled = false))
+        assertTrue(WakeAlarmScheduler.applyEditedTimerSilence(context, timer)) // stale callback
+        assertFalse(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+    }
+
+    @Test
+    fun revokingExactAccessEndsTimerSilenceButKeepsItsSavedAlarm() = runBlocking {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        Shadows.shadowOf(notifications).setNotificationPolicyAccessGranted(true)
+        notifications.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        val timer = alarm("exact-lost").copy(silenceUntilAlarm = true, subAlarms = emptyList())
+        repository.saveWakeConfig(timer)
+        schedule(timer)
+        assertTrue(WakeAlarmScheduler.applyEditedTimerSilence(context, timer))
+
+        ShadowAlarmManager.setCanScheduleExactAlarms(false)
+        schedule(timer)
+        assertFalse(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        assertEquals(NotificationManager.INTERRUPTION_FILTER_ALL, notifications.currentInterruptionFilter)
+        assertFalse(wakeMainEventId(timer.id) in scheduledWakeIntents())
+        assertEquals(true, repository.getWakeAlarm(timer.id)?.silenceUntilAlarm)
+    }
+
+    @Test
+    fun cancelledTimerAwaitsDndReleaseAndRespectsAChangedExternalMode() = runBlocking {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        val policy = Shadows.shadowOf(notifications)
+        policy.setNotificationPolicyAccessGranted(true)
+        notifications.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        val timer = alarm("cancelled").copy(silenceUntilAlarm = true)
+        repository.saveWakeConfig(timer)
+        schedule(timer)
+        assertTrue(WakeAlarmScheduler.applyEditedTimerSilence(context, timer))
+
+        policy.setNotificationPolicyAccessGranted(false)
+        WakeAlarmScheduler.cancelAll(context)
+        assertTrue(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        policy.setNotificationPolicyAccessGranted(true)
+        notifications.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+        WakeAlarmScheduler.cancelAll(context)
+        assertFalse(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        assertEquals(NotificationManager.INTERRUPTION_FILTER_PRIORITY, notifications.currentInterruptionFilter)
+    }
+
+    @Test
+    fun dueAndDeliveringTimerKeepTheirOwnerUntilTheRegistrationIsGone() = runBlocking {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        Shadows.shadowOf(notifications).setNotificationPolicyAccessGranted(true)
+        notifications.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        val timer = alarm("due").copy(silenceUntilAlarm = true, subAlarms = emptyList())
+        repository.saveWakeConfig(timer)
+        schedule(timer)
+        assertTrue(WakeAlarmScheduler.applyEditedTimerSilence(context, timer))
+        val payload = requireNotNull(scheduledWakeIntents().getValue(wakeMainEventId(timer.id)).toWakeTriggerPayload())
+        val due = (now.clone() as Calendar).apply { timeInMillis = payload.triggerAtMillis + 1 }
+        WakeAlarmScheduler.scheduleAllInternal(context, due, listOf(timer))
+        assertTrue(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+
+        WakeAlarmDeliveryTracker.begin(payload)
+        try {
+            WakeAlarmScheduler.cancelAll(context)
+            assertTrue(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        } finally {
+            WakeAlarmDeliveryTracker.finish(payload)
+        }
+        WakeAlarmScheduler.scheduleAllInternal(context, due, emptyList())
+        assertFalse(WakeAlarmScheduler.isSilencedAlarm(context, timer.id))
+        assertEquals(NotificationManager.INTERRUPTION_FILTER_ALL, notifications.currentInterruptionFilter)
     }
 
     @Test

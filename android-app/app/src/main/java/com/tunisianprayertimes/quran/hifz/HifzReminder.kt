@@ -1,6 +1,5 @@
 package com.tunisianprayertimes.quran.hifz
 
-import android.Manifest
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,10 +8,8 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
+import com.tunisianprayertimes.NotificationAccess
+import com.tunisianprayertimes.postReminderIfAllowed
 import com.tunisianprayertimes.MainActivity
 import com.tunisianprayertimes.MainTabNavigation
 import com.tunisianprayertimes.Prayer
@@ -54,6 +51,7 @@ object HifzReminder {
     private const val EXTRA_GENERATION = "com.tunisianprayertimes.hifz.extra.GENERATION"
     internal const val ACTION_LATER = "com.tunisianprayertimes.hifz.LATER"
     internal const val ACTION_PAUSE = "com.tunisianprayertimes.hifz.PAUSE"
+    private const val NOTIFICATION_RETRY_MS = 15 * 60_000L
     private val laterDate = DateTimeFormatter.ofPattern("d MMMM", Locale.forLanguageTag("ar-TN-u-nu-latn"))
     /** Prayer spans are kept this long, and dropped at each [refresh] and [deliver]: the silences or the city may change. */
     private const val SPAN_CACHE_MS = 60_000L
@@ -114,9 +112,14 @@ object HifzReminder {
             val allowed = hifzAlertNotBefore(now, settings, state.alertsToday, state.pausedToday,
                 prefs.getLong("last_alert_at", 0L), explicitLater = true)
             val fireAt = hifzAllowedAlertAt(maxOf(now, snooze, allowed), settings, readingUntil, ::hifzOutsidePrayers)
-            prefs.edit().putLong("snooze_until", fireAt).apply()
-            arm(app, alarms, fireAt, null, snooze = true)
-            return
+            // While the request is still ahead, show its actual time after quiet hours or reading.
+            // Once it is due, retries must keep that time fixed so its catch-up window can expire.
+            if (now < snooze || hifzCanCatchUp(snooze, fireAt)) {
+                if (now < snooze && fireAt != snooze) prefs.edit().putLong("snooze_until", fireAt).apply()
+                arm(app, alarms, permissionAwareTime(app, snooze, fireAt, now), null, snooze = true)
+                return
+            }
+            prefs.edit().remove("snooze_until").remove("snooze_ids").apply()
         }
         val shown = prefs.getLong("shown_at", 0L).let { if (it > now + 2 * 60_000L) now else it }
         val allowed = hifzAlertNotBefore(now, settings, state.alertsToday, state.pausedToday, prefs.getLong("last_alert_at", 0L))
@@ -125,9 +128,14 @@ object HifzReminder {
             after = maxOf(after, hifzNextDayStart(now) - 1)
         }
         val checksAsked = checksAsked(prefs, points)
-        var candidate = prefs.getString("armed", null)?.let(::decodeSlot)?.takeIf {
+        val stored = prefs.getString("armed", null)?.let(::decodeSlot)
+        var candidate = stored?.takeIf {
             it.at in (shown + 1)..now && hifzCanCatchUp(it.at, now) && askable.isNotEmpty() && after == maxOf(now, shown) &&
                 (it.time is HifzWhen.At || PrefsManager.canUsePlaceForAutomation(app))
+        }
+        if (stored != null && stored.at > shown && stored.at < now - HifzCatchUpMs && after == now) {
+            // Its deadline elapsed. A later selected slot may still be due within its own window.
+            after = maxOf(stored.at, now - HifzCatchUpMs - 1)
         }
         // Keep the selected slot's original timestamp; only the alarm's fire time is deferred. If a restriction
         // would make it over 90 minutes late, choose a later selected slot instead of ringing on restriction expiry.
@@ -144,7 +152,7 @@ object HifzReminder {
             val fireAt = hifzAllowedAlertAt(maxOf(next.at, now, allowed), settings, readingUntil, ::hifzOutsidePrayers)
             if (hifzCanCatchUp(next.at, fireAt)) {
                 prefs.edit().putString("armed", "${next.day}|${next.time.key}|${next.at}").apply()
-                arm(app, alarms, fireAt, next)
+                arm(app, alarms, permissionAwareTime(app, next.at, fireAt, now), next)
                 return
             }
             after = maxOf(after, next.at, fireAt - HifzCatchUpMs - 1)
@@ -154,6 +162,12 @@ object HifzReminder {
         alarms.cancel(remindIntent(app, null))
         prefs.edit().remove("armed").apply()
     }
+
+    private fun retryAt(due: Long, now: Long): Long =
+        minOf(now + NOTIFICATION_RETRY_MS, due + HifzCatchUpMs + 1)
+
+    private fun permissionAwareTime(context: Context, due: Long, fireAt: Long, now: Long): Long =
+        if (fireAt <= now && NotificationAccess.issue(context, CHANNEL_ID) != null) retryAt(due, now) else fireAt
 
     private fun arm(context: Context, alarms: AlarmManager, at: Long, slot: HifzSlot?, snooze: Boolean = false) {
         val pending = remindIntent(context, slot, snooze)
@@ -674,25 +688,14 @@ object HifzReminder {
 
     /** The app may post notifications: the permission is granted and they are not turned off for the app. */
     fun appNotificationsAllowed(context: Context): Boolean =
-        (Build.VERSION.SDK_INT < 33 ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
-            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        NotificationAccess.issue(context, null) == null
 
     /** Which of [channels] the reader turned off, if any. */
     fun blockedChannel(context: Context, channels: List<String>): String? {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return null
-        return channels.firstOrNull { manager.getNotificationChannel(it)?.importance == NotificationManager.IMPORTANCE_NONE }
-    }
-
-    /**
-     * Why the reminders in [channels] cannot reach the reader, in a line, or null when they can. Nothing is
-     * said for no channel: no reminder is on.
-     */
-    fun notificationProblem(context: Context, channels: List<String>): String? = when {
-        channels.isEmpty() -> null
-        !appNotificationsAllowed(context) -> "الإشعارات متوقّفة: لن يصلك أي تذكير."
-        blockedChannel(context, channels) == CHANNEL_ID -> "إشعارات «المراجعة» متوقّفة في إعدادات الهاتف."
-        else -> null
+        return channels.firstOrNull {
+            val issue = NotificationAccess.issue(context, it)
+            issue != null && issue != NotificationAccess.Issue.APP_BLOCKED
+        }
     }
 
     /**
@@ -720,6 +723,12 @@ object HifzReminder {
                 refreshLocked(app, now)
                 return
             }
+            // Later broadcasts for slots already coalesced into a delivery cannot replay a dismissed notice.
+            val shown = prefs.getLong("shown_at", Long.MIN_VALUE)
+            if (at <= shown && shown <= now) {
+                refreshLocked(app, now)
+                return
+            }
             val state = controlState(app, now)
             val allowed = hifzAllowedAlertAt(
                 hifzAlertNotBefore(now, settings, state.alertsToday, state.pausedToday, prefs.getLong("last_alert_at", 0L)),
@@ -729,14 +738,21 @@ object HifzReminder {
                 refreshLocked(app, now)
                 return
             }
-            // Retire the received slot before the refresh can see it again; the selected slot remains distinct
-            // from the eventual fire instant, and every coalesced slot has its own catch-up limit.
-            prefs.edit().putLong("shown_at", now).putString("shown_slot", "$day|${time.key}").commit()
             val ringing = timesComing(app, settings, HifzRepository.points.value, day, time, at, now)
-                .mapValues { (d, times) -> times.filterTo(mutableSetOf()) { t ->
-                    slotAt(app, d, t)?.let { hifzCanCatchUp(it, now) } == true
-                } }.filterValues { it.isNotEmpty() }
-            if (ringing.isNotEmpty()) remind(app, ringing, now)
+                .flatMap { (d, times) -> times.mapNotNull { t ->
+                    slotAt(app, d, t)?.takeIf { hifzCanCatchUp(it, now) }?.let { HifzSlot(d, t, it) }
+                } }
+            val slots = ringing.groupBy(HifzSlot::day, HifzSlot::time).mapValues { it.value.toSet() }
+            if (ringing.isNotEmpty() && !remind(app, slots, now)) {
+                // Keep the original slot. If Android woke it late, retain the first still-valid
+                // coalesced slot so a grant cannot revive an expired occurrence.
+                val held = ringing.minBy(HifzSlot::at)
+                prefs.edit().putString("armed", "${held.day}|${held.time.key}|${held.at}").apply()
+                app.getSystemService(AlarmManager::class.java)?.let { arm(app, it, retryAt(held.at, now), held) }
+                return
+            }
+            // Consume a slot only after posting, or when nothing remains eligible for it.
+            prefs.edit().putLong("shown_at", now).putString("shown_slot", "$day|${time.key}").commit()
         }
         refreshLocked(app, now)
     }
@@ -752,23 +768,27 @@ object HifzReminder {
         val allowed = hifzAllowedAlertAt(maxOf(until,
             hifzAlertNotBefore(now, settings, state.alertsToday, state.pausedToday, prefs.getLong("last_alert_at", 0L), explicitLater = true)),
             settings, QuranReading.holdsUntil(app, now), ::hifzOutsidePrayers)
-        if (allowed > now) {
+        if (allowed > now || !hifzCanCatchUp(until, now)) {
             refreshLocked(app, now)
             return@synchronized
         }
-        prefs.edit().remove("snooze_until").remove("snooze_ids").apply()
-        if (settings.reminder && appNotificationsAllowed(app) && blockedChannel(app, listOf(CHANNEL_ID)) == null) {
+        if (settings.reminder) {
             HifzRepository.load(app)
             val today = epochDay(now)
             val learning = HifzLearning.read(app, today)
             val askable = HifzRepository.points.value.askable(today, now, learning.seen, learning.exposed)
             val batch = askable.filter { it.id in ids }.reviewBatch(today, now, HifzBatchSize)
-            if (batch.isNotEmpty() && runCatching { post(app, batch, askable.size) }.getOrDefault(false)) {
+            if (batch.isNotEmpty()) {
+                if (!runCatching { post(app, batch, askable.size) }.getOrDefault(false)) {
+                    app.getSystemService(AlarmManager::class.java)?.let { arm(app, it, retryAt(until, now), null, snooze = true) }
+                    return@synchronized
+                }
                 countAlert(app, now)
                 saveAsked(prefs, "checks_asked", checksAsked(prefs, HifzRepository.points.value), batch.filter { it.fresh == 0 }.associate { it.id to today }, today)
                 saveAsked(prefs, "daily_asked", dailyAsked(prefs), batch.filter { it.fresh > 0 && it.daily }.associate { it.id to today }, today)
             }
         }
+        prefs.edit().remove("snooze_until").remove("snooze_ids").apply()
         refreshLocked(app, now)
     }
 
@@ -797,7 +817,7 @@ object HifzReminder {
      * brought them yet. Then the fresh points and the checks together, as the review they open asks them. Isha's
      * reminder after midnight is its day's, so it never takes the next day's checks, unless that day's own rings with it.
      */
-    private fun remind(context: Context, slots: Map<Long, Set<HifzWhen>>, now: Long) {
+    private fun remind(context: Context, slots: Map<Long, Set<HifzWhen>>, now: Long): Boolean {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val settings = HifzSettings.read(context)
         val today = epochDay(now)
@@ -817,21 +837,20 @@ object HifzReminder {
                 .keys.maxOrNull()?.let { point to it }
         }.toMap()
         val fresh = freshDay.keys.toList()
-        if (fresh.isEmpty() && checks.isEmpty()) return
-        // A reminder that cannot reach the reader leaves the day's checks to a later one.
-        if (!appNotificationsAllowed(context) || blockedChannel(context, listOf(CHANNEL_ID)) != null) return
+        if (fresh.isEmpty() && checks.isEmpty()) return true
         // It asks what it rang for: the slips of this time and, at the settings' times, the day's checks; a slip set
         // for other times waits for its own.
         val slot = fresh + checks
         val batch = slot.reviewBatch(today, now, HifzBatchSize)
         // Its count is that of the review it opens, which goes on from its questions to everything else due now.
         val posted = runCatching { post(context, batch, due.size) }.getOrDefault(false)
-        if (!posted) return
+        if (!posted) return false
         countAlert(context, now)
         saveAsked(prefs, "checks_asked", checksAsked, batch.filter { it.fresh == 0 }.associate { it.id to checksDay!! }, today)
         // Only those it shows count as asked today: one it left out still rings at its next time.
         val dailyNow = batch.filter { it.daily && it.fresh > 0 }.mapNotNull { point -> freshDay[point]?.let { point.id to it } }.toMap()
         saveAsked(prefs, "daily_asked", asked, dailyNow, today)
+        return true
     }
 
     /** The prayer day each point asked once a day was last asked by a reminder; see [remind]. */
@@ -870,6 +889,7 @@ object HifzReminder {
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "المراجعة", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "أسئلة عن مواضعك بعد الصلوات أو في الأوقات التي اخترتها، دون أجوبتها"
         })
+        if (NotificationAccess.issue(context, CHANNEL_ID) != null) return false
         // The reminders of per-point plans, which showed the answers, are gone with their channel.
         manager.deleteNotificationChannel("hifz_repeat")
         val catalog = QuranRepository.load(context)
@@ -910,7 +930,7 @@ object HifzReminder {
         val alerts = controlState(context).alertsToday + if (quiet) 0 else 1
         if (alerts < settings.dailyAlertLimit) builder.addAction(Notification.Action.Builder(null, "لاحقًا بعد 30 دقيقة", actionIntent(context, ACTION_LATER, generation)).build())
         builder.addAction(Notification.Action.Builder(null, "إيقاف تذكير اليوم", actionIntent(context, ACTION_PAUSE, generation)).build())
-        manager.notify(NOTIFICATION_ID, builder.build())
+        if (!manager.postReminderIfAllowed(context, NOTIFICATION_ID, builder.build())) return false
         prefs.edit().putString("posted", due.joinToString(",") { it.id.toString() }).putLong("posted_generation", generation).apply()
         return true
     }

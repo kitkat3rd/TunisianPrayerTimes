@@ -10,7 +10,10 @@
     <string name="manual_silence_mode_until_short">حتى أوقفه</string>
     <string name="manual_silence_mode_prayer_short">حتى صلاة</string>
     <string name="manual_silence_duration_custom">مدة أخرى</string>
-    <string name="manual_silence_action_now">إسكات الآن</string>
+    <string name="manual_silence_action_indefinite">إسكات حتى أوقفه</string>
+    <string name="manual_silence_choose_end">تغيير مدة الإسكات اليدوي</string>
+    <string name="manual_silence_approx_duration">إسكات لنحو %1$s</string>
+    <string name="manual_silence_approx_prayer">إسكات حتى صلاة %1$s تقريبًا</string>
     <string name="manual_silence_action_duration">إسكات لمدة %1$s</string>
     <string name="manual_silence_action_prayer">إسكات حتى صلاة %1$s</string>
     <string name="manual_silence_action_stop">إيقاف الإسكات</string>

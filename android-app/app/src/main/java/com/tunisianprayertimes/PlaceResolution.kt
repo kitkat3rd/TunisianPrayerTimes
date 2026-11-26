@@ -30,7 +30,7 @@ import kotlinx.coroutines.withContext
  */
 object PlaceResolution {
     private const val TAG = "PlaceResolution"
-    private const val LOCATION_CHANNEL = "location"
+    internal const val LOCATION_CHANNEL = "location"
     private const val LOCATION_NOTIFICATION_ID = 7_301
     private const val LABEL_KM = 30.0
     private const val ELEVATION_KM = 40.0
@@ -118,6 +118,11 @@ object PlaceResolution {
 
     /** The label of a picked city: its Arabic name, else its own. */
     fun catalogueLabel(row: PlaceCatalogue.Row): String = row.arabic.ifEmpty { row.name }
+
+    /** The provisional name shown in Prayer and when a feature needs a confirmed city. */
+    internal fun suggestedPlaceLabel(context: Context, place: PrayerPlace): String? =
+        PrefsManager.getPlaceNameSnapshot(context) ?: PrefsManager.getLocationSelection(context).name ?:
+            context.getString(R.string.location_default_tunis).takeIf { place == PrayerPlace.Inm(TUNIS_DELEGATION_ID) }
 
     /**
      * The `dem` of the nearest Arab catalogue row within 40 km for an Arab League place (Ceuta and Melilla

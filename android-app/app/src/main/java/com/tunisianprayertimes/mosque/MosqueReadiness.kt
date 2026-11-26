@@ -8,17 +8,26 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Build
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
+import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
 
 object MosqueReadiness {
+    internal fun forMode(context: Context, mode: AutomaticSilenceMode?, areas: SilenceAreaRead? = null): List<Int> =
+        if (mode == AutomaticSilenceMode.TIME_AND_MOSQUE) issues(context, areas ?: PrivateSilenceAreaStore.read(context))
+        else timeIssues(context)
+
     fun timeIssues(context: Context): List<Int> = buildList {
         if (!context.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted) add(R.string.mosque_needs_dnd)
         if (Build.VERSION.SDK_INT >= 31 && !context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()) add(R.string.mosque_needs_exact)
-        if (MosqueSilenceSettings.usesOwnedRules(context) && SilenceOwner.entries.any { !SilenceCoordinator.ruleReady(context, it) }) add(R.string.mosque_needs_rules)
+        if (MosqueSilenceSettings.usesOwnedRules(context) && !SilenceCoordinator.ruleReady(context, SilenceOwner.PRAYER)) add(R.string.mosque_needs_rules)
+    }
+    internal fun ownedRuleIssues(context: Context, owner: SilenceOwner): List<Int> = buildList {
+        if (!context.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted) add(R.string.mosque_needs_dnd)
+        if (!SilenceCoordinator.canRequest(context, owner)) add(R.string.mosque_needs_rules)
     }
     fun issues(context: Context, store: SilenceAreaRead = PrivateSilenceAreaStore.read(context)): List<Int> = buildList {
         if (Build.VERSION.SDK_INT < 29) add(R.string.mosque_needs_android)
@@ -32,7 +41,7 @@ object MosqueReadiness {
         if (!enabled) add(R.string.mosque_needs_location)
         if (!context.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted) add(R.string.mosque_needs_dnd)
         if (Build.VERSION.SDK_INT >= 31 && !context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()) add(R.string.mosque_needs_exact)
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) add(R.string.mosque_needs_notifications)
+        notificationIssue(context)?.let(::add)
         if (Build.VERSION.SDK_INT >= 28 && context.getSystemService(ActivityManager::class.java).isBackgroundRestricted) add(R.string.mosque_background_restricted)
         if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) != ConnectionResult.SUCCESS) add(R.string.mosque_needs_play_services)
         if (!store.available) add(R.string.mosque_store_unavailable)
@@ -41,5 +50,11 @@ object MosqueReadiness {
     }
     fun locationIssue(issue: Int) = issue == R.string.mosque_needs_precise ||
         issue == R.string.mosque_needs_background || issue == R.string.mosque_needs_location
+    internal fun notificationIssue(context: Context): Int? =
+        when (NotificationAccess.issue(context, MosqueObservationService.CHANNEL)) {
+            null -> null
+            NotificationAccess.Issue.APP_BLOCKED -> R.string.mosque_needs_notifications
+            else -> R.string.mosque_observation_notifications_blocked
+        }
     fun ready(context: Context) = issues(context).isEmpty()
 }

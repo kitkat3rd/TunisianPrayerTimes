@@ -31,7 +31,7 @@ internal data class MosquePeriods(val observation: WindowCoverage?, val silence:
     }
 }
 
-/** Called under the same lock as the Android DND write. No position or visit history is persisted. */
+/** Called under the same lock as the Android DND write. A user-started test can capture its decisions. */
 internal object AdaptiveMosqueMonitor {
     private data class Runtime(var start: Long, val areas: List<SilenceArea>, val token: String,
         val engine: AdaptiveObservation, var observedEnd: Long, var silenceStart: Long? = null)
@@ -48,6 +48,7 @@ internal object AdaptiveMosqueMonitor {
     fun stop(c: Context, barrier: Boolean) {
         val r = current
         if (barrier && r != null) prefs(c).edit().putLong("adaptive_blocked_start", r.start).commit()
+        if (r != null) activeMosqueDiagnostics(c)?.stopped(barrier)
         current = null
     }
     fun dismiss(c: Context, expected: Set<String>) {
@@ -56,7 +57,9 @@ internal object AdaptiveMosqueMonitor {
         val chosen = expected.intersect(activeIds)
         if (chosen.isEmpty()) return
         MosqueSilenceMonitor.recordDismissals(c, chosen)
+        activeMosqueDiagnostics(c)?.skipped(before, chosen)
         val after = periods(c)
+        activeMosqueDiagnostics(c)?.period(after)
         val beforeWatch = before.observation?.occurrences.orEmpty()
         val afterWatch = after.observation
         if (afterWatch == null || beforeWatch.intersect(afterWatch.occurrences).isEmpty()) {
@@ -80,6 +83,7 @@ internal object AdaptiveMosqueMonitor {
     }
 
     fun failedStart(c: Context) {
+        activeMosqueDiagnostics(c)?.failedStart()
         current?.let { prefs(c).edit().putLong("adaptive_failed_start", it.start).commit() }
     }
     private fun blocked(c: Context, periods: MosquePeriods): Boolean {
@@ -88,16 +92,29 @@ internal object AdaptiveMosqueMonitor {
             state.getLong("blocked_silence_start", -1) == periods.silence?.start
     }
 
-    fun reconcile(c: Context, canStart: Boolean = false, deliberate: Boolean = false, burst: Boolean = false, transition: Int? = null): MosqueObservationPlan? {
+    fun traceCurrentState(c: Context, sessionId: Long) = synchronized(SilenceCoordinator.serial) {
+        val diagnostics = activeMosqueDiagnostics(c) ?: return@synchronized
+        if (diagnostics.sessionId != sessionId) return@synchronized
+        diagnostics.period(periods(c), seed = true)
+        val engine = current?.engine
+        if (engine == null) diagnostics.stopped(barrier = false)
+        else diagnostics.engine(engine, PrivateSilenceAreaStore.read(c).areas)
+    }
+
+    fun reconcile(c: Context, canStart: Boolean = false, deliberate: Boolean = false, burst: Boolean = false,
+        transition: Int? = null, evidenceFix: PresenceFix? = null, evidenceSession: Long? = null): MosqueObservationPlan? {
         val periods = periods(c)
         val scope = periods.observation
         val now = SystemClock.elapsedRealtime()
         val savedAreas = if (scope == null) null else PrivateSilenceAreaStore.read(c)
         val issues = savedAreas?.let { MosqueReadiness.issues(c, it) }.orEmpty()
         val hardLoss = issues.any(MosqueReadiness::locationIssue)
+        val diagnostics = activeMosqueDiagnostics(c)
+        diagnostics?.period(periods)
         if (scope == null || issues.any { !MosqueReadiness.locationIssue(it) }) {
             if (current != null) MosqueSilenceMonitor.stopLocked(c, needsRearm = false)
             else SilenceCoordinator.set(c, SilenceOwner.MOSQUE, false)
+            diagnostics?.unavailable(issues)
             return null
         }
         if (deliberate && canStart) prefs(c).edit().remove("adaptive_blocked_start").remove("blocked_silence_start").commit()
@@ -112,6 +129,7 @@ internal object AdaptiveMosqueMonitor {
         if (blocked(c, periods) || failed && !canStart) {
             if (r != null) MosqueSilenceMonitor.stopLocked(c, needsRearm = false)
             else SilenceCoordinator.set(c, SilenceOwner.MOSQUE, false)
+            diagnostics?.blocked(startFailed = failed && !canStart)
             return null
         }
         if (r == null) {
@@ -139,6 +157,7 @@ internal object AdaptiveMosqueMonitor {
             else engine.start(now, deliberate || burst && engine.detector.arrival == null)
         }
         engine.tick(now)
+        diagnostics?.engine(engine, savedAreas.areas, evidenceFix.takeIf { diagnostics.sessionId == evidenceSession })
         if (!SilenceCoordinator.set(c, SilenceOwner.MOSQUE, engine.desired) && engine.desired) {
             MosqueSilenceMonitor.stopLocked(c, needsRearm = true)
             return null
@@ -173,11 +192,14 @@ internal object AdaptiveMosqueMonitor {
         if (r.token == token) r.engine.accepted(generation, SystemClock.elapsedRealtime())
     }
 
-    fun observe(c: Context, token: String, generation: Long, fix: PresenceFix) {
+    fun observe(c: Context, token: String, generation: Long, fix: PresenceFix, fixTime: Long) {
         val plan = plan(c, token) ?: return
         if (plan.generation != generation) return
-        current?.engine?.observe(fix, SystemClock.elapsedRealtime())
-        reconcile(c)
+        val engine = current?.engine ?: return
+        val used = engine.observe(fix, SystemClock.elapsedRealtime())
+        val diagnostics = activeMosqueDiagnostics(c)
+        val recorded = diagnostics?.fix(fix, fixTime, used, engine.detector.distance) == true
+        reconcile(c, evidenceFix = fix.takeIf { used && recorded }, evidenceSession = diagnostics?.sessionId)
     }
     fun fallbackRequested(c: Context): Boolean = synchronized(SilenceCoordinator.serial) {
         current?.engine?.fallback == true && SilenceCoordinator.requested(c, SilenceOwner.MOSQUE)

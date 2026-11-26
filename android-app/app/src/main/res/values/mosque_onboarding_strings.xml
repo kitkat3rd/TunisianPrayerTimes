@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mosque_onboarding_schedule_pending">حُفظ اختيارك وتعذّرت جدولة الإسكات. راجع المتطلبات وأعد المحاولة.</string>
+    <string name="mosque_onboarding_scheduling">جارٍ جدولة فترات الإسكات…</string>
+</resources>

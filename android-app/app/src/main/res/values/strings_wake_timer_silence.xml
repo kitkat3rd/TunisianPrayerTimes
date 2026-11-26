@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wake_timer_silence_needs_dnd">لإسكات الهاتف حتى يرنّ المؤقّت، اسمح للتطبيق باستخدام «عدم الإزعاج».</string>
+    <string name="wake_timer_silence_needs_rule">لتفعيل الإسكات، تحقّق من وضع «الإسكات حتى المنبّه» في إعدادات أوضاع الإسكات.</string>
+    <string name="wake_timer_silence_active">الإسكات مفعّل حتى يرنّ المؤقّت.</string>
+    <string name="wake_timer_silence_paused">توقّف الإسكات مؤقّتًا أثناء رنين منبّه آخر.</string>
+    <string name="wake_timer_silence_needs_ring">ينتظر الإسكات السماح بجدولة المؤقّت في وقته.</string>
+    <string name="wake_timer_silence_unapplied">حُفظ المؤقّت ولم يُفعّل إسكات الهاتف.</string>
+    <string name="wake_timer_silence_start">إسكات الهاتف حتى الرنين</string>
+</resources>

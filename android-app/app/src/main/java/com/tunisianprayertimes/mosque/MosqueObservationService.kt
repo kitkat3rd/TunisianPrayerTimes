@@ -24,7 +24,7 @@ import kotlin.math.max
 /** A finite, typed location service. Start authority is checked by its exact-alarm/geofence/UI callers. */
 class MosqueObservationService : Service() {
     companion object {
-        private const val CHANNEL = "mosque_window_observation"
+        internal const val CHANNEL = "mosque_window_observation"
         private const val NOTIFICATION = 7_204
         private const val TOKEN = "observation_token"
         @Volatile private var instance: MosqueObservationService? = null
@@ -94,7 +94,7 @@ class MosqueObservationService : Service() {
     private var promoted = false
     private var generation = -1L
     private var requestEnd = -1L
-    private var highAccuracy: Boolean? = null
+    private var requestIntervalMillis = -1L
     private var geofenceEnd = -1L
     private val tick = object : Runnable {
         override fun run() {
@@ -155,7 +155,7 @@ class MosqueObservationService : Service() {
     @SuppressLint("MissingPermission")
     private fun updateProvider(plan: MosqueObservationPlan) {
         synchronized(SilenceCoordinator.serial) {
-            if (callback != null && highAccuracy == plan.highAccuracy && generation == plan.generation && kotlin.math.abs(requestEnd - plan.providerEnd) < 1_000) return
+            if (callback != null && requestIntervalMillis == plan.intervalMillis && generation == plan.generation && kotlin.math.abs(requestEnd - plan.providerEnd) < 1_000) return
             cancelProvider()
             // Do not issue any native call on an obsolete plan after a mode/window/settings change.
             val checked = MosqueSilenceMonitor.plan(this, plan.token) ?: return
@@ -169,10 +169,9 @@ class MosqueObservationService : Service() {
                     handler.removeCallbacks(tick); tick.run()
                 }
             }
-            callback = listener; highAccuracy = checked.highAccuracy; generation = checked.generation; requestEnd = checked.providerEnd
-            val interval = if (checked.highAccuracy) 5_000L else 60_000L
-            val request = LocationRequest.Builder(if (checked.highAccuracy) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY, interval)
-                .setMinUpdateIntervalMillis(if (checked.highAccuracy) 2_000L else 30_000L)
+            callback = listener; requestIntervalMillis = checked.intervalMillis; generation = checked.generation; requestEnd = checked.providerEnd
+            val request = LocationRequest.Builder(if (checked.highAccuracy) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY, checked.intervalMillis)
+                .setMinUpdateIntervalMillis(if (checked.highAccuracy) ARRIVAL_FIX_INTERVAL_MILLIS else 30_000L)
                 .setMaxUpdateAgeMillis(0).setMaxUpdateDelayMillis(0).setDurationMillis(remaining)
                 .setWaitForAccurateLocation(checked.highAccuracy).build()
             try {
@@ -194,7 +193,7 @@ class MosqueObservationService : Service() {
 
     private fun cancelProvider() {
         callback?.let { runCatching { fused.removeLocationUpdates(it) } }
-        callback = null; highAccuracy = null; requestEnd = -1
+        callback = null; requestIntervalMillis = -1L; requestEnd = -1
     }
 
     @SuppressLint("MissingPermission")

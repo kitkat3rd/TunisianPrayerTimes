@@ -16,12 +16,14 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.tunisianprayertimes.FastingDays
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.adhkar.DeathRemembranceTexts
 import com.tunisianprayertimes.adhkar.DhikrReminderScheduler
 import com.tunisianprayertimes.engine.TimeEvent
 import com.tunisianprayertimes.place.PrayerPlace
+import com.tunisianprayertimes.postReminderIfAllowed
 import com.tunisianprayertimes.fasting.FastingReminder
 import com.tunisianprayertimes.quran.QuranReading
 import com.tunisianprayertimes.quran.hifz.hifzOutsidePrayers
@@ -81,13 +83,15 @@ object DeathReminder {
 
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean("enabled", false)
 
-    fun setEnabled(context: Context, enabled: Boolean) {
+    fun setEnabled(context: Context, enabled: Boolean): Boolean {
+        if (enabled && !PrefsManager.hasConfirmedPlace(context)) return false
         val edit = prefs(context).edit().putBoolean("enabled", enabled).remove("paused_until_day")
         // The reader's own draw of days and minutes, so two phones do not ring together.
         if (enabled && !prefs(context).contains("salt")) edit.putLong("salt", Random().nextLong())
         edit.apply()
         if (!enabled) cancelNotification(context)
         refreshLater(context)
+        return true
     }
 
     fun frequency(context: Context): Frequency =
@@ -177,7 +181,7 @@ object DeathReminder {
 
     /** The next day's reminder whose window is not over and that was not shown yet. */
     fun next(context: Context, now: Instant = Instant.now()): Moment? {
-        if (!isEnabled(context)) return null
+        if (!isEnabled(context) || !PrefsManager.canUsePlaceForAutomation(context)) return null
         val frequency = frequency(context)
         val salt = salt(context)
         val today = today(context, now)
@@ -205,8 +209,9 @@ object DeathReminder {
     }
 
     /** A tap opens the reading that supplied this headline and deed, even if the rotation later changes. */
-    private fun post(context: Context, moment: Moment, now: Instant) {
-        val manager = channel(context) ?: return
+    private fun post(context: Context, moment: Moment, now: Instant): Boolean {
+        if (!PrefsManager.canUsePlaceForAutomation(context)) return false
+        val manager = channel(context) ?: return false
         // Text ends on a word: a phone in another language lays it out left to right.
         val item = remembranceFor(moment.day)
         val deed = item.deed.trimEnd('.')
@@ -230,7 +235,7 @@ object DeathReminder {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .addAction(0, "أوقف التذكير شهرًا", broadcast(context, ACTION_PAUSE, 1))
-        manager.notify(NOTIFICATION_ID, builder.build())
+        return manager.postReminderIfAllowed(context, NOTIFICATION_ID, builder.build())
     }
 
     private fun broadcast(context: Context, action: String, code: Int): PendingIntent = PendingIntent.getBroadcast(
@@ -261,16 +266,20 @@ object DeathReminder {
         val backup = alarmIntent(app, backup = true)
         alarms.cancel(exact)
         alarms.cancel(backup)
+        val canRemind = isEnabled(app) && PrefsManager.canUsePlaceForAutomation(app)
         runCatching {
             val work = WorkManager.getInstance(app)
-            if (isEnabled(app)) {
+            if (canRemind) {
                 work.enqueueUniquePeriodicWork(REPAIR_WORK, ExistingPeriodicWorkPolicy.KEEP,
                     PeriodicWorkRequestBuilder<DeathReminderRepairWorker>(12, TimeUnit.HOURS).build())
             } else {
                 work.cancelUniqueWork(REPAIR_WORK)
             }
         }.onFailure { Log.w("DeathReminder", "Could not update the repair work", it) }
-        if (!isEnabled(app)) return
+        if (!canRemind) {
+            cancelNotification(app)
+            return
+        }
         var next = next(app, now) ?: return
         if (next.at <= now) {
             val nowMs = now.toEpochMilli()
@@ -279,8 +288,13 @@ object DeathReminder {
             when {
                 FastingReminder.placeElsewhere(app, now) -> skip(app, next.day)
                 free <= nowMs -> {
-                    post(app, next, now)
-                    skip(app, next.day)
+                    if (post(app, next, now)) {
+                        skip(app, next.day)
+                    } else {
+                        // A permission/settings change can still retry today. Arm a future day so a
+                        // blocked reminder never schedules its elapsed alarm in an immediate loop.
+                        next = next(app, next.windowEnd) ?: return
+                    }
                 }
                 else -> {
                     next = next.copy(at = Instant.ofEpochMilli(free))

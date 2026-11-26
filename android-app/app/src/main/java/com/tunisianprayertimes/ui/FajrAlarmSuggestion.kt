@@ -1,5 +1,8 @@
 package com.tunisianprayertimes.ui
 
+import android.content.Context
+import androidx.activity.compose.LocalActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -62,6 +65,7 @@ import com.tunisianprayertimes.PrayerRelativeOffset
 import com.tunisianprayertimes.PrayerWakeConfig
 import com.tunisianprayertimes.PrayerWakeSubAlarm
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.RingtonePreset
 import com.tunisianprayertimes.WakeMainAlarmConfig
 import com.tunisianprayertimes.WakeMainAlarmMode
@@ -82,6 +86,9 @@ import kotlinx.coroutines.launch
 
 /** How hard the suggested Fajr alarm works to get the user up, in the order the card lists them. */
 internal enum class FajrAlarmPersistence { GENTLE, BALANCED, PERSISTENT, STRICT }
+
+internal fun suhoorWakeAccessReady(context: Context, persistence: FajrAlarmPersistence): Boolean =
+    wakeAlarmAccess(context, awakeCheckEnabled = persistence != FajrAlarmPersistence.GENTLE).ready
 
 /** The strict level's soft wake-up before the alarm, and its three returns after it, in minutes. */
 private const val StrictPreAlarmMinutes = 10
@@ -282,7 +289,10 @@ internal fun FajrAlarmSetupSheet(
     var persistence by rememberSaveable { mutableStateOf(FajrAlarmPersistence.BALANCED) }
     // A second tap while the sheet slides away must not add another alarm.
     var added by remember { mutableStateOf(false) }
-    val nextRing = remember(delegationId, minutesBefore, nowMillis) {
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
+    val placeReady = PrefsManager.hasConfirmedPlace(context)
+    val nextRing = remember(placeReady, delegationId, minutesBefore, nowMillis) {
+        if (!placeReady) return@remember null
         nextWakeAlarmTrigger(
             context,
             delegationId,
@@ -368,7 +378,9 @@ internal fun FajrAlarmSetupSheet(
                 }
                 Button(
                     onClick = {
-                        if (!added) {
+                        if (!PrefsManager.hasConfirmedPlace(context)) {
+                            placeRequired = true
+                        } else if (!added) {
                             added = true
                             onAdd(fajrSuggestionAlarm(minutesBefore, persistence))
                             coroutineScope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
@@ -395,6 +407,7 @@ internal fun FajrAlarmSetupSheet(
             }
         }
     }
+    if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
 }
 
 @Composable
@@ -531,7 +544,7 @@ internal fun FajrAlarmPersistence.title(context: android.content.Context): Strin
 /**
  * The suhoor alarm's two questions, as the Fajr alarm asks them: asked once, after which the fasting
  * notification sets the alarm in one tap. [fajrAtMillis] is the night's Fajr for the preview, or null when only
- * the choice is changed. An alarm needs the exact-alarm access to ring on time, so the sheet asks for it first.
+ * the choice is changed. Tonight’s alarm needs exact timing. The saved defaults can be edited at any time.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -559,6 +572,7 @@ internal fun SuhoorAlarmSetupSheet(
     var persistence by rememberSaveable { mutableStateOf(initialPersistence) }
     var saved by remember { mutableStateOf(false) }
     var canRing by remember { mutableStateOf(com.tunisianprayertimes.wake.WakeAlarmScheduler.canScheduleExactAlarms(context)) }
+    val activity = LocalActivity.current as? AppCompatActivity
     androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
         canRing = com.tunisianprayertimes.wake.WakeAlarmScheduler.canScheduleExactAlarms(context)
         onPauseOrDispose { }
@@ -624,36 +638,22 @@ internal fun SuhoorAlarmSetupSheet(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (!canRing) {
-                    Text(
-                        text = "ليرنّ المنبه في وقته، اسمح للتطبيق بالمنبهات والتذكيرات.",
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
-                        color = TextMuted,
-                    )
+                if (fajrAtMillis != null && activity != null) {
+                    WakeAlarmAccessNotice(activity, saved = false, awakeCheckEnabled = persistence != FajrAlarmPersistence.GENTLE)
                 }
                 Button(
+                    enabled = !saved && (fajrAtMillis == null || canRing),
                     onClick = {
-                        if (!canRing) {
-                            val app = android.net.Uri.parse("package:" + context.packageName)
-                            runCatching {
-                                context.startActivity(
-                                    android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).setData(app)
-                                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }
-                        } else if (!saved) {
-                            saved = true
-                            onSave(minutesBefore, persistence)
-                            coroutineScope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
-                        }
+                        saved = true
+                        onSave(minutesBefore, persistence)
+                        coroutineScope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
                     },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                 ) {
                     Text(
-                        text = if (canRing) buttonLabel else "اسمح بالمنبهات",
+                        text = buttonLabel,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                     )

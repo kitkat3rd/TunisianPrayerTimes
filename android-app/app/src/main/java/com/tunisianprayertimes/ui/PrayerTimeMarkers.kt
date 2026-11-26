@@ -37,18 +37,18 @@ import kotlin.math.abs
  * civil date in the phone's clock, and «تقديري» for a time a rule set, which explains in one line which rule and why.
  */
 @Composable
-internal fun PrayerTimeMarkers(prayerName: String, anchor: PrayerTimelineAnchor) {
-    PrayerTimeMarkers(prayerName, anchor.prayer.name, prayerDayOffset(anchor.minutes), anchor.estimated, anchor.rule)
+internal fun PrayerTimeMarkers(prayerName: String, anchor: PrayerTimelineAnchor, explainOnClick: Boolean = true) {
+    PrayerTimeMarkers(prayerName, anchor.prayer.name, prayerDayOffset(anchor.minutes), anchor.estimated, anchor.rule, explainOnClick)
 }
 
 @Composable
-internal fun PrayerTimeMarkers(prayerName: String, key: String, shift: Int, estimated: Boolean, rule: RuleName?) {
+internal fun PrayerTimeMarkers(prayerName: String, key: String, shift: Int, estimated: Boolean, rule: RuleName?, explainOnClick: Boolean = true) {
     if (shift != 0) {
         MarkerChip(stringResource(if (shift < 0) R.string.marker_before_midnight else R.string.marker_after_midnight), "marker_day_$key")
     }
     if (estimated) {
         var explain by remember { mutableStateOf(false) }
-        MarkerChip(stringResource(R.string.marker_estimated), "marker_estimated_$key", onClick = { explain = true })
+        MarkerChip(stringResource(R.string.marker_estimated), "marker_estimated_$key", onClick = if (explainOnClick) ({ explain = true }) else null)
         if (explain) {
             val context = LocalContext.current
             AlertDialog(

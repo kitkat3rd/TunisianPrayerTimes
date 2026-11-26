@@ -69,6 +69,7 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.temporal.WeekFields
 import java.util.TimeZone
 
@@ -148,6 +149,39 @@ class HijriCalendarUiTest {
         assertTrue("The Hijri date appears above the Gregorian date", hijri.bottom <= gregorian.top)
         compose.runOnIdle { publishDates(includeFitr = true) }
         assertCompleteText("1 شوال 1447 هـ", singleLine = true)
+    }
+
+    @Test
+    fun todayShowsConciseDatesAtLargeTypeAndAnnouncesBothYears() {
+        publishDates(includeFitr = true)
+        show {
+            Box(Modifier.width(320.dp)) {
+                DateNavigationRow(
+                    delegationId = -1, selectedDate = calendarDateMillis(fitr), isToday = true,
+                    canGoBack = true, canGoForward = true,
+                    onPrevious = {}, onNext = {}, onDateSelected = {},
+                )
+            }
+        }
+        val hijri = assertCompleteText("1 شوال", singleLine = true)
+        val gregorian = assertCompleteText("الجمعة، 20 مارس", singleLine = true)
+        assertTrue(hijri.bottom <= gregorian.top)
+        val description = text(R.string.calendar_day_description, "1 شوال 1447 هـ", gregorianDateLabel(fitr))
+        compose.onNodeWithContentDescription(description, substring = true).assertIsDisplayed().performClick()
+        compose.onNodeWithText(text(R.string.calendar_confirm)).assertIsDisplayed()
+    }
+
+    @Test
+    fun timetableSourceAndMappedZoneAreReachableWithoutFillingTheDateHeader() {
+        val method = "رابطة العالم الإسلامي"
+        val zone = "وسط المدينة"
+        show { TimetableSourceDetails(method, officialSource = false, zoneName = zone) }
+        compose.onNodeWithTag("today_calculation_method").assertDoesNotExist()
+        compose.onNodeWithTag("times_source_details").performClick()
+        compose.onNodeWithText(text(R.string.today_calculation_method, method)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.list_zone_line, zone)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.prayer_control_close)).performClick()
+        compose.onNodeWithTag("times_zone_line").assertDoesNotExist()
     }
 
     @Test
@@ -336,6 +370,31 @@ class HijriCalendarUiTest {
         compose.onNodeWithText(text(R.string.calendar_cancel)).performScrollTo().assertIsDisplayed().performClick()
         assertEquals(1, dismissals)
         assertNull(confirmed)
+    }
+
+    @Test
+    fun datePickerTodayChoosesThePrayerPlacesDayAcrossTheDateLine() {
+        val originalZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Pago_Pago"))
+            val placeZone = ZoneId.of("Pacific/Kiritimati")
+            val phoneDay = LocalDate.now()
+            val placeDay = LocalDate.now(placeZone)
+            assertTrue(phoneDay != placeDay)
+            show {
+                HijriCalendarDialog(
+                    selectedDate = calendarDateMillis(phoneDay), dateRange = null, todayZone = placeZone,
+                    onDateSelected = { confirmed = it }, onDismiss = {},
+                )
+            }
+            val todayLabel = text(R.string.calendar_today)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(todayLabel))
+            compose.onNodeWithText(todayLabel).performClick()
+            compose.onNodeWithText(text(R.string.calendar_confirm)).performClick()
+            assertEquals(calendarDateMillis(placeDay), confirmed)
+        } finally {
+            TimeZone.setDefault(originalZone)
+        }
     }
 
     @Test

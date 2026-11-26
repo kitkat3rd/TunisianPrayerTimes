@@ -8,6 +8,7 @@ import com.tunisianprayertimes.mosque.MosquePeriods
 import com.tunisianprayertimes.mosque.MosqueSilenceMonitor
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.mosque.SilenceCoordinator
+import com.tunisianprayertimes.mosque.activeMosqueDiagnostics
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,7 @@ class SilenceReceiver : BroadcastReceiver() {
                     return
                 }
                 Log.d(TAG, "Handling the silence window for $prayerName")
+                activeMosqueDiagnostics(context)?.prayerAlarm(prayerName, start = true)
                 PrefsManager.clearAutoSilenceDismissed(context)
                 if (MosqueSilenceSettings.combined(context)) {
                     // Exact, user-requested existing window callback: legal bounded FGS start route.
@@ -90,6 +92,7 @@ class SilenceReceiver : BroadcastReceiver() {
             }
             "com.tunisianprayertimes.ACTION_UNSILENCE" -> {
                 val prayerName = intent.getStringExtra("extra_prayer") ?: "UNKNOWN"
+                activeMosqueDiagnostics(context)?.prayerAlarm(prayerName, start = false)
                 Log.d(TAG, "Restoring normal mode after $prayerName")
                 if (MosqueSilenceSettings.combined(context)) {
                     // Recompute current prayer coverage, including any overlapping observation period.
@@ -136,9 +139,7 @@ class SilenceReceiver : BroadcastReceiver() {
                 SilenceModeController.notifyIfMissedCallDuringSilence(context)
             }
             ManualSilenceScheduler.ACTION_MANUAL_UNSILENCE -> {
-                Log.d(TAG, "Manual silence timer expired")
-                ManualSilenceScheduler.onTimerExpired(context)
-                SilenceModeController.notifyIfMissedCallDuringSilence(context)
+                ManualSilenceScheduler.syncExpiredTimer(context)
             }
             "com.tunisianprayertimes.ACTION_DELEGATION_CHECK" -> {
                 val prayerName = intent.getStringExtra("extra_prayer") ?: "UNKNOWN"

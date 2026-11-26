@@ -5,6 +5,7 @@ import android.util.Log
 import com.tunisianprayertimes.method.CountryMethodDefaults
 import com.tunisianprayertimes.place.CityIndex
 import com.tunisianprayertimes.place.CityRef
+import com.tunisianprayertimes.place.CountryResolver
 import com.tunisianprayertimes.place.LatLngE5
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -32,6 +33,7 @@ class PlaceCatalogue private constructor(
 
     /** One row with the names the picker and the «قرب X» label read. */
     data class Row(val ref: CityRef, val name: String, val ascii: String, val arabic: String, val aliases: List<String>, val dem: Int?) {
+        val displayName: String get() = arabic.ifEmpty { name }
         /** The picker shows only real catalogue cities (D2): not a neighbour's row, nor a delegation seat. */
         val listed: Boolean get() = !ref.neighbourOnly && ref.countryCode != "TN"
     }
@@ -87,6 +89,22 @@ class PlaceCatalogue private constructor(
     /** Every listed row, for the picker. */
     fun listedRows(): List<Row> = rows.filter { it.listed }
 
+    /** Both pickers request this on a worker. Build name folds and namesake labels once per catalogue. */
+    val pickerIndex: CitySearch.Index by lazy {
+        CitySearch.Index(listedRows(), regionName = { row ->
+            val ref = row.ref
+            ARABIC_PICKER_REGIONS["${ref.countryCode}.${ref.admin1}"] ?: admin1Name(ref.countryCode, ref.admin1)
+        }, nearbyCity = { row ->
+            // A recognisable nearby town when the catalogue omits the region or the namesakes share it.
+            val country = CountryResolver.normalize(row.ref.countryCode)
+            rowsWithin(row.ref.point, 50.0).firstOrNull { (other, _) ->
+                other.listed && other.displayName != row.displayName &&
+                    CountryResolver.normalize(other.ref.countryCode) == country &&
+                    other.ref.population >= maxOf(10_000, row.ref.population)
+            }?.first?.displayName
+        })
+    }
+
     private fun cell(lat: Int, lng: Int): Long = lat.toLong() * 1000L + lng.toLong()
 
     private fun wrap(lng: Int): Int = ((lng + 180) % 360 + 360) % 360 - 180
@@ -94,6 +112,13 @@ class PlaceCatalogue private constructor(
     companion object {
         private const val TAG = "PlaceCatalogue"
         private val FILES = listOf("places/europe-cities.tsv", "places/arab-cities.tsv")
+
+        // GeoNames supplies Latin labels. These are the governorates and wilayas of
+        // Arabic-country namesakes in the bundled picker, keyed by GeoNames admin1.
+        private val ARABIC_PICKER_REGIONS = mapOf(
+            "JO.09" to "الكرك", "JO.18" to "إربد", "JO.19" to "معان",
+            "DZ.15" to "تلمسان", "DZ.39" to "برج بوعريريج",
+        )
 
         @Volatile
         private var loaded: PlaceCatalogue? = null

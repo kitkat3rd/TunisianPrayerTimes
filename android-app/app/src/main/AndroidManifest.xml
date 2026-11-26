@@ -8,8 +8,6 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- Re-schedule alarms after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Request exemption from battery optimization (needed to prevent app hibernation) -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Fine location allows GPS/high-accuracy auto-detection when available -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Coarse location for auto-detecting nearest delegation -->
@@ -39,8 +37,10 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Needed to observe phone call state changes -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <!-- We don't use advertising; remove AD_ID added transitively by Firebase/Play Services -->
+    <!-- Firebase measurement libraries declare these advertising capabilities transitively. -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_AD_ID" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION" tools:node="remove" />
 
     <queries>
         <provider android:authorities="androidx.car.app.connection" />
@@ -100,7 +100,6 @@
             android:name=".WakeShortcutActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/Theme.TunisianPrayerTimes.Card" />
 

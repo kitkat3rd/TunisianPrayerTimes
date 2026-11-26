@@ -3,6 +3,7 @@ package com.tunisianprayertimes
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
 import com.tunisianprayertimes.mosque.SilenceCoordinator
 import com.tunisianprayertimes.mosque.SilenceOwner
+import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -31,6 +32,8 @@ data class SavedLocationSelection(
     val kind: String?,
     val fromGps: Boolean,
     val manualReferenceId: String? = null,
+    val place: PrayerPlace = PrayerPlace.Inm(delegationId),
+    val placeName: String? = null,
 )
 
 sealed interface FirstRunPlaceChoice {
@@ -51,6 +54,7 @@ object PrefsManager {
     private const val KEY_ENABLED = "silence_enabled"
     private const val KEY_FIRST_LAUNCH = "first_launch_done"
     private const val KEY_FIRST_RUN_DEFAULTS_INITIALIZED = "place_onboarding_defaults_initialized"
+    private const val KEY_FIRST_RUN_SILENCE_PENDING = "first_run_silence_pending"
     private const val KEY_FRESH_ONBOARDING = "fresh_place_onboarding"
     private const val KEY_FIRST_RUN_SETUP_SUGGESTED = "suggest_prayer_setup"
     private const val KEY_AUTO_SILENCE_ACTIVE = "auto_silence_active"
@@ -65,6 +69,7 @@ object PrefsManager {
     private const val KEY_MANUAL_SILENCE_DURATION_MINUTES = "manual_silence_duration_minutes"
     private const val KEY_MANUAL_SILENCE_ENDS_AT_MILLIS = "manual_silence_ends_at_millis"
     private const val KEY_MANUAL_SILENCE_TARGET_PRAYER = "manual_silence_target_prayer"
+    private const val KEY_MANUAL_SILENCE_ACTIVE_PRAYER = "manual_silence_active_prayer"
     private const val KEY_CALL_RECEIVED_DURING_SILENCE = "call_received_during_silence"
     private const val KEY_CALL_END_VIBRATION_ENABLED = "call_end_vibration_enabled"
     private const val KEY_AUTO_LOCATION_UPDATE = "auto_location_update"
@@ -78,6 +83,19 @@ object PrefsManager {
 
     private fun prefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    // This device-local file is excluded from backup, as are the system's grant decisions.
+    internal fun hasRequestedNotifications(context: Context): Boolean =
+        prefs(context).getBoolean("notification_permission_requested", false)
+
+    internal fun hasSeenNotificationRationale(context: Context): Boolean =
+        prefs(context).getBoolean("notification_permission_rationale_seen", false)
+
+    internal fun recordNotificationResponse(context: Context, granted: Boolean, hadRationale: Boolean) {
+        prefs(context).edit().putBoolean("notification_permission_requested", !granted)
+            .putBoolean("notification_permission_rationale_seen", !granted && (hadRationale || hasSeenNotificationRationale(context)))
+            .apply()
     }
 
     fun getDelegationId(context: Context): Int {
@@ -127,21 +145,28 @@ object PrefsManager {
     /** The saved place: the delegation of [getDelegationId], or the point abroad that [setPlace] stored. */
     fun getPlace(context: Context): PrayerPlace {
         val p = prefs(context)
-        if (p.getString(KEY_PLACE_KIND, null) != PLACE_KIND_COORDINATES || !p.contains(KEY_PLACE_LAT_E5) || !p.contains(KEY_PLACE_LNG_E5)) {
-            return PrayerPlace.Inm(getDelegationId(context))
+        if (p.getString(KEY_PLACE_KIND, null) == PLACE_KIND_COORDINATES) {
+            storedCoordinates(p.all)?.let { return it }
         }
-        val zone = ZoneResolver.parse(p.getString(KEY_PLACE_ZONE_ID, null), ZoneId.systemDefault())
+        return PrayerPlace.Inm(getDelegationId(context))
+    }
+
+    private fun storedCoordinates(values: Map<String, *>): PrayerPlace.Coordinates? {
+        if (values[KEY_PLACE_KIND] != PLACE_KIND_COORDINATES) return null
+        val lat = values[KEY_PLACE_LAT_E5] as? Int ?: return null
+        val lng = values[KEY_PLACE_LNG_E5] as? Int ?: return null
+        val zone = ZoneResolver.parse(values[KEY_PLACE_ZONE_ID] as? String, ZoneId.systemDefault())
         return PrayerPlace.Coordinates(
-            latE5 = p.getInt(KEY_PLACE_LAT_E5, 0),
-            lngE5 = p.getInt(KEY_PLACE_LNG_E5, 0),
-            elevationM = if (p.contains(KEY_PLACE_ELEVATION_M)) p.getInt(KEY_PLACE_ELEVATION_M, 0) else null,
+            latE5 = lat,
+            lngE5 = lng,
+            elevationM = values[KEY_PLACE_ELEVATION_M] as? Int,
             zoneId = zone.id,
-            zoneSource = runCatching { ZoneSource.valueOf(p.getString(KEY_PLACE_ZONE_SOURCE, "")!!) }
+            zoneSource = runCatching { ZoneSource.valueOf(values[KEY_PLACE_ZONE_SOURCE] as? String ?: "") }
                 .getOrDefault(ZoneSource.DEVICE),
-            countryCode = p.getString(KEY_PLACE_COUNTRY, null),
-            catalogueId = if (p.contains(KEY_PLACE_CATALOGUE_ID)) p.getLong(KEY_PLACE_CATALOGUE_ID, 0L) else null,
-            admin1 = p.getString(KEY_PLACE_ADMIN1, null),
-            admin2 = p.getString(KEY_PLACE_ADMIN2, null),
+            countryCode = values[KEY_PLACE_COUNTRY] as? String,
+            catalogueId = values[KEY_PLACE_CATALOGUE_ID] as? Long,
+            admin1 = values[KEY_PLACE_ADMIN1] as? String,
+            admin2 = values[KEY_PLACE_ADMIN2] as? String,
         )
     }
 
@@ -306,13 +331,16 @@ object PrefsManager {
 
     fun getLocationSelection(context: Context): SavedLocationSelection {
         val values = prefs(context).all
+        val delegationId = values[KEY_DELEGATION_ID] as? Int ?: DEFAULT_DELEGATION_ID
         val selection = SavedLocationSelection(
-            delegationId = values[KEY_DELEGATION_ID] as? Int ?: DEFAULT_DELEGATION_ID,
+            delegationId = delegationId,
             localityId = values[KEY_LOCALITY_ID] as? String,
             name = values[KEY_LOCALITY_NAME] as? String,
             kind = values[KEY_LOCALITY_KIND] as? String,
             fromGps = values[KEY_LOCATION_FROM_GPS] as? Boolean ?: false,
             manualReferenceId = if (values[KEY_LOCATION_FROM_GPS] == true) null else values[KEY_MANUAL_REFERENCE_ID] as? String,
+            place = storedCoordinates(values) ?: PrayerPlace.Inm(delegationId),
+            placeName = values[KEY_PLACE_NAME_SNAPSHOT] as? String,
         )
         val localityId = selection.localityId ?: return selection
         // Apply only reviewed stable-ID label changes. GPS selections keep the
@@ -341,9 +369,16 @@ object PrefsManager {
     }
 
     fun observeLocationSelection(context: Context, onChanged: () -> Unit): () -> Unit {
-        val settings = prefs(context)
         val keys = setOf(KEY_DELEGATION_ID, KEY_LOCALITY_ID, KEY_LOCALITY_NAME, KEY_LOCALITY_KIND, KEY_LOCATION_FROM_GPS, KEY_MANUAL_REFERENCE_ID) +
             PLACE_KEYS + KEY_PLACE_PROVISIONAL + KEY_FIRST_LAUNCH
+        return observePreferences(context, keys, onChanged)
+    }
+
+    internal fun observeFirstRunDecisions(context: Context, onChanged: () -> Unit): () -> Unit =
+        observePreferences(context, setOf(KEY_FIRST_LAUNCH, KEY_FIRST_RUN_SILENCE_PENDING, KEY_PLACE_PROVISIONAL), onChanged)
+
+    private fun observePreferences(context: Context, keys: Set<String>, onChanged: () -> Unit): () -> Unit {
+        val settings = prefs(context)
         // One save changes several keys in one apply(), and the listener is called once per key,
         // all in one pass on the main thread. Post one callback for the whole batch instead.
         val mainHandler = Handler(Looper.getMainLooper())
@@ -373,21 +408,35 @@ object PrefsManager {
     /** Run before process startup work. This device-local file is deliberately excluded from backups.
      * Other feature stores may have been restored. Their choices are independent and are never reset here.
      */
+    @Synchronized
     internal fun initializeFirstRun(context: Context) {
         val settings = prefs(context)
-        if (settings.getBoolean(KEY_FIRST_RUN_DEFAULTS_INITIALIZED, false)) return
+        if (settings.getBoolean(KEY_FIRST_RUN_DEFAULTS_INITIALIZED, false)) {
+            if (!settings.contains(KEY_FIRST_RUN_SILENCE_PENDING)) {
+                // The previous onboarding could have been interrupted before its place decision.
+                val unfinished = isFirstLaunch(context) && isFreshOnboarding(context) &&
+                    !isAutomaticSilenceRequested(context) && !hasSavedMosqueSettings(context)
+                settings.edit().putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, unfinished).apply()
+            }
+            return
+        }
         val edit = settings.edit().putBoolean(KEY_FIRST_RUN_DEFAULTS_INITIALIZED, true)
+            .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false)
         initializeBackgroundTravel(settings, edit, context)
         if (!settings.getBoolean(KEY_FIRST_LAUNCH, false)) {
             // A restored install has a negative marker from the backup agent, even when this preference
             // file was absent from its backup. A partial old tour or an in-place upgrade is also excluded.
-            val fresh = settings.all.isEmpty() && runCatching {
+            // An unused install may receive an APK update before it is opened for the first time.
+            // Its onboarding still includes silence. Measurement keeps its stricter package-date check.
+            val unconfigured = settings.all.isEmpty() && !hasRecoveredFeatureChoices(context)
+            val fresh = unconfigured && runCatching {
                 @Suppress("DEPRECATION")
                 val info = context.packageManager.getPackageInfo(context.packageName, 0)
-                info.firstInstallTime > 0 && info.firstInstallTime == info.lastUpdateTime &&
-                    !hasRecoveredFeatureChoices(context)
+                info.firstInstallTime > 0 && info.firstInstallTime == info.lastUpdateTime
             }.getOrDefault(false)
             edit.putBoolean(KEY_FRESH_ONBOARDING, fresh).putBoolean(KEY_FIRST_RUN_SETUP_SUGGESTED, true)
+                .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, unconfigured)
+            if (unconfigured) edit.putString(KEY_MANUAL_SILENCE_MODE, ManualSilenceMode.DURATION.name)
             // An unfinished tour could already have saved individual choices before it was closed.
             if (!settings.contains(KEY_ENABLED)) edit.putBoolean(KEY_ENABLED, false)
             if (!settings.contains(KEY_AUTO_LOCATION_UPDATE)) edit.putBoolean(KEY_AUTO_LOCATION_UPDATE, false)
@@ -411,18 +460,50 @@ object PrefsManager {
      */
     private fun hasRecoveredFeatureChoices(context: Context): Boolean {
         fun settings(name: String) = context.getSharedPreferences(name, Context.MODE_PRIVATE)
-        return settings("adhan_settings").all.isNotEmpty() || settings("mosque_silence_settings").all.isNotEmpty() ||
+        return settings("adhan_settings").all.isNotEmpty() || hasSavedMosqueSettings(context) ||
             settings("fasting_reminder").contains("enabled") ||
             context.filesDir.resolve("datastore/prayer_wake_store.preferences_pb").length() > 0 ||
             context.filesDir.resolve("hifz/hifz.json").length() > 0
     }
 
+    private fun hasSavedMosqueSettings(context: Context) =
+        context.getSharedPreferences("mosque_silence_settings", Context.MODE_PRIVATE).all.isNotEmpty()
+
     /** Called by Android after full restore, whether or not application startup preceded the callback. */
-    internal fun markOnboardingRestored(context: Context) {
-        prefs(context).edit().putBoolean(KEY_FRESH_ONBOARDING, false).apply()
+    internal fun markOnboardingRestored(context: Context) = synchronized(SilenceCoordinator.serial) {
+        synchronized(this) {
+            prefs(context).edit().putBoolean(KEY_FRESH_ONBOARDING, false)
+                .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
+        }
     }
 
     fun isFreshOnboarding(context: Context): Boolean = prefs(context).getBoolean(KEY_FRESH_ONBOARDING, false)
+
+    internal fun isFirstRunSilencePending(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false)
+
+    internal fun finishFirstRunSilenceOffer(context: Context) = synchronized(SilenceCoordinator.serial) {
+        prefs(context).edit().putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
+    }
+
+    internal fun declineFirstRunSilence(context: Context) = synchronized(SilenceCoordinator.serial) {
+        if (!isFirstRunSilencePending(context)) return@synchronized
+        val wasRequested = isAutomaticSilenceRequested(context)
+        prefs(context).edit().putBoolean(KEY_ENABLED, false).putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
+        if (wasRequested && MosqueSilenceSettings.usesOwnedRules(context)) SilenceCoordinator.releaseAuto(context)
+        // The timetable's schedule refresh cancels any previous windows and restores legacy automatic silence.
+    }
+
+    /** Commit the selected mode before publishing the master switch and any first-run decision together. */
+    internal fun activateConfiguredSilence(context: Context, chosen: AutomaticSilenceMode, firstRun: Boolean): Boolean =
+        synchronized(SilenceCoordinator.serial) {
+            if ((firstRun && !isFirstRunSilencePending(context)) || !hasConfirmedPlace(context)) return@synchronized false
+            if (!SilenceCoordinator.switchMode(context, chosen)) return@synchronized false
+            val edit = prefs(context).edit().putBoolean(KEY_ENABLED, true)
+            if (firstRun) edit.putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false)
+            edit.apply()
+            true
+        }
 
     fun usesPlaceOnboarding(context: Context): Boolean = prefs(context).contains(KEY_FRESH_ONBOARDING)
 
@@ -444,9 +525,30 @@ object PrefsManager {
     /** Publish a single decision even if two activities finish preparing different places. */
     @Synchronized
     fun completeFirstRun(context: Context, choice: FirstRunPlaceChoice): Boolean {
-        val settings = prefs(context)
-        if (settings.getBoolean(KEY_FIRST_LAUNCH, false)) return false
-        val edit = settings.edit()
+        if (!isFirstLaunch(context)) return false
+        savePlaceDecision(context, choice)
+        return true
+    }
+
+    /** A feature can finish a fresh install or replace a suggestion. A late picker cannot overwrite a confirmed place. */
+    @Synchronized
+    internal fun choosePlaceForFeature(context: Context, choice: FirstRunPlaceChoice): Boolean {
+        if (hasConfirmedPlace(context) || choice is FirstRunPlaceChoice.Browse) return false
+        savePlaceDecision(context, choice)
+        return true
+    }
+
+    /** Confirm exactly the place named in the prompt, preserving its existing locality and calculation details. */
+    @Synchronized
+    internal fun confirmSuggestedPlace(context: Context, shown: PrayerPlace): Boolean {
+        if (!isPlaceProvisional(context) || getPlace(context) != shown) return false
+        prefs(context).edit().putBoolean(KEY_FIRST_LAUNCH, true)
+            .putBoolean(KEY_PLACE_PROVISIONAL, false).remove(KEY_PICK_PLACE_ON_START).apply()
+        return true
+    }
+
+    private fun savePlaceDecision(context: Context, choice: FirstRunPlaceChoice) {
+        val edit = prefs(context).edit()
             .putBoolean(KEY_FIRST_LAUNCH, true)
             .remove(KEY_PICK_PLACE_ON_START)
         when (choice) {
@@ -462,11 +564,11 @@ object PrefsManager {
             }
         }
         edit.apply()
-        return true
     }
 
-    fun markFirstLaunchDone(context: Context) {
-        prefs(context).edit().putBoolean(KEY_FIRST_LAUNCH, true).apply()
+    fun markFirstLaunchDone(context: Context) = synchronized(SilenceCoordinator.serial) {
+        prefs(context).edit().putBoolean(KEY_FIRST_LAUNCH, true)
+            .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
     }
 
     fun setEnabled(context: Context, enabled: Boolean) {
@@ -598,6 +700,7 @@ object PrefsManager {
             .remove(KEY_MANUAL_SILENCE_PREVIOUS_RINGER_MODE)
             .remove(KEY_MANUAL_SILENCE_PREVIOUS_INTERRUPTION_FILTER)
             .remove(KEY_MANUAL_SILENCE_ENDS_AT_MILLIS)
+            .remove(KEY_MANUAL_SILENCE_ACTIVE_PRAYER)
             .apply()
     }
 
@@ -624,11 +727,23 @@ object PrefsManager {
         }
     }
 
-    fun setManualSilenceMode(context: Context, mode: ManualSilenceMode) {
+    fun setManualSilenceMode(context: Context, mode: ManualSilenceMode, activePrayer: Prayer? = null) {
         prefs(context).edit()
             .putString(KEY_MANUAL_SILENCE_MODE, mode.name)
             .putBoolean(KEY_MANUAL_SILENCE_USES_DURATION, mode == ManualSilenceMode.DURATION)
+            .putString(KEY_MANUAL_SILENCE_ACTIVE_PRAYER, activePrayer?.name)
             .apply()
+    }
+
+    /** New timers retain the occurrence they started with, including after a change of place. */
+    internal fun activeManualSilencePrayer(context: Context): Prayer {
+        val stored = prefs(context).getString(KEY_MANUAL_SILENCE_ACTIVE_PRAYER, null)
+        Prayer.entries.firstOrNull { it.name == stored }?.let { return it }
+        val target = getManualSilenceTargetPrayer(context)
+        val deadline = getManualSilenceEndsAtMillis(context)
+        if (target != Prayer.DHUHR || deadline <= 0L) return target
+        val day = java.time.Instant.ofEpochMilli(deadline).atZone(PrayerTimesRepository.place(context).zone).dayOfWeek
+        return if (day == java.time.DayOfWeek.FRIDAY) Prayer.JOMOAA else Prayer.DHUHR
     }
 
     fun getManualSilenceTargetPrayer(context: Context): Prayer {
@@ -671,7 +786,7 @@ object PrefsManager {
     }
 
     fun clearManualSilenceEndsAt(context: Context) {
-        prefs(context).edit().remove(KEY_MANUAL_SILENCE_ENDS_AT_MILLIS).apply()
+        prefs(context).edit().remove(KEY_MANUAL_SILENCE_ENDS_AT_MILLIS).remove(KEY_MANUAL_SILENCE_ACTIVE_PRAYER).apply()
     }
 
     fun markCallReceivedDuringSilence(context: Context) {
@@ -703,16 +818,21 @@ object PrefsManager {
     }
 
     fun setAutoLocationUpdateEnabled(context: Context, enabled: Boolean) {
+        val hadBackgroundTravel = isBackgroundTravelEnabled(context)
         val edit = prefs(context).edit().putBoolean(KEY_AUTO_LOCATION_UPDATE, enabled)
         if (!enabled) edit.putBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, false)
         edit.apply()
+        if (hadBackgroundTravel) SilenceVerifyWorker.reconcileSchedule(context)
     }
 
     fun isBackgroundTravelEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, false)
 
     fun setBackgroundTravelEnabled(context: Context, enabled: Boolean) {
-        prefs(context).edit().putBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, enabled).apply()
+        val settings = prefs(context)
+        if (settings.contains(KEY_BACKGROUND_TRAVEL_ENABLED) && isBackgroundTravelEnabled(context) == enabled) return
+        settings.edit().putBoolean(KEY_BACKGROUND_TRAVEL_ENABLED, enabled).apply()
+        SilenceVerifyWorker.reconcileSchedule(context)
     }
 
     private fun initializeBackgroundTravel(settings: SharedPreferences, edit: SharedPreferences.Editor, context: Context) {

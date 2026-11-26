@@ -173,11 +173,17 @@ import org.json.JSONObject
     val showFridayGoal = scheduled.readsFridayGoal()
     // Likewise only a reminder that reads Friday's goal keeps one.
     val edited = scheduled.copy(fridayTargetCount = if (showFridayGoal) integer(fridayTarget) ?: 0 else null)
-    val problem = remember(edited) { DhikrReminderScheduler.validate(activity, edited) }
-    LaunchedEffect(edited) { saveError = null }
-    val periodProblem = remember(edited) { DhikrReminderScheduler.periodProblem(activity, edited) }
+    // The place can now be confirmed without closing this form or triggering an activity resume.
+    var placeRevision by remember(activity) { mutableIntStateOf(0) }
+    DisposableEffect(activity) {
+        val unsubscribe = PrefsManager.observeLocationSelection(activity) { placeRevision++ }
+        onDispose { unsubscribe() }
+    }
+    val problem = remember(edited, placeRevision) { DhikrReminderScheduler.validate(activity, edited) }
+    LaunchedEffect(edited, placeRevision) { saveError = null }
+    val periodProblem = remember(edited, placeRevision) { DhikrReminderScheduler.periodProblem(activity, edited) }
     // The periods alone, resolved even before a dhikr is chosen: the dialogs show their clock times and counts.
-    val schedulePreview = remember(edited) {
+    val schedulePreview = remember(edited, placeRevision) {
         if (periodProblem == null) DhikrReminderScheduler.currentOrNextWindow(activity, edited, scheduleOnly = true) else null
     }
     val large = LocalConfiguration.current.screenHeightDp < 640 || LocalDensity.current.fontScale > 1.3f
@@ -249,14 +255,14 @@ import org.json.JSONObject
     // What the bar under the form announces keeps up with the clock while the sheet stays open.
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     // The rule as saving it now would store it: its next period and notification are the ones the user gets.
-    val stored = remember(edited, now) {
+    val stored = remember(edited, now, placeRevision) {
         if (problem == null) DhikrReminderScheduler.storedForm(activity, repoState, edited, now) else null
     }
-    val storedWindow = remember(stored, now) { stored?.let { DhikrReminderScheduler.currentOrNextWindow(activity, it, now) } }
-    val nextNudge = remember(stored, now) {
+    val storedWindow = remember(stored, now, placeRevision) { stored?.let { DhikrReminderScheduler.currentOrNextWindow(activity, it, now) } }
+    val nextNudge = remember(stored, now, placeRevision) {
         stored?.let { DhikrReminderScheduler.nextNudge(activity, it, now, ignoreNotificationAccess = true) }
     }
-    val stopsRunningPeriod = remember(edited, now) {
+    val stopsRunningPeriod = remember(edited, now, placeRevision) {
         storedRule != null && storedRule.enabled && repoState.changesSchedule(edited) &&
             DhikrReminderScheduler.currentOrNextWindow(activity, storedRule, now)?.let { now >= it.startMillis } == true
     }

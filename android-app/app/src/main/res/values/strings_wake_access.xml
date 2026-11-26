@@ -10,4 +10,8 @@
     <string name="wake_access_notifications_action">تفعيل إشعارات المنبّه</string>
     <string name="wake_access_full_screen_detail">إذن العرض بملء الشاشة متوقّف. اسمح به لعرض المنبّه فوق شاشة القفل عند الرنين.</string>
     <string name="wake_access_full_screen_action">فتح إعدادات العرض بملء الشاشة</string>
+    <string name="wake_access_low_ringing_channel">ارفع أهمية إشعارات الرنين للسماح بعرض المنبّه بملء الشاشة عند قفل الهاتف.</string>
+    <string name="wake_access_ringing_channel_action">إعدادات إشعارات الرنين</string>
+    <string name="wake_access_awake_check_detail">إشعارات التحقّق من الاستيقاظ متوقّفة. فعّلها ليظهر سؤال التأكيد بعد إيقاف الرنين.</string>
+    <string name="wake_access_awake_check_action">إعدادات إشعارات التحقّق من الاستيقاظ</string>
 </resources>

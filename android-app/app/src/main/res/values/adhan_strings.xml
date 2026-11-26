@@ -48,6 +48,7 @@
     <string name="adhan_channel_playing_description">تنبيه الأذان بملء الشاشة، حتى حين يكون صامتًا.</string>
     <string name="adhan_warn_before">تنبيه قبل الأذان</string>
     <string name="adhan_full_screen_off">العرض بملء الشاشة اختياري. يمكنك سماع الأذان من دونه.</string>
+    <string name="adhan_low_full_screen_channel">ارفع أهمية إشعارات «%1$s» للسماح بعرضها بملء الشاشة عند قفل الهاتف.</string>
     <string name="adhan_soon_title">أذان %1$s بعد لحظات</string>
     <string name="adhan_soon_text">لإلغائه، اضغط أحد زرَّي الصوت أو «إلغاء هذا الأذان».</string>
     <string name="adhan_soon_cancel">إلغاء هذا الأذان</string>

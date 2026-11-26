@@ -1,5 +1,6 @@
 package com.tunisianprayertimes
 
+import android.app.AlertDialog
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Bundle
@@ -8,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import com.tunisianprayertimes.mosque.MosqueSilenceSettings
+import com.tunisianprayertimes.mosque.SilenceOwner
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -22,20 +24,48 @@ class SilenceShortcutActivity : ComponentActivity() {
             finish()
             return
         }
+        if (!getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted) {
+            showOutcome(R.string.toast_dnd_permission)
+            return
+        }
         lifecycleScope.launch {
-            try {
-                val message = withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
+            val message = try {
+                withContext(NonCancellable + ScheduleRefreshCoordinator.scheduling) {
                     SilenceShortcutActions.perform(this@SilenceShortcutActivity, requireNotNull(action))
                 }
-                Toast.makeText(this@SilenceShortcutActivity, message, Toast.LENGTH_SHORT).show()
             } catch (error: Exception) {
                 Log.w("SilenceShortcut", "Could not perform launcher silence action", error)
-                Toast.makeText(this@SilenceShortcutActivity, R.string.shortcut_silence_failed, Toast.LENGTH_SHORT).show()
+                R.string.shortcut_silence_failed
             } finally {
                 LauncherShortcuts.refresh(this@SilenceShortcutActivity)
+            }
+            if (!isFinishing && !isDestroyed) showOutcome(message)
+        }
+    }
+
+    private fun showOutcome(message: Int) {
+        when (message) {
+            R.string.toast_dnd_permission -> showSettingsDialog(R.string.manual_dnd_access_title,
+                R.string.shortcut_dnd_retry, R.string.manual_dnd_open_settings, SilenceAccessSettings::openDnd)
+            R.string.shortcut_silence_30_inexact -> showSettingsDialog(R.string.shortcut_silence_30,
+                message, R.string.manual_exact_open_settings, SilenceAccessSettings::openExactAlarms)
+            R.string.manual_rule_failed_body -> showSettingsDialog(R.string.manual_rule_failed_title,
+                message, R.string.manual_rule_settings) { SilenceAccessSettings.openRules(it, SilenceOwner.MANUAL) }
+            else -> {
+                Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                 finish()
             }
         }
+    }
+
+    private fun showSettingsDialog(title: Int, details: Int, action: Int, openSettings: (Context) -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(details)
+            .setPositiveButton(action) { _, _ -> openSettings(this) }
+            .setNegativeButton(R.string.manual_exact_later, null)
+            .setOnDismissListener { finish() }
+            .show()
     }
 }
 
@@ -71,7 +101,7 @@ internal object SilenceShortcutActions {
                     PrefsManager.isAutoSilenceActive(context) -> SilenceModeController.disableAutoSilence(context)
                     else -> false
                 }
-                if ((hadManual || hadAuto) && !ended) return R.string.shortcut_silence_failed
+                if ((hadManual || hadAuto) && !ended) return failure(context)
                 // A refresh must not immediately restart the prayer occurrence the user just stopped.
                 SilenceScheduler.dismissCurrentWindows(context, prayer)
                 if (ended || wakeIds.isNotEmpty()) SilenceModeController.notifyIfMissedCallDuringSilence(context)
@@ -83,20 +113,23 @@ internal object SilenceShortcutActions {
         if (action == SILENCE && SilenceStatus.isAppControlledSilenceActive(context)) {
             return R.string.toast_silent_enabled
         }
-        synchronized(SilenceModeController) {
-            if (!SilenceModeController.setManualSilent(context)) return R.string.shortcut_silence_failed
-            if (action == SILENCE_30_MINUTES) {
-                PrefsManager.setManualSilenceMode(context, ManualSilenceMode.DURATION)
-                PrefsManager.setManualSilenceDurationMinutes(context, 30)
-                // Replaces any current manual deadline with 30 minutes from this tap.
-                ManualSilenceScheduler.schedule(context, 30)
-                AnalyticsTracker.manualSilenceStarted(context, ManualSilenceMode.DURATION, 30)
-                return R.string.shortcut_silence_30_confirmed
-            }
-            PrefsManager.setManualSilenceMode(context, ManualSilenceMode.UNTIL_STOPPED)
-            ManualSilenceScheduler.cancel(context)
-            AnalyticsTracker.manualSilenceStarted(context, ManualSilenceMode.UNTIL_STOPPED, null)
-            return R.string.toast_silent_enabled
+        if (action == SILENCE_30_MINUTES) {
+            ManualSilenceScheduler.start(context, ManualSilenceMode.DURATION, durationMinutes = 30)
+                ?: return failure(context)
+            PrefsManager.setManualSilenceDurationMinutes(context, 30)
+            AnalyticsTracker.manualSilenceStarted(context, ManualSilenceMode.DURATION, 30)
+            return if (ManualSilenceScheduler.canScheduleExact(context)) R.string.shortcut_silence_30_confirmed
+                else R.string.shortcut_silence_30_inexact
         }
+        ManualSilenceScheduler.start(context, ManualSilenceMode.UNTIL_STOPPED)
+            ?: return failure(context)
+        AnalyticsTracker.manualSilenceStarted(context, ManualSilenceMode.UNTIL_STOPPED, null)
+        return R.string.toast_silent_enabled
+    }
+
+    private fun failure(context: Context): Int = when {
+        !context.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted -> R.string.toast_dnd_permission
+        MosqueSilenceSettings.usesOwnedRules(context) -> R.string.manual_rule_failed_body
+        else -> R.string.shortcut_silence_failed
     }
 }

@@ -1,16 +1,12 @@
 package com.tunisianprayertimes.ui
 
-import android.Manifest
 import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Arrangement
@@ -31,48 +27,50 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.tunisianprayertimes.AnalyticsTracker
+import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.wake.AwakeCheckService
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import com.tunisianprayertimes.wake.WakePlaybackService
 
-private data class WakeAlarmAccess(
+internal data class WakeAlarmAccess(
     val exact: Boolean,
-    val appNotifications: Boolean,
-    val channelNotifications: Boolean,
+    val ringingIssue: NotificationAccess.Issue?,
+    val awakeCheckIssue: NotificationAccess.Issue?,
     val fullScreen: Boolean,
-)
+) {
+    val ready: Boolean get() = exact && ringingIssue == null && awakeCheckIssue == null && fullScreen
+}
 
-private fun wakeAlarmAccess(context: Context): WakeAlarmAccess {
+internal fun wakeAlarmAccess(context: Context, awakeCheckEnabled: Boolean = false): WakeAlarmAccess {
     val manager = context.getSystemService(NotificationManager::class.java)
     return WakeAlarmAccess(
         exact = WakeAlarmScheduler.canScheduleExactAlarms(context),
-        appNotifications = manager.areNotificationsEnabled() && (
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-            ),
-        // The channel is created when an alarm first rings.
-        channelNotifications = manager.getNotificationChannel(WakePlaybackService.CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE,
+        ringingIssue = NotificationAccess.issue(context, WakePlaybackService.CHANNEL_ID, NotificationManager.IMPORTANCE_HIGH),
+        awakeCheckIssue = if (awakeCheckEnabled) NotificationAccess.issue(context, AwakeCheckService.CHANNEL_ID) else null,
         fullScreen = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || manager.canUseFullScreenIntent(),
     )
 }
 
 @Composable
-internal fun WakeAlarmAccessNotice(activity: AppCompatActivity, saved: Boolean, modifier: Modifier = Modifier) {
-    var access by remember(activity) { mutableStateOf(wakeAlarmAccess(activity)) }
-    LifecycleResumeEffect(Unit) {
-        access = wakeAlarmAccess(activity)
+internal fun WakeAlarmAccessNotice(
+    activity: AppCompatActivity,
+    saved: Boolean,
+    modifier: Modifier = Modifier,
+    awakeCheckEnabled: Boolean = false,
+) {
+    var access by remember(activity, awakeCheckEnabled) { mutableStateOf(wakeAlarmAccess(activity, awakeCheckEnabled)) }
+    LifecycleResumeEffect(activity, awakeCheckEnabled) {
+        access = wakeAlarmAccess(activity, awakeCheckEnabled)
         onPauseOrDispose { }
     }
-    val notifications = access.appNotifications && access.channelNotifications
-    if (access.exact && notifications && access.fullScreen) return
+    if (access.ready) return
 
     val packageUri = Uri.fromParts("package", activity.packageName, null)
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        AnalyticsTracker.permissionStepResult(activity, "notifications", if (granted) "granted" else "denied", "wake_alarm")
-        access = wakeAlarmAccess(activity)
+    val repairNotifications = rememberNotificationAccessAction(entryPoint = "wake_alarm") {
+        access = wakeAlarmAccess(activity, awakeCheckEnabled)
     }
     fun openSettings(intent: Intent, permission: String) {
         AnalyticsTracker.permissionStepResult(activity, permission, "request_opened", "wake_alarm")
@@ -101,26 +99,18 @@ internal fun WakeAlarmAccessNotice(activity: AppCompatActivity, saved: Boolean, 
                     openSettings(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, packageUri), "exact_alarm")
                 }
             }
-            if (!notifications) {
+            if (access.ringingIssue == NotificationAccess.Issue.LOW_IMPORTANCE) {
+                WakeAccessAction(R.string.wake_access_low_ringing_channel, R.string.wake_access_ringing_channel_action) {
+                    repairNotifications(WakePlaybackService.CHANNEL_ID)
+                }
+            } else if (access.ringingIssue != null) {
                 WakeAccessAction(R.string.wake_access_notifications_detail, R.string.wake_access_notifications_action) {
-                    val asked = activity.getPreferences(Context.MODE_PRIVATE)
-                    val canAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
-                        (!asked.getBoolean("wake_notifications_requested", false) ||
-                            activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS))
-                    if (canAsk) {
-                        asked.edit().putBoolean("wake_notifications_requested", true).apply()
-                        AnalyticsTracker.permissionStepResult(activity, "notifications", "request_opened", "wake_alarm")
-                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        val settings = if (access.appNotifications) {
-                            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
-                                .putExtra(Settings.EXTRA_CHANNEL_ID, WakePlaybackService.CHANNEL_ID)
-                        } else {
-                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                        }
-                        openSettings(settings.putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName), "notifications")
-                    }
+                    repairNotifications(WakePlaybackService.CHANNEL_ID)
+                }
+            }
+            if (access.awakeCheckIssue != null && access.ringingIssue != NotificationAccess.Issue.APP_BLOCKED) {
+                WakeAccessAction(R.string.wake_access_awake_check_detail, R.string.wake_access_awake_check_action) {
+                    repairNotifications(AwakeCheckService.CHANNEL_ID)
                 }
             }
             if (!access.fullScreen) {

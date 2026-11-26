@@ -3,14 +3,28 @@ package com.tunisianprayertimes
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.format.DateUtils
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.lifecycleScope
+import com.tunisianprayertimes.ui.AppFontFamily
+import com.tunisianprayertimes.ui.PrayerPlaceRequiredDialog
+import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import com.tunisianprayertimes.wake.PrayerWakeRepository
 import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import com.tunisianprayertimes.wake.displayName
@@ -23,27 +37,87 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class WakeShortcutActivity : ComponentActivity() {
+    private var pendingShortcut: String? = null
+    private var exactAccess by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val action = intent.action
-        if (savedInstanceState != null || (action != WakeShortcutActions.BEFORE_ADHAN && action != WakeShortcutActions.NAP)) {
+        val action = if (savedInstanceState == null) intent.action else savedInstanceState.getString(STATE_PENDING)
+        if (action != WakeShortcutActions.BEFORE_ADHAN && action != WakeShortcutActions.NAP) {
             finish()
             return
         }
-        if (action == WakeShortcutActions.BEFORE_ADHAN && !PrefsManager.hasConfirmedPlace(this)) {
-            Toast.makeText(this, R.string.prayer_feature_place_required, Toast.LENGTH_LONG).show()
-            MainActivityPendingIntents.choosePlace(this).send()
-            finish()
-            return
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !WakeAlarmScheduler.canScheduleExactAlarms(this)) {
-            Toast.makeText(this, R.string.shortcut_wake_permission, Toast.LENGTH_LONG).show()
-            runCatching {
-                startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName")))
+        pendingShortcut = action
+        exactAccess = WakeAlarmScheduler.canScheduleExactAlarms(this)
+        // A restored shortcut always waits for a tap, even if access changed outside the app.
+        if (savedInstanceState == null && exactAccess && !needsCity(action)) scheduleShortcut(action)
+        else showShortcutSetup(action)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        exactAccess = WakeAlarmScheduler.canScheduleExactAlarms(this)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_PENDING, pendingShortcut)
+    }
+
+    private fun needsCity(action: String) =
+        action == WakeShortcutActions.BEFORE_ADHAN && !PrefsManager.hasConfirmedPlace(this)
+
+    private fun showShortcutSetup(action: String) = setContent {
+        TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                var choosingCity by rememberSaveable { mutableStateOf(needsCity(action)) }
+                if (choosingCity) {
+                    PrayerPlaceRequiredDialog(onDismiss = { choosingCity = false })
+                } else {
+                    val placeRequired = needsCity(action)
+                    val label = when {
+                        placeRequired -> R.string.prayer_data_choose_location
+                        !exactAccess -> R.string.wake_access_exact_action
+                        else -> R.string.wake_editor_silence_inline_save
+                    }
+                    AlertDialog(
+                        onDismissRequest = ::finish,
+                        title = {
+                            val title = if (action == WakeShortcutActions.NAP) R.string.shortcut_nap else R.string.shortcut_before_adhan_long
+                            Text(stringResource(title))
+                        },
+                        text = if (!placeRequired && !exactAccess) {
+                            { Text(stringResource(R.string.shortcut_wake_permission)) }
+                        } else null,
+                        confirmButton = {
+                            TextButton(onClick = {
+                                if (pendingShortcut != action) return@TextButton
+                                val granted = WakeAlarmScheduler.canScheduleExactAlarms(this@WakeShortcutActivity)
+                                when {
+                                    needsCity(action) -> choosingCity = true
+                                    granted != exactAccess -> exactAccess = granted
+                                    !granted -> openExactAlarmSettings()
+                                    else -> scheduleShortcut(action)
+                                }
+                            }) { Text(stringResource(label)) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = ::finish) { Text(stringResource(R.string.wake_editor_cancel)) }
+                        },
+                    )
+                }
             }
-            finish()
-            return
         }
+    }
+
+    private fun openExactAlarmSettings() {
+        val uri = Uri.fromParts("package", packageName, null)
+        runCatching { startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, uri)) }
+            .onFailure { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, uri)) }
+    }
+
+    private fun scheduleShortcut(action: String) {
+        pendingShortcut = null
         val tappedAt = Instant.now()
         lifecycleScope.launch {
             try {
@@ -58,6 +132,10 @@ class WakeShortcutActivity : ComponentActivity() {
                 finish()
             }
         }
+    }
+
+    private companion object {
+        const val STATE_PENDING = "pending_wake_shortcut"
     }
 }
 

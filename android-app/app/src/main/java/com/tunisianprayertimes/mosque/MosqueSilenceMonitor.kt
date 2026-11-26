@@ -17,9 +17,17 @@ internal fun Location.toMosqueFix(): PresenceFix {
         elapsedRealtimeNanos / 1_000_000L, mock)
 }
 
+internal const val ARRIVAL_FIX_INTERVAL_MILLIS = 2_000L
+
 data class MosqueObservationPlan(val token: String, val endElapsed: Long, val deadlineElapsed: Long,
     val highAccuracy: Boolean, val state: PresenceState, val areas: List<SilenceArea>,
-    val generation: Long = 0, val providerEnd: Long = endElapsed)
+    val generation: Long = 0, val providerEnd: Long = endElapsed) {
+    internal val intervalMillis: Long get() = when {
+        !highAccuracy -> 60_000L
+        state == PresenceState.ACQUIRING -> ARRIVAL_FIX_INTERVAL_MILLIS
+        else -> 5_000L
+    }
+}
 
 /** Production authority: actual planner intervals, never the future-prayer/45-minute bridge lookup. */
 object MosqueSilenceMonitor {
@@ -68,7 +76,7 @@ object MosqueSilenceMonitor {
     internal fun canActivateLocked(context: Context) = AdaptiveMosqueMonitor.canActivate(context)
 
     fun onLocation(context: Context, token: String, location: Location, generation: Long = 0) = synchronized(SilenceCoordinator.serial) {
-        AdaptiveMosqueMonitor.observe(context, token, generation, location.toMosqueFix())
+        AdaptiveMosqueMonitor.observe(context, token, generation, location.toMosqueFix(), location.time)
     }
 
     fun plan(context: Context, token: String): MosqueObservationPlan? = synchronized(SilenceCoordinator.serial) {

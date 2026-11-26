@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class TunisianPrayerTimesApplication : Application() {
+open class TunisianPrayerTimesApplication : Application() {
     // Always dispatch updates: publication holds the date-store lock, while
     // scheduling has its own lock and may read the store from a worker thread.
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -41,6 +41,8 @@ class TunisianPrayerTimesApplication : Application() {
         // Preferences, official Ramadan/Eid dates and the prayer-time and location loaders,
         // started the same way as in the TV app.
         SharedAndroid.init(this)
+        // A background grant may have changed outside the app. WorkManager retains the cadence across restarts.
+        if (PrefsManager.isBackgroundTravelEnabled(this)) SilenceVerifyWorker.reconcileSchedule(this)
         // Cleanup only: a process start never acquires mosque location or revives stored presence.
         SilenceCoordinator.recover(this)
         AndroidAutoConnection.observe(this)

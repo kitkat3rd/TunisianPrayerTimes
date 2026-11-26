@@ -2,6 +2,8 @@ package com.tunisianprayertimes
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -65,23 +67,27 @@ class MainActivityInstrumentedTest {
 
     @Test
     fun manualSilenceButtonIsDisplayed() {
-        composeRule.onNodeWithTag(TestTags.MANUAL_SILENCE_BUTTON)
+        composeRule.onNodeWithTag(TestTags.HERO_PHONE_SILENCE_BUTTON)
             .performScrollTo()
             .assertIsDisplayed()
     }
 
     @Test
-    fun infoTextIsDisplayed() {
-        composeRule.onNodeWithTag(TestTags.INFO_TEXT)
-            .performScrollTo()
-            .assertIsDisplayed()
+    fun navigationAnnouncesTheSelectedTabAfterSwitching() {
+        val prayers = composeRule.onNodeWithTag(TestTags.MAIN_TAB_TODAY)
+        val alarms = composeRule.onNodeWithTag(TestTags.MAIN_TAB_ALARMS)
+        prayers.assertIsSelected()
+        alarms.assertIsNotSelected().performClick()
+        alarms.assertIsSelected()
+        prayers.assertIsNotSelected().performClick()
+        prayers.assertIsSelected()
     }
 
     // --- Arabic localisation tests ---
 
     @Test
-    fun subtitleIsInArabic() {
-        composeRule.onNodeWithText("مواقيت الصلاة في تونس", substring = true).assertIsDisplayed()
+    fun prayerTabIsLabelledInArabic() {
+        composeRule.onNodeWithText("الصلاة").assertIsDisplayed().assertIsSelected()
     }
 
     @Test
@@ -114,7 +120,7 @@ class MainActivityInstrumentedTest {
 
     @Test
     fun silenceButtonIsClickable() {
-        composeRule.onNodeWithTag(TestTags.MANUAL_SILENCE_BUTTON)
+        composeRule.onNodeWithTag(TestTags.HERO_PHONE_SILENCE_BUTTON)
             .performScrollTo()
             .assertIsEnabled()
     }

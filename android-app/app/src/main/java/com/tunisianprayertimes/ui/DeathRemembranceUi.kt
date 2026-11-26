@@ -1,11 +1,6 @@
 package com.tunisianprayertimes.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +40,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,8 +59,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.adhkar.DeathRemembranceTexts
 import com.tunisianprayertimes.adhkar.MushafPassages
@@ -89,21 +85,25 @@ internal object RemembranceRequests {
 /** What the card says under the day's deed about the reminder: off, how often, or paused until when. */
 private fun reminderStatus(context: android.content.Context): String {
     if (!DeathReminder.isEnabled(context)) return "نرسل إليك هذا التذكير إن شئت، في ساعة من النهار تختلف كل مرة."
+    if (!PrefsManager.canUsePlaceForAutomation(context)) return "أكّد مدينتك لتحديد ساعات النهار التي يصلك فيها التذكير."
     DeathReminder.pausedUntil(context)?.let { return "أوقفنا التذكير، ويعود يوم ${it.dayMonth()}." }
     return "يصلك تذكير ${DeathReminder.frequency(context).label}، في ساعة من النهار تختلف كل مرة."
 }
 
 /** Turns the reminder on, asking for notifications the first time; off at once. */
 @Composable
-private fun rememberRemembranceSwitch(onChanged: () -> Unit): (Boolean) -> Unit {
+private fun rememberRemembranceSwitch(
+    access: ReminderNotificationAccess,
+    onPlaceRequired: () -> Unit,
+    onChanged: () -> Unit,
+): (Boolean) -> Unit {
     val context = LocalContext.current
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onChanged() }
-    return { on ->
-        DeathReminder.setEnabled(context, on)
-        if (on) Toast.makeText(context, "سيصلك التذكير ${DeathReminder.frequency(context).label}، دون صوت.", Toast.LENGTH_SHORT).show()
-        if (on && Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) ask.launch(Manifest.permission.POST_NOTIFICATIONS)
+    return toggle@{ on ->
+        if (!DeathReminder.setEnabled(context, on)) {
+            onPlaceRequired()
+            return@toggle
+        }
+        if (on && access.action == ReminderNotificationAction.Request) access.perform()
         onChanged()
     }
 }
@@ -262,11 +262,16 @@ internal fun DeathRemembranceCard(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         while (true) { delay(60_000); revision++ }
     }
-    var sheet by remember { mutableStateOf(false) }
+    var sheet by rememberSaveable { mutableStateOf(false) }
+    var placeRequired by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(RemembranceRequests.sheet) {
         if (RemembranceRequests.sheet) { RemembranceRequests.sheet = false; sheet = true }
     }
-    val switch = rememberRemembranceSwitch { revision++ }
+    val access = rememberReminderNotificationAccess(listOf(DeathReminder.CHANNEL_ID)) {
+        if (DeathReminder.isEnabled(context)) DeathReminder.refreshLater(context)
+        revision++
+    }
+    val switch = rememberRemembranceSwitch(access, onPlaceRequired = { placeRequired = true }) { revision++ }
     val today = remember(revision) { DeathReminder.today(context) }
     val item = DeathReminder.remembranceFor(today)
     val enabled = remember(revision) { DeathReminder.isEnabled(context) }
@@ -291,20 +296,34 @@ internal fun DeathRemembranceCard(modifier: Modifier = Modifier) {
         ) {
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
                 Text("التذكير", color = TextDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text(status, color = TextMuted, fontSize = 12.sp, lineHeight = 18.sp)
+                if (!enabled || access.action == ReminderNotificationAction.None) {
+                    Text(status, color = TextMuted, fontSize = 12.sp, lineHeight = 18.sp)
+                }
             }
             ReminderSwitchDivider()
             Switch(checked = enabled, onCheckedChange = switch,
                 modifier = Modifier.semantics { contentDescription = "تذكير ذكر الموت" })
         }
+        if (enabled) ReminderNotificationsWarning(access, "ذكر الموت")
     }
-    if (sheet) DeathRemembranceSheet(onDismiss = { sheet = false }, onChanged = { revision++ })
+    if (sheet) DeathRemembranceSheet(
+        access, onPlaceRequired = { placeRequired = true }, onDismiss = { sheet = false }, onChanged = { revision++ },
+    )
+    if (placeRequired) PrayerPlaceRequiredDialog(
+        onPlaceConfirmed = { revision++; sheet = true },
+        onDismiss = { placeRequired = false },
+    )
 }
 
 /** The reminder's choices: how often, a month's pause, and why remembering death is kept here. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun DeathRemembranceSheet(onDismiss: () -> Unit, onChanged: () -> Unit) {
+private fun DeathRemembranceSheet(
+    access: ReminderNotificationAccess,
+    onPlaceRequired: () -> Unit,
+    onDismiss: () -> Unit,
+    onChanged: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var revision by remember { mutableIntStateOf(0) }
@@ -313,7 +332,7 @@ private fun DeathRemembranceSheet(onDismiss: () -> Unit, onChanged: () -> Unit) 
         onPauseOrDispose { }
     }
     val changed = { revision++; onChanged() }
-    val switch = rememberRemembranceSwitch(changed)
+    val switch = rememberRemembranceSwitch(access, onPlaceRequired, changed)
     val enabled = remember(revision) { DeathReminder.isEnabled(context) }
     val frequency = remember(revision) { DeathReminder.frequency(context) }
     val pausedUntil = remember(revision) { DeathReminder.pausedUntil(context) }
@@ -353,9 +372,14 @@ private fun DeathRemembranceSheet(onDismiss: () -> Unit, onChanged: () -> Unit) 
                         )
                     }
                 }
-                Text("يصلك في ساعة من النهار تختلف كل مرة، بعيدًا عن أوقات الصلاة وعن قراءتك للقرآن، ودون صوت.",
-                    color = TextMuted, fontSize = 12.sp, lineHeight = 19.sp)
-                ReminderNotificationsWarning(DeathReminder.CHANNEL_ID, "ذكر الموت")
+                if (!PrefsManager.canUsePlaceForAutomation(context)) {
+                    Text("أكّد مدينتك لتحديد ساعات النهار التي يصلك فيها التذكير.", color = TextDark, fontSize = 13.sp)
+                    TextButton(onClick = onPlaceRequired) { Text("اختيار المدينة") }
+                } else if (access.action == ReminderNotificationAction.None) {
+                    Text("يصلك في ساعة من النهار تختلف كل مرة، بعيدًا عن أوقات الصلاة وعن قراءتك للقرآن، ودون صوت.",
+                        color = TextMuted, fontSize = 12.sp, lineHeight = 19.sp)
+                }
+                ReminderNotificationsWarning(access, "ذكر الموت")
                 if (pausedUntil != null) {
                     Text("أوقفنا التذكير، ويعود يوم ${pausedUntil.dayMonth()}.", color = TextDark, fontSize = 14.sp)
                     TextButton(onClick = { DeathReminder.resume(context); changed() }) {

@@ -69,7 +69,14 @@ internal data class PrayerTimelineAnchor(
     }
 
     /** Real minutes from the adhan to an axis minute. */
-    fun offsetAt(axisMinutes: Int): Int = Math.floorDiv(instantAt(axisMinutes).epochSecond - adhan.epochSecond, 60L).toInt()
+    fun offsetAt(axisMinutes: Int): Int = offsetAt(instantAt(axisMinutes))
+
+    fun offsetAt(at: Instant): Int = Math.floorDiv(at.epochSecond - adhan.epochSecond, 60L).toInt()
+
+    fun changesClockOffset(ends: SilenceEnds): Boolean {
+        val adhanOffset = displayZone.rules.getOffset(adhan)
+        return displayZone.rules.getOffset(ends.start) != adhanOffset || displayZone.rules.getOffset(ends.end) != adhanOffset
+    }
 
     /** The axis minute [minutes] real minutes from the adhan. */
     fun axisAtOffset(minutes: Int): Int = axisOf(adhan.plusSeconds(minutes * 60L))
@@ -250,6 +257,11 @@ private fun PrayerSilenceConfig.ruleAt(anchor: PrayerTimelineAnchor): SilenceRul
 internal fun silenceEndsAt(anchor: PrayerTimelineAnchor, config: PrayerSilenceConfig): SilenceEnds =
     SilenceWindowPlanner.ends(anchor.prayer, anchor.adhan, config.ruleAt(anchor), anchor.placeZone, anchor.inm)
 
+internal fun SilenceEnds.instantFor(endpoint: SilenceEndpoint): Instant =
+    if (endpoint == SilenceEndpoint.START) start else end
+
+internal val SilenceEnds.elapsedMinutes: Int get() = java.time.Duration.between(start, end).toMinutes().toInt()
+
 /** The window the planner arms for [config] on the anchor's day, on the axis (an end before the start included). */
 internal fun resolvePrayerTimelineWindow(
     anchor: PrayerTimelineAnchor,
@@ -265,8 +277,7 @@ internal fun resolvePrayerTimelineWindow(
  */
 internal fun PrayerSilenceConfig.withLegacyDurationSynced(anchor: PrayerTimelineAnchor): PrayerSilenceConfig {
     if (mode != SilenceMode.DURATION || endOffsetMinutes == null) return this
-    val window = resolvePrayerTimelineWindow(anchor, this)
-    return copy(afterMinutes = window.durationMinutes.coerceAtLeast(0))
+    return copy(afterMinutes = silenceEndsAt(anchor, this).elapsedMinutes.coerceAtLeast(0))
 }
 
 /** A draft the planner arms as it is: inside the endpoint domain, ending after it starts (6.9). */

@@ -62,7 +62,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -100,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.tunisianprayertimes.CompassTrust
 import com.tunisianprayertimes.CompassTrustSample
@@ -121,6 +121,7 @@ import com.tunisianprayertimes.isPhoneLikelyAtPlace
 import com.tunisianprayertimes.place.PrayerPlace
 import com.tunisianprayertimes.isPhoneTooTilted
 import com.tunisianprayertimes.locationBearingUncertaintyDegrees
+import com.tunisianprayertimes.locationPermissionState
 import com.tunisianprayertimes.magneticFieldZone
 import com.tunisianprayertimes.normalizeDegrees
 import com.tunisianprayertimes.screenTiltDegrees
@@ -136,7 +137,7 @@ import com.tunisianprayertimes.ui.theme.TextDark
 import com.tunisianprayertimes.ui.theme.TextMuted
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.cos
@@ -202,7 +203,6 @@ private data class QiblaLocationState(
     val delegationName: String? = null,
 )
 
-private var cachedRealtimeQiblaLocation: QiblaLocationState? = null
 private var qiblaLocationPermissionRequestedThisSession = false
 
 private data class CompassState(
@@ -230,47 +230,25 @@ private enum class QiblaStabilityStatus {
     Stable,
 }
 
-/** The Qibla. [askLocation]: false when the tab was opened for something else, so no dialog comes first. */
+/** [askLocation] is true only after the user explicitly opens the compass. */
 @Composable
-fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
+fun QiblaCard(placeRevision: Int, askLocation: Boolean = false) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val cachedLocation = remember { cachedRealtimeQiblaLocation }
-    var locating by remember { mutableStateOf(false) }
-    var locationPermissionGranted by remember { mutableStateOf(DelegationLocator.hasLocationPermission(context)) }
+    var locationAccess by remember { mutableStateOf(locationPermissionState(context)) }
+    var resumed by remember { mutableStateOf(false) }
+    val locationPermissionGranted = locationAccess.hasAny
     var locationPermissionDeniedThisSession by rememberSaveable { mutableStateOf(false) }
-    var currentLatitude by rememberSaveable { mutableStateOf(cachedLocation?.latitude) }
-    var currentLongitude by rememberSaveable { mutableStateOf(cachedLocation?.longitude) }
-    var currentAltitudeMeters by rememberSaveable { mutableStateOf(cachedLocation?.altitudeMeters ?: 0.0) }
-    var currentAccuracyMeters by rememberSaveable { mutableStateOf(cachedLocation?.accuracyMeters) }
-    var currentLocationIsLastKnown by rememberSaveable { mutableStateOf(false) }
+    // A precision downgrade invalidates the old fix as well as outright revocation.
+    var deviceLocation by remember(locationAccess) { mutableStateOf<QiblaLocationState?>(null) }
+    var locating by remember(locationAccess, resumed) { mutableStateOf(false) }
     var qiblaMethod by remember { mutableStateOf(PrefsManager.getQiblaMethod(context)) }
     var methodSheetOpen by rememberSaveable { mutableStateOf(false) }
 
-    val currentLocation = remember(
-        currentLatitude,
-        currentLongitude,
-        currentAltitudeMeters,
-        currentAccuracyMeters,
-        currentLocationIsLastKnown,
-    ) {
-        val latitude = currentLatitude
-        val longitude = currentLongitude
-        if (latitude != null && longitude != null) {
-            QiblaLocationState(
-                latitude = latitude,
-                longitude = longitude,
-                altitudeMeters = currentAltitudeMeters,
-                accuracyMeters = currentAccuracyMeters,
-                source = if (currentLocationIsLastKnown) {
-                    QiblaLocationSource.LastKnownLocation
-                } else {
-                    QiblaLocationSource.CurrentLocation
-                },
-            )
-        } else {
-            null
-        }
+    LifecycleResumeEffect(context) {
+        locationAccess = locationPermissionState(context)
+        if (locationAccess.hasAny) locationPermissionDeniedThisSession = false
+        resumed = true
+        onPauseOrDispose { resumed = false }
     }
     // The saved place stands in only where the phone probably is (6.8): elsewhere it would point the qibla the wrong way.
     val savedPlace = remember(placeRevision) { PrayerTimesRepository.place(context) }
@@ -322,41 +300,40 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
         }
     }
     val delegationLocation = placeLocation ?: selectedDelegationLocation
-    val deviceLocation = if (locationPermissionGranted) currentLocation else null
     // The bearing moves only about 0.2° per 10 km, so the selected delegation gives usable
     // guidance straight away, and whenever the phone's own location is unavailable.
     val activeLocation = deviceLocation ?: delegationLocation
 
-    LaunchedEffect(deviceLocation) {
-        deviceLocation
-            ?.takeIf { location -> location.source == QiblaLocationSource.CurrentLocation }
-            ?.let { location -> cachedRealtimeQiblaLocation = location }
-    }
+    LaunchedEffect(resumed, locationAccess) {
+        val grantedAccess = locationAccess
+        if (!resumed || !grantedAccess.hasAny) return@LaunchedEffect
 
-    fun applyDeviceLocation(location: Location, lastKnown: Boolean) {
-        currentLatitude = location.latitude
-        currentLongitude = location.longitude
-        currentAltitudeMeters = if (location.hasAltitude()) location.altitude else 0.0
-        currentAccuracyMeters = if (location.hasAccuracy()) location.accuracy else null
-        currentLocationIsLastKnown = lastKnown
-    }
-
-    fun detectCurrentLocation() {
-        if (locating) {
-            return
+        fun stillAllowed(): Boolean {
+            ensureActive()
+            locationAccess = locationPermissionState(context)
+            return resumed && locationAccess == grantedAccess
         }
-
+        fun display(location: Location, source: QiblaLocationSource) {
+            deviceLocation = QiblaLocationState(
+                latitude = location.latitude, longitude = location.longitude,
+                altitudeMeters = if (location.hasAltitude()) location.altitude else 0.0,
+                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                source = source,
+            )
+        }
         locating = true
-        scope.launch {
-            if (currentLatitude == null) {
+        try {
+            if (deviceLocation == null) {
                 // Show a recent known position at once while a live fix is found.
-                DelegationLocator.lastKnownLocation(context, QIBLA_LAST_KNOWN_LOCATION_MAX_AGE_MS)
-                    ?.let { location -> applyDeviceLocation(location, lastKnown = true) }
+                val known = DelegationLocator.lastKnownLocation(context, QIBLA_LAST_KNOWN_LOCATION_MAX_AGE_MS)
+                if (!stillAllowed()) return@LaunchedEffect
+                if (known != null) display(known, QiblaLocationSource.LastKnownLocation)
             }
             // The first source to answer wins: the bearing barely needs GPS precision.
             val firstFix = DelegationLocator.detectFirstLocation(context)
+            if (!stillAllowed()) return@LaunchedEffect
             if (firstFix != null) {
-                applyDeviceLocation(firstFix, lastKnown = false)
+                display(firstFix, QiblaLocationSource.CurrentLocation)
             }
             // Close to Mecca a coarse fix skews the bearing, so wait for the most accurate one.
             val refinedFix = if (firstFix != null && needsPreciserQiblaFix(firstFix)) {
@@ -366,9 +343,9 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
                 null
             }
             if (refinedFix != null) {
-                applyDeviceLocation(refinedFix, lastKnown = false)
+                if (!stillAllowed()) return@LaunchedEffect
+                display(refinedFix, QiblaLocationSource.CurrentLocation)
             }
-            locating = false
 
             if (firstFix == null) {
                 AnalyticsTracker.qiblaComputeResult(
@@ -382,7 +359,7 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
                     context.getString(R.string.qibla_location_unavailable),
                     Toast.LENGTH_SHORT,
                 ).show()
-                return@launch
+                return@LaunchedEffect
             }
 
             AnalyticsTracker.qiblaComputeResult(
@@ -391,6 +368,10 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
                 result = "success",
                 hasSensorSupport = hasQiblaSensorSupport(context),
             )
+        } catch (_: SecurityException) {
+            locationAccess = locationPermissionState(context)
+        } finally {
+            locating = false
         }
     }
 
@@ -399,7 +380,7 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
     ) { grants ->
         val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        locationPermissionGranted = granted
+        locationAccess = locationPermissionState(context)
         if (granted) {
             locationPermissionDeniedThisSession = false
             AnalyticsTracker.permissionStepResult(
@@ -408,7 +389,6 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
                 result = "granted",
                 entryPoint = "qibla",
             )
-            detectCurrentLocation()
         } else {
             locationPermissionDeniedThisSession = true
             AnalyticsTracker.permissionStepResult(
@@ -453,10 +433,8 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (locationPermissionGranted) {
-            detectCurrentLocation()
-        } else if (askLocation && !qiblaLocationPermissionRequestedThisSession) {
+    LaunchedEffect(askLocation) {
+        if (askLocation && !locationPermissionGranted && !qiblaLocationPermissionRequestedThisSession) {
             requestQiblaLocationPermission()
         }
     }
@@ -586,7 +564,7 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = true) {
         } else {
             null
         }
-    var displayedBannerMessage by remember { mutableStateOf<QiblaBannerMessage?>(null) }
+    var displayedBannerMessage by remember(locationPermissionGranted) { mutableStateOf<QiblaBannerMessage?>(null) }
 
     LaunchedEffect(activeLocation, headingDegrees, turnDegrees) {
         if (activeLocation == null || headingDegrees == null || turnDegrees == null) {

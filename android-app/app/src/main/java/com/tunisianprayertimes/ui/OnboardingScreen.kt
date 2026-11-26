@@ -15,7 +15,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -66,6 +73,21 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
     var attempt by rememberSaveable { mutableIntStateOf(0) }
     var preparationFailed by remember { mutableStateOf(false) }
     var preparingName by remember { mutableStateOf<String?>(null) }
+    val primaryFocus = remember { FocusRequester() }
+    val secondaryFocus = remember { FocusRequester() }
+    val inputMode = LocalInputModeManager.current
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var pendingFocus by remember { mutableStateOf<FocusRequester?>(null) }
+    var browseFocused by remember { mutableStateOf(false) }
+
+    fun returnKeyboardFocus(target: FocusRequester) {
+        if (inputMode.inputMode == InputMode.Keyboard) pendingFocus = target
+    }
+    LaunchedEffect(pendingFocus, pickerOpen, windowFocused) {
+        if (pickerOpen || !windowFocused) return@LaunchedEffect
+        pendingFocus?.let { if (inputMode.inputMode == InputMode.Keyboard) it.requestFocus() }
+        pendingFocus = null
+    }
 
     fun cancelPreparation() {
         selection = null
@@ -74,7 +96,8 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
     }
     fun openPicker() {
         cancelPreparation()
-        lookup = LocationLookup.Idle
+        if (lookup == LocationLookup.Permission || lookup == LocationLookup.Locating) lookup = LocationLookup.Idle
+        pendingFocus = null
         pickerOpen = true
     }
     LaunchedEffect(pickerRequestId) {
@@ -84,9 +107,11 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         if (lookup == LocationLookup.Permission) {
             lookup = if (grants.values.any { it }) LocationLookup.Locating else LocationLookup.Denied
+            if (lookup == LocationLookup.Denied && !browseFocused) returnKeyboardFocus(secondaryFocus)
         }
     }
     fun locate() {
+        if (lookup == LocationLookup.Permission || lookup == LocationLookup.Locating) return
         cancelPreparation()
         match = null
         if (DelegationLocator.hasLocationPermission(context)) {
@@ -113,10 +138,12 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
             result == DelegationLocationResult.PermissionDenied -> LocationLookup.Denied
             else -> LocationLookup.Unavailable
         }
+        if (!browseFocused) returnKeyboardFocus(if (lookup == LocationLookup.Denied) secondaryFocus else primaryFocus)
     }
     fun select(place: FirstRunPlace) {
         lookup = LocationLookup.Idle
         pickerOpen = false
+        pendingFocus = null
         preparationFailed = false
         preparingName = place.name
         selection = place
@@ -167,12 +194,15 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
         finish()
     }
     BackHandler(!pickerOpen && (selection != null || match != null || lookup != LocationLookup.Idle)) {
+        val returningFromLookup = match != null || lookup != LocationLookup.Idle
         cancelPreparation()
         lookup = LocationLookup.Idle
         match = null
+        returnKeyboardFocus(if (returningFromLookup) secondaryFocus else primaryFocus)
     }
 
     val currentMatch = match
+    val denied = currentMatch == null && lookup == LocationLookup.Denied
     val placeName = currentMatch?.name ?: stringResource(R.string.location_current_place)
     val matchDetails = currentMatch?.let {
         val zone = (it as? FirstRunPlace.NearbyCity)?.zoneId?.takeIf { _ -> it.name == null }
@@ -189,7 +219,8 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
     val description = when {
         matchDetails != null -> matchDetails
         lookup == LocationLookup.Denied || lookup == LocationLookup.Unavailable -> stringResource(R.string.first_run_manual_help)
-        else -> stringResource(R.string.first_run_place_description)
+        PrefsManager.isFirstRunSilencePending(context) -> stringResource(R.string.first_run_place_description)
+        else -> stringResource(R.string.first_run_location_only_description)
     }
 
     Box(
@@ -205,9 +236,13 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
                 Icon(painterResource(R.drawable.ic_location), contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(32.dp))
             }
             Spacer(Modifier.height(22.dp))
-            Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
-                Text(title, fontSize = 28.sp, lineHeight = 37.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark,
-                    modifier = Modifier.semantics { heading() })
+            Column(Modifier.semantics(mergeDescendants = true) {
+                heading()
+                if (currentMatch != null || lookup == LocationLookup.Denied || lookup == LocationLookup.Unavailable) {
+                    liveRegion = LiveRegionMode.Polite
+                }
+            }) {
+                Text(title, fontSize = 28.sp, lineHeight = 37.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark)
                 Spacer(Modifier.height(8.dp))
                 Text(description, fontSize = 17.sp, lineHeight = 26.sp, color = TextDark)
             }
@@ -216,27 +251,36 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
             val shape = RoundedCornerShape(16.dp)
             val primaryLabel = if (currentMatch != null) stringResource(R.string.first_run_show_times, placeName)
                 else stringResource(R.string.onboarding_location_pick)
-            Button(
-                onClick = { if (currentMatch != null) select(currentMatch) else openPicker() },
-                enabled = currentMatch == null || !resolving,
-                modifier = surface.testTag(if (currentMatch != null) "onboarding_confirm_location" else "onboarding_location_pick"),
-                shape = shape, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-            ) { Text(primaryLabel, fontSize = 17.sp, lineHeight = 23.sp) }
-            if (currentMatch != null || lookup != LocationLookup.Denied) {
+            if (!denied) {
+                Button(
+                    onClick = { if (currentMatch != null) select(currentMatch) else openPicker() },
+                    enabled = currentMatch == null || !resolving,
+                    modifier = surface.focusRequester(primaryFocus)
+                        .testTag(if (currentMatch != null) "onboarding_confirm_location" else "onboarding_location_pick"),
+                    shape = shape, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                ) { Text(primaryLabel, fontSize = 17.sp, lineHeight = 23.sp) }
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = { if (currentMatch != null) openPicker() else locate() },
-                    enabled = currentMatch != null || !searching,
-                    modifier = surface.testTag(if (currentMatch != null) "onboarding_location_pick" else "onboarding_location_locate"),
-                    shape = shape, border = BorderStroke(1.dp, GreenPrimary),
-                ) {
-                    val label = when {
-                        currentMatch != null -> R.string.first_run_choose_another
-                        lookup == LocationLookup.Unavailable -> R.string.first_run_retry_location
-                        else -> R.string.first_run_use_location
-                    }
-                    Text(stringResource(label), fontSize = 16.sp, lineHeight = 23.sp, color = GreenPrimaryDark)
+            }
+            // Android restores accessibility focus to the control that launched its permission dialog.
+            // Keep that node focusable during the dialog and let it open the manual picker after a refusal.
+            OutlinedButton(
+                onClick = { if (denied || currentMatch != null) openPicker() else locate() },
+                enabled = lookup != LocationLookup.Locating,
+                modifier = surface.focusRequester(secondaryFocus)
+                    .testTag(if (denied || currentMatch != null) "onboarding_location_pick" else "onboarding_location_locate"),
+                shape = shape, border = BorderStroke(1.dp, GreenPrimary),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (denied) GreenPrimary else Color.Transparent,
+                    contentColor = if (denied) Color.White else GreenPrimaryDark,
+                ),
+            ) {
+                val label = when {
+                    denied -> R.string.onboarding_location_pick
+                    currentMatch != null -> R.string.first_run_choose_another
+                    lookup == LocationLookup.Unavailable -> R.string.first_run_retry_location
+                    else -> R.string.first_run_use_location
                 }
+                Text(stringResource(label), fontSize = 16.sp, lineHeight = 23.sp)
             }
             if (currentMatch == null && lookup == LocationLookup.Idle && !resolving) {
                 Spacer(Modifier.height(8.dp))
@@ -244,10 +288,10 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = { select(FirstRunPlace.Browse) }, enabled = selection != FirstRunPlace.Browse || preparationFailed,
-                modifier = surface.testTag("onboarding_browse")) {
+                modifier = surface.onFocusChanged { browseFocused = it.isFocused }.testTag("onboarding_browse")) {
                 Text(stringResource(R.string.first_run_browse), color = GreenPrimaryDark, fontSize = 16.sp)
             }
-            if (resolving || preparationFailed || searching) {
+            if (resolving || preparationFailed || lookup == LocationLookup.Locating) {
                 Spacer(Modifier.height(12.dp))
                 val progress = when {
                     preparationFailed -> stringResource(R.string.first_run_source_error)
@@ -265,7 +309,10 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
     }
     if (pickerOpen) {
         FirstRunPicker(
-            onDismiss = { pickerOpen = false },
+            onDismiss = {
+                pickerOpen = false
+                returnKeyboardFocus(if (match != null || lookup == LocationLookup.Denied) secondaryFocus else primaryFocus)
+            },
             onLocality = { select(FirstRunPlace.Local(it.id, it.manualReferenceId, it.name)) },
             onCity = { select(FirstRunPlace.City(it.ref.id, PlaceResolution.catalogueLabel(it))) },
         )
@@ -273,7 +320,7 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
 }
 
 @Composable
-private fun FirstRunPicker(onDismiss: () -> Unit, onLocality: (Locality) -> Unit, onCity: (PlaceCatalogue.Row) -> Unit) {
+internal fun FirstRunPicker(onDismiss: () -> Unit, onLocality: (Locality) -> Unit, onCity: (PlaceCatalogue.Row) -> Unit) {
     val context = LocalContext.current
     var attempt by remember { mutableIntStateOf(0) }
     var localLoading by remember { mutableStateOf(true) }
@@ -298,7 +345,7 @@ private fun FirstRunPicker(onDismiss: () -> Unit, onLocality: (Locality) -> Unit
     LaunchedEffect(attempt) {
         cityLoading = true
         try {
-            cities = withContext(Dispatchers.IO) { CitySearch.Index(PlaceCatalogue.get(context).listedRows()) }
+            cities = withContext(Dispatchers.IO) { PlaceCatalogue.get(context).pickerIndex }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
