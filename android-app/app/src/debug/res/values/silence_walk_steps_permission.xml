@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="walk_steps_permission_reason">اسمح بإذن النشاط البدني لإضافة خطواتك إلى تقارير المسار.</string>
+    <string name="walk_steps_permission_allow">السماح بتسجيل الخطوات</string>
+    <string name="walk_steps_permission_settings">فتح إعدادات أذونات التطبيق</string>
+</resources>

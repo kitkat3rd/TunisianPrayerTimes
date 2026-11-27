@@ -2,7 +2,6 @@ package com.tunisianprayertimes
 
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -29,7 +28,7 @@ internal object LauncherShortcuts {
         runCatching {
             val manager = context.getSystemService(ShortcutManager::class.java) ?: return
             retirePinnedDevelopmentShortcuts(manager)
-            val launcher = ComponentName(context, MainActivity::class.java)
+            val launcher = LauncherIcon.current(context).component(context)
             val silenced = SilenceStatus.isAppControlledSilenceActive(context)
             val actions = listOf(
                 LauncherShortcutAction(
@@ -76,7 +75,8 @@ internal object LauncherShortcuts {
                     .build()
             }
             val current = manager.dynamicShortcuts.associateBy { it.id }
-            if (current.keys != desired.map { it.id }.toSet()) {
+            // A shortcut left on the launcher entry of another logo colour does not show: publish them all again.
+            if (current.keys != desired.map { it.id }.toSet() || current.values.any { it.activity != launcher }) {
                 manager.dynamicShortcuts = desired
             } else {
                 val changed = desired.filter { next ->

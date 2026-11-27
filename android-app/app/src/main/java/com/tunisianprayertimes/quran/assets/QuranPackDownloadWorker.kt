@@ -28,6 +28,7 @@ class QuranPackDownloadWorker(context: Context, params: WorkerParameters) : Coro
         val name = inputData.getString(KEY_PACK) ?: return Result.failure()
         val layout = withContext(Dispatchers.IO) { QuranPackLayout.load(applicationContext) } ?: return Result.failure()
         val pack = layout.packs.firstOrNull { it.name == name } ?: return Result.failure()
+        if (!pack.cdnPublished) return Result.failure(workDataOf(KEY_PROBLEM to QuranDownloadProblem.Unpublished.name))
         val installer = QuranPackInstaller(QuranAssets.cdnRoot(applicationContext))
         if (withContext(Dispatchers.IO) { installer.isInstalled(pack) }) return Result.success()
         // Longer than WorkManager's ten minutes on a slow connection: keep it in the foreground when allowed.
@@ -71,7 +72,7 @@ class QuranPackDownloadWorker(context: Context, params: WorkerParameters) : Coro
         } catch (error: QuranPackException) {
             Log.w(TAG, "Could not download ${pack.name}", error)
             // No room: what came is let go, so that a full phone gets its space back; nothing was installed yet.
-            if (error.problem == QuranDownloadProblem.Storage) withContext(Dispatchers.IO) { runCatching { installer.remove(pack) } }
+            if (error.problem == QuranDownloadProblem.Storage) withContext(Dispatchers.IO) { runCatching { installer.discardDownload(pack) } }
             if (error.problem == QuranDownloadProblem.Network && runAttemptCount < NETWORK_RETRIES) Result.retry()
             else Result.failure(workDataOf(KEY_PROBLEM to error.problem.name))
         }
@@ -99,7 +100,7 @@ class QuranPackDownloadWorker(context: Context, params: WorkerParameters) : Coro
 
     private fun notification(pack: QuranPack?, bytes: Long): Notification {
         val notifications = applicationContext.getSystemService(NotificationManager::class.java)
-        notifications.createNotificationChannel(NotificationChannel(CHANNEL_ID, "تنزيل صفحات المصحف والتلاوات", NotificationManager.IMPORTANCE_LOW).apply {
+        notifications.createNotificationChannel(NotificationChannel(CHANNEL_ID, "تنزيل ملفات القرآن", NotificationManager.IMPORTANCE_LOW).apply {
             description = "تقدّم التنزيل"
             setSound(null, null)
             enableVibration(false)
@@ -108,7 +109,11 @@ class QuranPackDownloadWorker(context: Context, params: WorkerParameters) : Coro
         val percent = if (total > 0L) (bytes * 100 / total).toInt().coerceIn(0, 100) else 0
         return Notification.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tab_quran)
-            .setContentTitle(if (pack?.kind == QuranPack.Kind.Audio) "تنزيل التلاوة" else "تنزيل صفحات المصحف")
+            .setContentTitle(when (pack?.kind) {
+                QuranPack.Kind.Audio -> "تنزيل التلاوة"
+                QuranPack.Kind.Tafsir -> "تنزيل تفسير ابن عاشور"
+                else -> "تنزيل صفحات المصحف"
+            })
             .setProgress(100, percent, total == 0L)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

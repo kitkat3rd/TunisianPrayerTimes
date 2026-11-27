@@ -42,10 +42,13 @@ object SilenceTraceStore {
             .also { database = it }
 
     /** Release the process-owned SQLite handle before a test tears down its Android runtime. */
-    @Synchronized internal fun closeForTest() {
-        val db = database
-        database = null
-        db?.close()
+    internal fun closeForTest() {
+        SilenceWalkReports.closeForTest()
+        synchronized(this) {
+            val db = database
+            database = null
+            db?.close()
+        }
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -59,14 +62,18 @@ object SilenceTraceStore {
 
     fun stop(context: Context, sessionId: Long) {
         val db = store(context)
-        db.stop(sessionId, db.timelineTime())
+        if (db.stop(sessionId, db.timelineTime())) SilenceWalkReports.closed(context, sessionId)
     }
 
     fun sessions(context: Context): List<TraceSession> = store(context).sessions()
 
+    internal fun session(context: Context, id: Long): TraceSession? = store(context).session(id)
+
+    internal fun latestCompletedId(context: Context): Long? = store(context).latestCompletedId()
+
     fun entries(context: Context, sessionId: Long): List<TraceEntry> = store(context).entries(sessionId)
 
-    fun delete(context: Context, sessionId: Long) = store(context).delete(sessionId)
+    fun delete(context: Context, sessionId: Long) = SilenceWalkReports.delete(context, sessionId, store(context))
 
     @Suppress("UNUSED_PARAMETER")
     fun append(
@@ -180,8 +187,8 @@ internal class TraceDatabase(context: Context, private val changed: () -> Unit =
         return true
     }
 
-    @Synchronized fun stop(sessionId: Long, now: Long) {
-        if (active?.id != sessionId) return
+    @Synchronized fun stop(sessionId: Long, now: Long): Boolean {
+        if (active?.id != sessionId) return false
         try {
             writableDatabase.transaction {
                 val last = rawQuery("SELECT MAX(at) FROM entries WHERE session_id = ?", args(sessionId)).use {
@@ -198,6 +205,7 @@ internal class TraceDatabase(context: Context, private val changed: () -> Unit =
             recording = null
             changed()
         }
+        return true
     }
 
     private fun finish(db: SQLiteDatabase, id: Long, at: Long, kind: String, detail: String) {
@@ -209,12 +217,19 @@ internal class TraceDatabase(context: Context, private val changed: () -> Unit =
         "SELECT id, started_at, ended_at, time_zone_id FROM sessions ORDER BY id DESC", null
     ).use { cursor ->
         buildList {
-            while (cursor.moveToNext()) add(TraceSession(
-                cursor.getLong(0), cursor.getLong(1), if (cursor.isNull(2)) null else cursor.getLong(2),
-                cursor.getString(3)
-            ))
+            while (cursor.moveToNext()) add(cursor.session())
         }
     }
+
+    fun session(id: Long): TraceSession? = writableDatabase.rawQuery(
+        "SELECT id, started_at, ended_at, time_zone_id FROM sessions WHERE id = ?", args(id),
+    ).use { if (it.moveToFirst()) it.session() else null }
+
+    fun latestCompletedId(): Long? = writableDatabase.rawQuery(
+        "SELECT id FROM sessions WHERE ended_at IS NOT NULL ORDER BY id DESC LIMIT 1", null,
+    ).use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    private fun Cursor.session() = TraceSession(getLong(0), getLong(1), if (isNull(2)) null else getLong(2), getString(3))
 
     fun entries(sessionId: Long): List<TraceEntry> = writableDatabase.rawQuery(
         """SELECT id, at, kind, detail, latitude, longitude, accuracy_meters FROM entries

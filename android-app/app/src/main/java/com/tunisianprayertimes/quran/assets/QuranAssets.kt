@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -133,35 +134,104 @@ internal class PlayOrCdnPackSource(
     createPlay: (onUnavailable: () -> Unit) -> QuranPackSource,
 ) : QuranPackSource {
     private val usePlay = MutableStateFlow(true)
-    // Play packs that an earlier launch downloaded from the Worker.
-    private val fromCdn = MutableStateFlow<Set<String>>(emptySet())
+    // A retained copy can be current or an older, still readable commentary.
+    private val fromCdn = MutableStateFlow<Map<String, QuranPackState>>(emptyMap())
     // What Play was asked for and whether mobile data was allowed; the Worker takes over these requests.
     private val askedOfPlay = ConcurrentHashMap<String, Boolean>()
     private val play = createPlay(::switchToCdn)
     // Packs only the Worker serves, whichever source the Play packs come from.
     private val workerOnly = layout.packs.filter { it.delivery == QuranPack.Delivery.Cdn }.map { it.name }.toSet()
+    private val removedTafsir = MutableStateFlow(false)
+    private val playTafsir = layout.tafsir?.takeIf { it.name !in workerOnly }
+    private val checkingBook = QuranPackState(QuranPackStatus.Transferring)
+    private val checkedBook = MutableStateFlow(checkingBook)
+    // Used if the private copy could not be written, e.g. on a full phone.
+    @Volatile private var verifiedPlayFile: Pair<File, Long>? = null
+    private val checkedPlayStates = combine(play.states, checkedBook) { states, checked ->
+        if (playTafsir != null && states[playTafsir.name]?.status == QuranPackStatus.Available)
+            states + (playTafsir.name to checked)
+        else states
+    }
 
     init {
         scanCdn()
+        playTafsir?.let { pack ->
+            // Play controls the lifetime of its pack directory on updates. Keep the completed
+            // edition in private storage even if the reader hasn't opened this book yet.
+            scope.launch(Dispatchers.IO) {
+                combine(play.states, removedTafsir) { states, removed ->
+                    !removed && states[pack.name]?.status == QuranPackStatus.Available
+                }.distinctUntilChanged().collect { delivered ->
+                    verifiedPlayFile = null
+                    checkedBook.value = checkingBook
+                    if (delivered && !removedTafsir.value) {
+                        checkedBook.value = retainDeliveredBook(pack)
+                        // A delete can finish while the copy is streaming.
+                        if (removedTafsir.value) cdnInstaller.remove(pack)
+                        scanCdn()
+                    }
+                }
+            }
+        }
     }
 
     override val states: StateFlow<Map<String, QuranPackState>> = usePlay.flatMapLatest { viaPlay ->
         if (viaPlay) {
-            val playPacks = combine(play.states, fromCdn) { fromPlay, worker ->
-                fromPlay + worker.filter { fromPlay[it]?.available != true }.associateWith { QuranPackState.Available }
+            val playPacks = combine(checkedPlayStates, fromCdn) { fromPlay, stored ->
+                fromPlay + stored.mapValues { (name, local) ->
+                    val current = fromPlay[name] ?: QuranPackState.Missing
+                    when {
+                        current.status == QuranPackStatus.Available -> current
+                        local.previousVersion -> current.copy(previousVersion = true)
+                        else -> local
+                    }
+                }
             }
             if (workerOnly.isEmpty()) playPacks
             else combine(playPacks, cdn.value.states) { fromPlay, fromWorker -> fromPlay + fromWorker.filterKeys { it in workerOnly } }
-        } else combine(play.states, cdn.value.states) { fromPlay, fromWorker -> fromWorker + fromPlay.filterValues { it.available } }
+        } else combine(checkedPlayStates, cdn.value.states) { fromPlay, fromWorker -> fromWorker + fromPlay.filterValues { it.available } }
     // Until the sources have answered, availability is unknown. A synthetic Missing map would
     // briefly show a download prompt for packs already on the device during a cold launch.
+    }.combine(removedTafsir) { states, removed ->
+        if (removed && playTafsir != null) states + (playTafsir.name to QuranPackState.Missing) else states
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     private val active: QuranPackSource get() = if (usePlay.value) play else cdn.value
 
+    private fun retainDeliveredBook(pack: QuranPack): QuranPackState {
+        if (cdnInstaller.isInstalled(pack)) return QuranPackState.Available
+        val source = play.directory(pack) ?: return QuranPackState(QuranPackStatus.Failed, problem = QuranDownloadProblem.Integrity)
+        try {
+            cdnInstaller.retainPlayTafsir(pack, source)
+            if (cdnInstaller.isInstalled(pack)) return QuranPackState.Available
+        } catch (error: java.io.IOException) {
+            Log.w("QuranPacks", "Could not retain ${pack.name} in private storage", error)
+            val entry = pack.files.single()
+            val file = File(source, entry.path)
+            if (file.isFile && file.length() == entry.bytes && entry.sha256 != null &&
+                runCatching { QuranPackInstaller.sha256(file) }.getOrNull() == entry.sha256) {
+                verifiedPlayFile = file to file.lastModified()
+                return QuranPackState.Available
+            }
+        } catch (error: QuranPackException) {
+            return QuranPackState(QuranPackStatus.Failed, problem = error.problem)
+        }
+        return QuranPackState(QuranPackStatus.Failed, problem = QuranDownloadProblem.Integrity)
+    }
+
     // The active source's copy first, so that repairing a damaged copy never removes the other one.
     override fun directory(pack: QuranPack): File? {
-        val fromWorker = { cdnInstaller.installedDirectory(pack).takeIf { it.isDirectory } }
+        if (pack == playTafsir && removedTafsir.value) return null
+        val fromWorker = { cdnInstaller.readableDirectory(pack) }
+        if (pack == playTafsir) {
+            if (cdnInstaller.isInstalled(pack)) return cdnInstaller.installedDirectory(pack)
+            verifiedPlayFile?.let { (file, modified) ->
+                val source = play.directory(pack)
+                val entry = pack.files.single()
+                if (source != null && file == File(source, entry.path) && file.length() == entry.bytes && file.lastModified() == modified) return source
+            }
+            return fromWorker()
+        }
         return when {
             pack.name in workerOnly -> fromWorker()
             usePlay.value -> play.directory(pack) ?: fromWorker()
@@ -173,6 +243,10 @@ internal class PlayOrCdnPackSource(
         val (fromWorker, fromPlay) = packs.partition { it.name in workerOnly }
         if (fromWorker.isNotEmpty()) cdn.value.fetch(fromWorker, allowMetered)
         if (fromPlay.isEmpty()) return
+        if (playTafsir != null && playTafsir in fromPlay) {
+            if (usePlay.value && checkedBook.value.status == QuranPackStatus.Failed) play.remove(listOf(playTafsir))
+            removedTafsir.value = false
+        }
         if (!usePlay.value) return cdn.value.fetch(fromPlay, allowMetered)
         fromPlay.forEach { pack -> askedOfPlay.merge(pack.name, allowMetered, Boolean::or) }
         play.fetch(fromPlay, allowMetered)
@@ -190,6 +264,7 @@ internal class PlayOrCdnPackSource(
         val (fromWorker, fromPlay) = packs.partition { it.name in workerOnly }
         if (fromWorker.isNotEmpty()) cdn.value.remove(fromWorker)
         if (fromPlay.isEmpty()) return
+        if (playTafsir in fromPlay) removedTafsir.value = true
         fromPlay.forEach { askedOfPlay.remove(it.name) }
         play.remove(fromPlay)
         if (!usePlay.value) cdn.value.remove(fromPlay)
@@ -215,7 +290,15 @@ internal class PlayOrCdnPackSource(
 
     private fun scanCdn() {
         scope.launch(Dispatchers.IO) {
-            fromCdn.value = layout.packs.filter { it.name !in workerOnly && cdnInstaller.isInstalled(it) }.map { it.name }.toSet()
+            fromCdn.value = buildMap {
+                for (pack in layout.packs) {
+                    if (pack.name in workerOnly) continue
+                    if (cdnInstaller.isInstalled(pack)) put(pack.name, QuranPackState.Available)
+                    else if (pack == playTafsir && cdnInstaller.readableDirectory(pack) != null) {
+                        put(pack.name, QuranPackState.Missing.copy(previousVersion = true))
+                    }
+                }
+            }
         }
     }
 
@@ -224,7 +307,9 @@ internal class PlayOrCdnPackSource(
         if (!usePlay.compareAndSet(true, false)) return
         val asked = askedOfPlay.toMap()
         askedOfPlay.clear()
-        val delivered = play.states.value.filterValues { it.available }.keys
+        val delivered = play.states.value.filter { (name, state) ->
+            state.status == QuranPackStatus.Available && (name != playTafsir?.name || checkedBook.value.status == QuranPackStatus.Available)
+        }.keys
         val handover = layout.packs.filter { it.name in asked && it.name !in delivered }.groupBy { asked.getValue(it.name) }
         scope.launch {
             // The Worker's source decides how to queue from its states; wait until it has read them.

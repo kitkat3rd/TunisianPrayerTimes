@@ -20,6 +20,50 @@ internal class QuranPackInstaller(private val root: File) {
 
     fun isInstalled(pack: QuranPack): Boolean = installedDirectory(pack).isDirectory
 
+    /** Only complete, atomically installed revisions live directly under root. */
+    private fun tafsirRevisions(pack: QuranPack): List<File> {
+        if (pack.kind != QuranPack.Kind.Tafsir) return emptyList()
+        val prefix = "${pack.name}-"
+        return root.listFiles().orEmpty().filter { dir ->
+            dir.isDirectory && dir.name.startsWith(prefix) && REVISION.matches(dir.name.removePrefix(prefix))
+        }
+    }
+
+    fun readableDirectory(pack: QuranPack): File? {
+        val current = installedDirectory(pack)
+        if (current.isDirectory) return current
+        return tafsirRevisions(pack)
+            .filter { dir -> pack.files.all { File(dir, it.path).isFile } }
+            .maxByOrNull { it.lastModified() }
+    }
+
+    /** Play may replace its own directories when the APK updates. Retain its delivered edition on IO. */
+    fun retainPlayTafsir(pack: QuranPack, source: File) = synchronized(installLock) {
+        if (pack.kind != QuranPack.Kind.Tafsir || isInstalled(pack)) return@synchronized
+        val target = installedDirectory(pack)
+        val staging = File(root, "$INSTALLS/${target.name}.play")
+        staging.deleteRecursively()
+        try {
+            for (entry in pack.files) {
+                val original = File(source, entry.path)
+                if (!original.isFile || original.length() != entry.bytes) return@synchronized
+                val dest = File(staging, entry.path)
+                dest.parentFile?.mkdirs()
+                original.inputStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
+                if (dest.length() != entry.bytes) return@synchronized
+                if (entry.sha256 != null && sha256(dest) != entry.sha256)
+                    throw QuranPackException(QuranDownloadProblem.Integrity, "Unexpected Play copy of ${entry.path}")
+            }
+            if (staging.renameTo(target)) pruneReplacedTafsir(pack, target)
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
+
+    private fun pruneReplacedTafsir(pack: QuranPack, current: File) {
+        tafsirRevisions(pack).filterNot { it == current }.forEach { it.deleteRecursively() }
+    }
+
     private fun partialFile(pack: QuranPack) = File(root, "$DOWNLOADS/${pack.archive.key.substringAfterLast('/')}.part")
 
     /** Returns the verified archive. [onProgress] receives the bytes downloaded so far. */
@@ -127,40 +171,54 @@ internal class QuranPackInstaller(private val root: File) {
             staging.deleteRecursively()
             throw QuranPackException(QuranDownloadProblem.Integrity, "Incomplete unpack of ${pack.name}")
         }
-        if (!staging.renameTo(target)) {
-            staging.deleteRecursively()
-            throw QuranPackException(QuranDownloadProblem.Storage, "Could not move ${pack.name} into place")
+        synchronized(installLock) {
+            if (target.isDirectory) staging.deleteRecursively()
+            else if (!staging.renameTo(target)) {
+                staging.deleteRecursively()
+                throw QuranPackException(QuranDownloadProblem.Storage, "Could not move ${pack.name} into place")
+            }
+            pruneReplacedTafsir(pack, target)
         }
         archive.delete()
         return target
     }
 
-    /** Callers cancel the pack's download first; a half-unpacked copy goes too. */
-    fun remove(pack: QuranPack) {
-        installedDirectory(pack).deleteRecursively()
+    fun discardDownload(pack: QuranPack) {
         File(root, "$INSTALLS/${installedDirectory(pack).name}").deleteRecursively()
         partialFile(pack).delete()
+    }
+
+    /** A deletion by the reader also removes any retained edition. */
+    fun remove(pack: QuranPack) = synchronized(installLock) {
+        installedDirectory(pack).deleteRecursively()
+        tafsirRevisions(pack).forEach { it.deleteRecursively() }
+        discardDownload(pack)
     }
 
     /**
      * Deletes earlier versions of packs and downloads the current layout no longer lists. Work on a
      * current pack is left alone: a download worker may be writing or unpacking it right now.
      */
-    fun removeStale(layout: QuranPackLayout) {
+    fun removeStale(layout: QuranPackLayout) = synchronized(installLock) {
         val current = layout.packs.map { installedDirectory(it).name }.toSet()
+        val retained = layout.packs.filter { it.kind == QuranPack.Kind.Tafsir }
+            .mapNotNull { readableDirectory(it)?.name }.toSet()
         val archives = layout.packs.map { partialFile(it).name }.toSet()
         root.listFiles()?.forEach { file ->
-            if (file.name != DOWNLOADS && file.name != INSTALLS && file.name !in current) file.deleteRecursively()
+            if (file.name != DOWNLOADS && file.name != INSTALLS && file.name !in current && file.name !in retained)
+                file.deleteRecursively()
         }
         File(root, INSTALLS).listFiles()?.forEach { if (it.name !in current) it.deleteRecursively() }
         File(root, DOWNLOADS).listFiles()?.forEach { if (it.name !in archives) it.delete() }
     }
 
-    private companion object {
-        const val DOWNLOADS = ".downloads"
-        const val INSTALLS = ".installs"
-        const val BUFFER = 64 * 1024
-        const val HTTP_RANGE_NOT_SATISFIABLE = 416
+    companion object {
+        private val installLock = Any()
+        private val REVISION = Regex("[0-9a-f]{12}")
+        private const val DOWNLOADS = ".downloads"
+        private const val INSTALLS = ".installs"
+        private const val BUFFER = 64 * 1024
+        private const val HTTP_RANGE_NOT_SATISFIABLE = 416
 
         fun sha256(file: File): String {
             val digest = MessageDigest.getInstance("SHA-256")

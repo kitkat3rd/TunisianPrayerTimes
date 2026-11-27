@@ -42,7 +42,7 @@ internal object DetectionRecording {
             // Its ordinary ticks and outward fixes do not start another walk. A return fix,
             // explicit acquisition, or a fresh search after parking can begin the next report.
             val returning = fix != null && (fix.accuracyMeters ?: Double.POSITIVE_INFINITY) <= 30 &&
-                (!engine.detector.clearlyAway || engine.approachingOnLastFix)
+                (engine.detector.distance < 0 || engine.approachingOnLastFix)
             if (waitingForReturn && !recheck && !newPrayerStart && !returning && engine.detector.arrival == null) return
             val id = try {
                 SilenceTraceStore.start(c, fix?.elapsedRealtimeMillis ?: SystemClock.elapsedRealtime())

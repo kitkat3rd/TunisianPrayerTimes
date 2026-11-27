@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tunisianprayertimes.mosque.trace.TraceEntry
 import com.tunisianprayertimes.mosque.trace.TraceSession
+import com.tunisianprayertimes.mosque.trace.TraceSteps
 import com.tunisianprayertimes.mosque.trace.displayTitle
 import com.tunisianprayertimes.mosque.trace.hasCoordinates
 import com.tunisianprayertimes.mosque.trace.isRouteSample
@@ -40,8 +41,17 @@ internal fun SilenceTraceReplay(session: TraceSession, entries: List<TraceEntry>
     }
     key(session.id) {
         var eventsOnly by rememberSaveable { mutableStateOf(false) }
-        val visible = remember(entries, eventsOnly) {
-            entries.indices.filter { !eventsOnly || (!entries[it].isRouteSample && entries[it].kind != "monitor_fix") }
+        var stepsOnly by rememberSaveable { mutableStateOf(false) }
+        val steps = remember(entries) { TraceSteps(entries) }
+        val visible = remember(entries, eventsOnly, stepsOnly) {
+            entries.indices.filter { index ->
+                val entry = entries[index]
+                when {
+                    stepsOnly -> entry.kind == "walk_steps" || entry.kind.startsWith("step_")
+                    eventsOnly -> !entry.isRouteSample && entry.kind != "monitor_fix" && entry.kind != "walk_steps"
+                    else -> true
+                }
+            }
         }
         val nearby = remember(entries) { nearbyRouteIndices(entries) }
         // No selection means the newest visible record, including new samples during a live walk.
@@ -77,17 +87,27 @@ internal fun SilenceTraceReplay(session: TraceSession, entries: List<TraceEntry>
             val mapIndex = currentIndex ?: entries.lastIndex
             SilenceTraceMap(session.id, entries, mapIndex, nearby[mapIndex]) { index ->
                 eventsOnly = false
+                stepsOnly = false
                 playing = false
                 selectedId = entries[index].id
             }
             Text("الخط الزمني", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium,
                 color = Colors.PrimaryText, fontWeight = FontWeight.Bold)
-            FilterChip(
-                selected = eventsOnly, onClick = {
+            Text(steps.summary, style = MaterialTheme.typography.bodyMedium, color = Colors.SecondaryText)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = eventsOnly, onClick = {
                     eventsOnly = !eventsOnly
+                    stepsOnly = false
                     playing = false
-                }, label = { Text("الأحداث فقط") },
-            )
+                }, label = { Text("الأحداث فقط") })
+                if (steps.sources.isNotEmpty()) {
+                    FilterChip(selected = stepsOnly, onClick = {
+                        stepsOnly = !stepsOnly
+                        eventsOnly = false
+                        playing = false
+                    }, label = { Text("الخطوات فقط") })
+                }
+            }
             if (currentIndex == null) {
                 Text("لا توجد أحداث مسجّلة في هذا العرض.", color = Colors.SecondaryText)
             } else {
@@ -98,8 +118,16 @@ internal fun SilenceTraceReplay(session: TraceSession, entries: List<TraceEntry>
                         Text("$stamp  ·  ${selection + 1} / ${visible.size}", style = MaterialTheme.typography.labelMedium,
                             color = Colors.SecondaryText)
                         Text(current.displayTitle, fontWeight = FontWeight.Bold, color = Colors.PrimaryText)
-                        if (current.detail.isNotBlank() && current.detail != current.displayTitle) {
+                        if (current.kind != "walk_steps" && current.detail.isNotBlank() && current.detail != current.displayTitle) {
                             Text(current.detail, style = MaterialTheme.typography.bodyMedium, color = Colors.PrimaryText)
+                        }
+                        steps.intervalStart(current)?.let { since ->
+                            Text("خطوات بين ${formatter.format(Instant.ofEpochMilli(since))} و$stamp",
+                                style = MaterialTheme.typography.bodySmall, color = Colors.SecondaryText)
+                        }
+                        steps.recordedThrough(currentIndex)?.let { total ->
+                            Text("مجموع الخطوات المرصودة حتى هذا الحدث $total",
+                                style = MaterialTheme.typography.bodySmall, color = Colors.SecondaryText)
                         }
                         Text(positionDescription(current, entries.getOrNull(nearby[currentIndex])),
                             style = MaterialTheme.typography.bodySmall, color = Colors.SecondaryText)

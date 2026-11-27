@@ -182,4 +182,52 @@ class QuranPackInstallerTest {
         installer.remove(current)
         assertFalse(installer.isInstalled(current))
     }
+
+    private val tafsirPath = "quran/tafsir/ashur.db"
+
+    private fun tafsirPack(text: ByteArray, archive: ByteArray) =
+        pack(archive).copy(name = "quran_tafsir_ashur", kind = QuranPack.Kind.Tafsir, bytes = text.size.toLong(),
+            files = listOf(QuranPackFile(tafsirPath, text.size.toLong(), sha256(text))))
+
+    @Test
+    fun tafsirUpdateKeepsTheReadableEditionUntilItsSuccessorIsInstalled() {
+        val installer = QuranPackInstaller(folder.root)
+        served = zip(tafsirPath to page1)
+        val old = tafsirPack(page1, served)
+        installer.install(installer.download(url, old), old)
+        val newArchive = zip(tafsirPath to page2)
+        val next = tafsirPack(page2, newArchive)
+        val layout = QuranPackLayout("https://cdn.example/", listOf(next))
+
+        installer.removeStale(layout)
+        assertFalse(installer.isInstalled(next))
+        assertArrayEquals(page1, File(installer.readableDirectory(next)!!, tafsirPath).readBytes())
+        // An incomplete or failed replacement and a retry leave the readable text alone.
+        installer.discardDownload(next)
+        assertEquals(installer.installedDirectory(old), installer.readableDirectory(next))
+        served = newArchive
+        installer.install(installer.download(url, next), next)
+        assertArrayEquals(page2, File(installer.readableDirectory(next)!!, tafsirPath).readBytes())
+        assertFalse(installer.isInstalled(old))
+    }
+
+    @Test
+    fun playDeliveredTafsirRemainsReadableAfterPlayLosesItsCopyAndCanBeDeleted() {
+        val installer = QuranPackInstaller(folder.root)
+        val play = folder.newFolder()
+        val file = File(play, tafsirPath).apply { parentFile!!.mkdirs(); writeBytes(page1) }
+        val old = tafsirPack(page1, zip(tafsirPath to page1))
+        val next = tafsirPack(page2, zip(tafsirPath to page2))
+        installer.retainPlayTafsir(old, play)
+        // A different file with the new edition's length cannot replace the readable old edition.
+        file.writeBytes(ByteArray(page2.size))
+        val error = assertThrows(QuranPackException::class.java) { installer.retainPlayTafsir(next, play) }
+        assertEquals(QuranDownloadProblem.Integrity, error.problem)
+        assertTrue(file.delete())
+        installer.removeStale(QuranPackLayout("https://cdn.example/", listOf(next)))
+        assertArrayEquals(page1, File(installer.readableDirectory(next)!!, tafsirPath).readBytes())
+        installer.remove(next)
+        assertFalse(installer.isInstalled(old))
+        assertTrue(installer.readableDirectory(next) == null)
+    }
 }

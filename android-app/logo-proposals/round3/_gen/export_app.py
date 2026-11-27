@@ -1,11 +1,20 @@
-"""Install a round 3 proposal as the phone app's launcher icon.
+"""Install a proposal as the phone app's launcher icon, with other colours of the same drawing.
 
-Usage: python -I export_app.py [proposal-dir]   (default: 15-final-teal)
+Usage: python -I export_app.py [proposal-dir] [name=proposal-dir ...]
+       (default: 15-final-teal; a directory is relative to round3/)
+Installed 2026-11-27 with:
+       python -I export_app.py ../round4/06-one-axis-cream blue=../round4/12-one-axis-blue-cream
+
+The first proposal is the app's own icon, and the one the store pictures show. Each
+name=proposal-dir is another colour of it that the app's user can choose (LauncherIcon.kt).
+It gets drawable/ic_launcher_<name>_foreground.xml and mipmap-anydpi-v26/ic_launcher_<name>.xml,
+and shares the first one's monochrome layer. It gets no legacy PNGs: the app's minSdk is 26,
+where the adaptive icon is always used.
 
 Writes, under android-app/:
   app/src/main/res/drawable/ic_launcher_foreground.xml   foreground.svg as a VectorDrawable
   app/src/main/res/drawable/ic_launcher_monochrome.xml   monochrome.svg (themed icon)
-  app/src/main/res/values/ic_launcher_background.xml     the flat background colour
+  app/src/main/res/values/ic_launcher_background.xml     the flat background colours
   app/src/main/res/mipmap-anydpi-v26/ic_launcher*.xml    adaptive icons with <monochrome>
   app/src/main/res/mipmap-*/ic_launcher*.png             legacy PNGs (rounded square, circle)
   app-icon.svg, app-icon-512.png                         Play Store icon: the central 72dp, full bleed
@@ -13,8 +22,8 @@ Writes, under android-app/:
                                                          app's teal, the app name from strings.xml
                                                          in Amiri Bold (_gen/fonts/Amiri-Bold.ttf, OFL)
 
-The proposal's SVGs come from gen4.py: one <path fill fill-rule d> per colour, with
-absolute M/L/Z data only, so the conversion is one-to-one.
+The proposal's SVGs come from gen4.py or round4's gen.py: one <path fill fill-rule d> per
+colour, with absolute M/L/Z data only, so the conversion is one-to-one.
 """
 
 import base64
@@ -29,7 +38,11 @@ from PIL import Image
 ROUND3 = Path(__file__).resolve().parent.parent
 ANDROID = ROUND3.parent.parent
 RES = ANDROID / "app" / "src" / "main" / "res"
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+BROWSERS = (
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+)
 
 DENSITIES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
 PATH_RE = re.compile(r'<path fill="(#[0-9A-Fa-f]{6})" fill-rule="(evenodd|nonzero)" d="([^"]+)"/>')
@@ -63,13 +76,22 @@ def vector(svg: str, comment: str) -> str:
     )
 
 
-ADAPTIVE = """<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
-</adaptive-icon>
-"""
+def adaptive(background: str, foreground: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        f'    <background android:drawable="@color/{background}" />\n'
+        f'    <foreground android:drawable="@drawable/{foreground}" />\n'
+        '    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />\n'
+        "</adaptive-icon>\n"
+    )
+
+
+def browser() -> str:
+    for exe in BROWSERS:
+        if Path(exe).exists():
+            return exe
+    raise SystemExit("export_app.py needs Chrome or Edge to draw the PNGs")
 
 
 def render_pngs(icon_svg: Path, tmp: Path):
@@ -110,7 +132,7 @@ def render_pngs(icon_svg: Path, tmp: Path):
 
 def chrome_shot(html: Path, out: Path, width: int, height: int, transparent=False):
     # Headless Chrome sometimes hangs on this PC; a private profile and one retry get past it.
-    args = [CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
+    args = [browser(), "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
             "--no-first-run", f"--user-data-dir={html.parent / 'chrome-profile'}",
             f"--screenshot={out}", f"--window-size={width},{height}", html.as_uri()]
     if transparent:
@@ -151,14 +173,14 @@ def feature_graphic(src: Path, tmp: Path):
     <g clip-path="url(#disc)">{icon_body}</g>
   </svg>
   <text x="512" y="398" text-anchor="middle" font-family="Amiri, serif" font-weight="700" font-size="60" fill="#FFFFFF" direction="rtl">{name}</text>
-  <text x="512" y="460" text-anchor="middle" font-family="'Noto Sans Arabic', sans-serif" font-size="20" fill="#D4AF37">Tunisian Prayer Times</text>
+  <text x="512" y="460" text-anchor="middle" font-family="'IBM Plex Sans Arabic', sans-serif" font-size="20" fill="#D4AF37">Tunisian Prayer Times</text>
 </svg>
 """
     write(ANDROID / "feature-graphic.svg", svg)
     # The name is in Amiri Bold (owner's pick, 2026-11-03; _gen/fonts, SIL OFL), the
-    # tagline in the app's Noto Sans Arabic. The SVG names both, with generic fallbacks.
+    # tagline in the app's IBM Plex Sans Arabic. The SVG names both, with generic fallbacks.
     faces = (("Amiri", 700, Path(__file__).parent / "fonts" / "Amiri-Bold.ttf"),
-             ("Noto Sans Arabic", 400, RES / "font" / "noto_sans_arabic.ttf"))
+             ("IBM Plex Sans Arabic", 400, RES / "font" / "ibm_plex_sans_arabic_regular.ttf"))
     fonts = "".join(
         f"@font-face{{font-family:'{family}';font-weight:{w};"
         f"src:url(data:font/ttf;base64,{base64.b64encode(f.read_bytes()).decode()})}}"
@@ -173,21 +195,45 @@ def feature_graphic(src: Path, tmp: Path):
     print("feature-graphic.png")
 
 
-def main():
-    src = ROUND3 / (sys.argv[1] if len(sys.argv) > 1 else "15-final-teal")
-    fg = (src / "foreground.svg").read_text(encoding="utf-8")
-    mono = (src / "monochrome.svg").read_text(encoding="utf-8")
+def flat_background(src: Path) -> str:
     bg = re.search(r'<rect width="108" height="108" fill="(#[0-9A-Fa-f]{6})"/>',
                    (src / "background.svg").read_text(encoding="utf-8"))
-    assert bg, "the app icon needs a flat background colour"
-    note = f"Generated by logo-proposals/round3/_gen/export_app.py from {src.name}; edit gen4.py, not this file."
-    write(RES / "drawable" / "ic_launcher_foreground.xml", vector(fg, note))
-    write(RES / "drawable" / "ic_launcher_monochrome.xml", vector(mono, note))
+    assert bg, f"{src.name}: the app icon needs a flat background colour"
+    return bg.group(1)
+
+
+def note_for(src: Path) -> str:
+    return (f"Generated by logo-proposals/round3/_gen/export_app.py from {src.parent.name}/{src.name}; "
+            "edit the proposal, not this file.")
+
+
+def main():
+    args = sys.argv[1:]
+    others = dict(a.split("=", 1) for a in args if "=" in a)
+    src = (ROUND3 / next((a for a in args if "=" not in a), "15-final-teal")).resolve()
+    fg = (src / "foreground.svg").read_text(encoding="utf-8")
+    mono = (src / "monochrome.svg").read_text(encoding="utf-8")
+    write(RES / "drawable" / "ic_launcher_foreground.xml", vector(fg, note_for(src)))
+    write(RES / "drawable" / "ic_launcher_monochrome.xml", vector(mono, note_for(src)))
+    colours = {"ic_launcher_background": flat_background(src)}
+    for name in ("ic_launcher", "ic_launcher_round"):
+        write(RES / "mipmap-anydpi-v26" / f"{name}.xml", adaptive("ic_launcher_background", "ic_launcher_foreground"))
+    for name, folder in others.items():
+        other = (ROUND3 / folder).resolve()
+        assert (other / "monochrome.svg").read_text(encoding="utf-8") == mono, \
+            f"{other.name} is not the same drawing as {src.name}"
+        write(RES / "drawable" / f"ic_launcher_{name}_foreground.xml",
+              vector((other / "foreground.svg").read_text(encoding="utf-8"), note_for(other)))
+        background = "ic_launcher_background"
+        if flat_background(other) != colours[background]:
+            background = f"ic_launcher_{name}_background"
+            colours[background] = flat_background(other)
+        write(RES / "mipmap-anydpi-v26" / f"ic_launcher_{name}.xml",
+              adaptive(background, f"ic_launcher_{name}_foreground"))
     write(RES / "values" / "ic_launcher_background.xml",
           '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
-          f'    <color name="ic_launcher_background">{bg.group(1)}</color>\n</resources>\n')
-    for name in ("ic_launcher", "ic_launcher_round"):
-        write(RES / "mipmap-anydpi-v26" / f"{name}.xml", ADAPTIVE)
+          + "".join(f'    <color name="{name}">{value}</color>\n' for name, value in colours.items())
+          + "</resources>\n")
     # Play Store icon: the visible 72dp square, full bleed (Play applies its own mask).
     body = (src / "icon.svg").read_text(encoding="utf-8").split(">", 1)[1]
     write(ANDROID / "app-icon.svg",

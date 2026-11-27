@@ -9,7 +9,8 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
         const val BOUNDARY_MARGIN_METERS = 2.0
     }
 
-    enum class Arrival { INSIDE, EDGE, EARLIER_PRECISE, NEARBY, WALKED_IN }
+    enum class Arrival { INSIDE, EDGE, EARLIER_PRECISE, WALKED_IN }
+    enum class Departure { CLEAR_OUTSIDE, EXTERIOR_PATH }
     private data class Reading(val point: GeoPoint, val at: Long, val accuracy: Double, val distance: Double) {
         fun separation(other: Reading): Double {
             val (x, y) = project(point, other.point)
@@ -19,6 +20,9 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
             point.reachableOnFootFrom(previous.point, at - previous.at, previous.accuracy + accuracy)
         val nearEdge get() = distance <= 3
         val inside get() = distance < -(accuracy + BOUNDARY_MARGIN_METERS)
+        val accuracyCircleInside get() = distance < -accuracy
+        val shallowInterior get() = accuracy <= RELIABLE_ACCURACY_METERS &&
+            distance < -maxOf(BOUNDARY_MARGIN_METERS, accuracy / 2)
         val clearlyOutside get() = distance > accuracy + 8
         val nearby get() = distance > 3 && distance <= accuracy
     }
@@ -37,8 +41,28 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
             while (readings.size > 3 && readings[1].at <= r.at - 45_000) readings.removeFirst()
         }
         fun spans(ms: Long) = readings.size >= 3 && readings.last().at - readings.first().at >= ms
-        fun edgeComplete() = started && readings.last().nearEdge &&
-            spans(if (readings.any { it.accuracy > RELIABLE_ACCURACY_METERS }) 25_000 else 15_000)
+        fun edgeComplete(): Boolean {
+            val last = readings.lastOrNull() ?: return false
+            val dwell = if (readings.any { it.accuracy > RELIABLE_ACCURACY_METERS }) 25_000L else 15_000L
+            if (!last.nearEdge || !spans(dwell)) return false
+            // Allow brief edge jitter after corroborated interior readings in this stop.
+            var lastInsideAt: Long? = null
+            for (index in readings.lastIndex downTo 0) {
+                val sample = readings[index]
+                if (sample.distance > sample.accuracy) return false
+                if (!sample.accuracyCircleInside) continue
+                if (lastInsideAt == null) {
+                    if (last.at - sample.at > 12_000) return false
+                    lastInsideAt = sample.at
+                } else if (lastInsideAt - sample.at >= 3_000) {
+                    return lastInsideAt - sample.at <= 12_000
+                }
+            }
+            return false
+        }
+        fun shallowStopComplete() = spans(25_000) && readings.any {
+            it.at - readings.first().at >= 1_500 && readings.last().at - it.at >= 1_500
+        }
     }
 
     /** A measured walk from clearly outside to confidently inside this one polygon. */
@@ -119,7 +143,7 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
         private val inside = Stop()
         private val edge = Stop()
         private val drift = Stop()
-        private val nearby = Stop()
+        private val shallowInterior = Stop()
         private val walkIn = if (stricter) null else WalkIn()
         private val spacedInterior = ArrayDeque<Reading>(3)
         private var previousInterior: Reading? = null
@@ -142,7 +166,7 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
 
         private fun clearDwellEvidence() {
             history.clear()
-            inside.clear(); edge.clear(); drift.clear(); nearby.clear()
+            inside.clear(); edge.clear(); drift.clear(); shallowInterior.clear()
             firstDoor = null; door = null; lastAt = null; arrival = null
         }
 
@@ -192,39 +216,52 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
             return false
         }
 
+        fun indoorReference(r: Reading, holding: Arrival?): ExteriorReturnPath.IndoorSupport {
+            if (r.accuracy > RELIABLE_ACCURACY_METERS) return ExteriorReturnPath.IndoorSupport.NONE
+            if (r.inside) return ExteriorReturnPath.IndoorSupport.ESTABLISHED
+            if (holding != Arrival.EDGE || stricter || !r.shallowInterior) return ExteriorReturnPath.IndoorSupport.NONE
+            return if (shallowInterior.shallowStopComplete()) ExteriorReturnPath.IndoorSupport.ESTABLISHED
+                else ExteriorReturnPath.IndoorSupport.CONTINUING
+        }
+
         fun observe(r: Reading, holding: Arrival?): Boolean {
             if (r.accuracy > 30 || polygon.inHole(r.point)) { clear(); return false }
             if (lastAt?.let { r.at - it > 12_000 } == true) clearDwellEvidence()
             lastAt = r.at
             if (holding != null) {
                 edge.add(r, r.nearEdge || edge.started, edgeException = true)
-                nearby.add(r, holding == Arrival.NEARBY && !stricter && r.nearby)
-                return r.inside || edge.edgeComplete() || nearby.spans(45_000)
+                if (!stricter && holding == Arrival.EDGE) shallowInterior.add(r, r.shallowInterior)
+                return r.inside || edge.edgeComplete() || (!stricter && holding == Arrival.EDGE && r.shallowInterior)
             }
             history.addLast(r)
             while (history.first().at < r.at - 90_000) history.removeFirst()
             var approach = approaching()
-            if (approach && r.nearEdge && r.accuracy <= 8) {
+            if (approach && r.accuracyCircleInside && r.accuracy <= 8) {
                 val first = firstDoor
                 if (first == null || first.separation(r) > 12) firstDoor = r
                 else if (r.at - first.at >= 5_000) { door = r; firstDoor = r }
             } else firstDoor = null
             if (door?.let { r.at - it.at > 45_000 } == true) door = null
-            if (!r.nearEdge && door?.let { r.accuracy <= 8 || it.separation(r) > it.accuracy + r.accuracy } == true) {
+            if (door?.let { r.distance > r.accuracy || !r.nearEdge &&
+                    (r.accuracy <= 8 || it.separation(r) > it.accuracy + r.accuracy) } == true) {
                 clear()
                 lastAt = r.at; history.addLast(r); approach = false
             }
             inside.add(r, r.inside)
             edge.add(r, (edge.started || approach) && (edge.started || r.nearEdge), edgeException = true)
             drift.add(r, door != null && r.accuracy > 8 && r.nearby)
-            nearby.add(r, !stricter && r.nearby && (nearby.started || approach))
+            // A narrow hall may never enclose the entire uncertainty circle. Require a measured
+            // approach from outside followed by a sustained stop on the indoor side.
+            val shallowCandidate = !stricter && r.shallowInterior && (shallowInterior.started || approach) &&
+                history.any { it.clearlyOutside && it.accuracy <= RELIABLE_ACCURACY_METERS &&
+                    r.at - it.at <= 60_000 && r.reachableFrom(it) }
+            shallowInterior.add(r, shallowCandidate)
             arrival = when {
                 inside.spans(15_000) -> Arrival.INSIDE
                 walkIn?.observe(r) == true -> Arrival.WALKED_IN
                 !stricter && sustainedInterior(r) -> Arrival.INSIDE
-                edge.edgeComplete() -> Arrival.EDGE
+                edge.edgeComplete() || shallowInterior.shallowStopComplete() -> Arrival.EDGE
                 drift.spans(25_000) -> Arrival.EARLIER_PRECISE
-                nearby.spans(45_000) -> Arrival.NEARBY
                 else -> null
             }
             return arrival != null
@@ -234,6 +271,10 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
     private val components = areas.filter { it.enabled }.flatMap { area ->
         area.polygons.map { Component(area.id, it, area.requireStrongerEvidence) }
     }
+    private val exteriorPath = ExteriorReturnPath(components.map { it.polygon })
+    val returningToExteriorPath get() = exteriorPath.checking
+    var departureOnLastFix: Departure? = null
+        private set
     private var source: Component? = null
     val confirmedAreaId get() = source?.areaId
     private var lastTimestamp = -1L
@@ -251,11 +292,15 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
         private set
     val expiry get() = if (arrival == null) null else minOf(lastSupport!! + 900_000, lastUsable!! + 300_000)
     fun tick(now: Long) { if (expiry?.let { now >= it } == true) reset() }
-    fun clearEvidence() { components.forEach { it.clear() } }
+    fun clearEvidence() {
+        components.forEach { it.clear() }
+        exteriorPath.clear()
+    }
     fun endBurst() { components.forEach { it.endBurst() } }
     fun reset() {
         clearEvidence()
         source = null; arrival = null; lastSupport = null; lastUsable = null; outsideSince = null
+        departureOnLastFix = null
     }
 
     /** True for a valid provider reading, even when its uncertainty makes it unusable for arrival. */
@@ -266,9 +311,14 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
         if (fix.isMock || !fix.point.isValid() || at < since || at <= lastTimestamp || at > now ||
             now - at > 30_000 || a == null || !a.isFinite() || a <= 0) return false
         lastTimestamp = at
+        departureOnLastFix = null
         distance = Double.POSITIVE_INFINITY
         val previouslyPresent = arrival != null
         var supported = false
+        var sourceDistance = Double.POSITIVE_INFINITY
+        var otherDistance = Double.POSITIVE_INFINITY
+        var indoorSupport = ExteriorReturnPath.IndoorSupport.NONE
+        var inHole = false
         for (component in components) {
             val shape = component.polygon
             val clearance = shape.boundaryDistance(fix.point)
@@ -283,13 +333,31 @@ internal class AdaptiveVisitDetector(areas: List<SilenceArea>) {
                 source = component
                 supported = true
             }
+            if (component === source) {
+                sourceDistance = d
+                indoorSupport = component.indoorReference(reading, arrival)
+            } else otherDistance = minOf(otherDistance, d)
+            if (d >= 0 && shape.holes.isNotEmpty() && shape.inHole(fix.point)) inHole = true
         }
         clearlyAway = distance > a + 8
+        if (!previouslyPresent) {
+            exteriorPath.approach(fix, distance, inHole)
+            if (arrival != null) exteriorPath.confirmed(fix, indoorSupport)
+        }
         if (arrival != null) {
             if (a <= 100) lastUsable = now
             if (supported) lastSupport = at
             if (a <= 100) outsideSince = if (a <= 30 && clearlyAway) outsideSince ?: at else null
-            if (outsideSince?.let { at - it >= 20_000 && a <= 30 && clearlyAway } == true) reset()
+            val pathExit = exteriorPath.duringVisit(fix, sourceDistance, otherDistance, inHole, indoorSupport)
+            val departure = when {
+                outsideSince?.let { at - it >= 20_000 && a <= 30 && clearlyAway } == true -> Departure.CLEAR_OUTSIDE
+                pathExit -> Departure.EXTERIOR_PATH
+                else -> null
+            }
+            if (departure != null) {
+                reset()
+                departureOnLastFix = departure
+            }
         }
         return true
     }

@@ -1,20 +1,10 @@
 package com.tunisianprayertimes.ui
 
 import android.app.Application
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.view.inspector.WindowInspector
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -28,7 +18,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
@@ -36,9 +25,6 @@ import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
-import com.tunisianprayertimes.ui.theme.BgCream
-import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
-import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -59,7 +45,7 @@ class PrayerHeroSilenceControlTest {
     @get:Rule val compose = createComposeRule()
 
     private val context: Application get() = ApplicationProvider.getApplicationContext()
-    private val silenceLabel get() = context.getString(R.string.manual_silence_action_duration, "30 د")
+    private val silenceLabel get() = context.getString(R.string.manual_silence_action_duration, formatCountdownRemaining(30 * 60_000L, 0L))
     private val unsilenceLabel get() = context.getString(R.string.manual_silence_action_stop)
 
     @Before
@@ -89,6 +75,7 @@ class PrayerHeroSilenceControlTest {
         var choices = 0
         compose.setContent { PrayerHeroSilenceControl(false, silenceLabel, { starts++ }, { choices++ }) }
         compose.onNodeWithTag(TestTags.HERO_SILENCE_DURATION)
+            .assert(hasText(context.getString(R.string.manual_silence_change_duration)))
             .assertContentDescriptionEquals(context.getString(R.string.manual_silence_choose_end)).performClick()
         assertEquals(1, choices)
         assertEquals(0, starts)
@@ -106,20 +93,22 @@ class PrayerHeroSilenceControlTest {
     }
 
     @Test
-    fun fullWidthActionDoesNotOverlapPrayerTimeOrOptions() {
+    fun defaultWidthActionAndVisibleDurationOptionFitOnOneRowInReadingOrder() {
         var silenced by mutableStateOf(false)
         compose.setContent { HeroPreview(silenced = silenced) }
         val action = compose.onNodeWithTag(TestTags.HERO_PHONE_SILENCE_BUTTON)
         val actionBounds = action.assertIsDisplayed().assert(hasText(silenceLabel)).fetchSemanticsNode().boundsInRoot
         val timeBounds = compose.onNodeWithText("12:30", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val optionBounds = compose.onNodeWithTag(TestTags.HERO_SILENCE_DURATION).fetchSemanticsNode().boundsInRoot
+        assertSkylineFillsCard()
         assertTrue("Time is above the manual action", timeBounds.bottom <= actionBounds.top)
-        assertTrue("The option control is separate", actionBounds.left >= optionBounds.right || optionBounds.left >= actionBounds.right)
-        savePreview("normal")
+        assertTrue("Primary action is first in RTL", actionBounds.left >= optionBounds.right)
+        assertTrue("Actions share a row", actionBounds.top < optionBounds.bottom && optionBounds.top < actionBounds.bottom)
+        compose.savePrayerHeroPreview("normal")
 
         compose.runOnIdle { silenced = true }
         action.assert(hasText(unsilenceLabel))
-        savePreview("silenced")
+        compose.savePrayerHeroPreview("silenced")
     }
 
     @Test
@@ -137,6 +126,7 @@ class PrayerHeroSilenceControlTest {
             )
         }
         val times = compose.onNodeWithTag("next_prayer_summary")
+        assertSkylineFillsCard()
         times.assert(hasText(context.getString(R.string.prayer_dhuhr)) and hasText("05:30"))
             .assert(hasText("00:30", substring = true))
             .assert(hasText(gregorianDateLabel(prayerDay.minusDays(1)), substring = true))
@@ -157,9 +147,13 @@ class PrayerHeroSilenceControlTest {
     @Test
     fun narrowRtlHeroWithLargeTextKeepsBothActionsReadableAndTappable() {
         compose.setContent { HeroPreview(width = 254.dp, fontScale = 2f, silenced = false) }
+        assertSkylineFillsCard()
         val control = compose.onNodeWithTag(TestTags.HERO_PHONE_SILENCE_BUTTON).assertIsDisplayed()
         val options = compose.onNodeWithTag(TestTags.HERO_SILENCE_DURATION).assertIsDisplayed()
         control.assert(hasText(silenceLabel))
+        options.assert(hasText(context.getString(R.string.manual_silence_change_duration)))
+        assertTrue("The duration editor flows below the primary action at narrow widths",
+            control.fetchSemanticsNode().boundsInRoot.bottom <= options.fetchSemanticsNode().boundsInRoot.top)
         val card = compose.onNodeWithTag(TestTags.STATUS_CARD).fetchSemanticsNode().boundsInRoot
         val density = context.resources.displayMetrics.density
         for (node in listOf(control, options)) {
@@ -167,7 +161,28 @@ class PrayerHeroSilenceControlTest {
             assertTrue(card.contains(bounds.topLeft) && card.contains(bounds.bottomRight))
             assertTrue(bounds.height >= 48 * density - 1 && bounds.width >= 48 * density - 1)
         }
-        savePreview("large-text")
+        compose.savePrayerHeroPreview("large-text")
+    }
+
+    private fun assertSkylineFillsCard() {
+        val card = compose.onNodeWithTag(TestTags.STATUS_CARD).fetchSemanticsNode().boundsInRoot
+        val artwork = compose.onNodeWithTag("hero_skyline").fetchSemanticsNode().boundsInRoot
+        assertEquals(card, artwork)
+    }
+
+    @Test
+    fun browsingAnotherDateIdentifiesTheCountdownAsLive() {
+        compose.setContent { HeroPreview(silenced = false, browsingAnotherDate = true) }
+        compose.onNodeWithText(context.getString(R.string.next_prayer_countdown_live_title)).assertIsDisplayed()
+        compose.onNodeWithText("12:30", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun countdownKeepsEachArabicUnitWithItsQuantityIncludingTheFinalSeconds() {
+        assertEquals("1\u00a0س و\u00a030\u00a0د", formatCountdownRemaining(90 * 60_000L, 0L))
+        assertEquals("1\u00a0س", formatCountdownRemaining(60 * 60_000L, 0L))
+        assertEquals("30\u00a0د", formatCountdownRemaining(30 * 60_000L, 0L))
+        assertEquals("5\u00a0ث", formatCountdownRemaining(5_000L, 0L))
     }
 
     @Composable
@@ -175,54 +190,33 @@ class PrayerHeroSilenceControlTest {
         width: Dp = 360.dp,
         fontScale: Float = 1f,
         silenced: Boolean,
+        browsingAnotherDate: Boolean = false,
         phoneZone: ZoneId = ZoneId.of("Africa/Tunis"),
-        now: Long = LocalDate.now(phoneZone).atTime(11, 0).atZone(phoneZone).toInstant().toEpochMilli(),
+        now: Long = LocalDate.of(2026, 11, 26).atTime(11, 0).atZone(phoneZone).toInstant().toEpochMilli(),
         countdown: NextPrayerCountdownInfo = NextPrayerCountdownInfo(
             Prayer.DHUHR, Instant.ofEpochMilli(now).plusSeconds(90 * 60L), Instant.ofEpochMilli(now).atZone(phoneZone).toLocalDate(), phoneZone,
         ),
     ) {
-        val density = LocalDensity.current
-        CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
-            TunisianPrayerTimesTheme {
-                Box(Modifier.width(width).background(BgCream).padding(16.dp)) {
-                    NextPrayerHeroCard(
-                        countdown = countdown,
-                        prayerName = context.getString(R.string.prayer_dhuhr),
-                        currentTimeMillis = now,
-                        isPhoneSilenced = silenced,
-                        hasDnd = true,
-                        silenceReason = if (silenced) PhoneSilenceReason(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED) else null,
-                        autoSilenceEnabled = false,
-                        silenceActionPending = false,
-                        silenceActive = silenced,
-                        phoneZone = phoneZone,
-                        configuredMode = AutomaticSilenceMode.TIME_ONLY,
-                        setupIssues = emptyList(),
-                        onRepairSilence = {},
-                        manualActionLabel = if (silenced) unsilenceLabel else silenceLabel,
-                        onChooseManualDuration = {},
-                        onManualSilenceClick = {},
-                    )
-                }
-            }
+        PrayerHeroPreviewFrame(width, fontScale) {
+            NextPrayerHeroCard(
+                countdown = countdown,
+                browsingAnotherDate = browsingAnotherDate,
+                prayerName = context.getString(R.string.prayer_dhuhr),
+                currentTimeMillis = now,
+                isPhoneSilenced = silenced,
+                hasDnd = true,
+                silenceReason = if (silenced) PhoneSilenceReason(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED) else null,
+                autoSilenceEnabled = false,
+                silenceActionPending = false,
+                silenceActive = silenced,
+                phoneZone = phoneZone,
+                configuredMode = AutomaticSilenceMode.TIME_ONLY,
+                setupIssues = emptyList(),
+                onRepairSilence = {},
+                manualActionLabel = if (silenced) unsilenceLabel else silenceLabel,
+                onChooseManualDuration = {},
+                onManualSilenceClick = {},
+            )
         }
-    }
-
-    private fun savePreview(name: String) {
-        compose.waitForIdle()
-        val bounds = compose.onNodeWithTag(TestTags.STATUS_CARD).fetchSemanticsNode().boundsInWindow
-        val bitmap = compose.runOnIdle {
-            val view = WindowInspector.getGlobalWindowViews().last { it.isAttachedToWindow && it.width > 0 && it.height > 0 }
-            Bitmap.createBitmap(bounds.width.toInt() + 16, bounds.height.toInt() + 16, Bitmap.Config.ARGB_8888).also {
-                val canvas = Canvas(it)
-                canvas.drawColor(android.graphics.Color.rgb(255, 248, 240))
-                canvas.translate(8f - bounds.left, 8f - bounds.top)
-                view.draw(canvas)
-            }
-        }
-        val output = File("build/outputs/prayer-hero-preview/$name.png")
-        requireNotNull(output.parentFile).mkdirs()
-        output.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-        bitmap.recycle()
     }
 }

@@ -14,8 +14,8 @@ class AdaptiveObservationTest {
 
     @Test fun allSixteenWalksUseTheProductionDecisionUnderBothPolicies() {
         for (strict in listOf(false, true)) {
-            val expected = mapOf("precise" to 60, "coarse" to 99, "adjacent" to 60, "inside" to 60, "door" to 81,
-                "jitter" to 60, "shifted" to if (strict) null else 105, "opposite" to if (strict) null else 105,
+            val expected = mapOf("precise" to 60, "coarse" to null, "adjacent" to null, "inside" to 60, "door" to null,
+                "jitter" to null, "shifted" to null, "opposite" to null,
                 "pass" to null, "frontage" to null, "stationary" to null, "gap" to null, "wait" to null,
                 "noHistory" to null, "accurateOpposite" to null, "indoorUnclear" to null)
             assertEquals(expected.keys, rows.keys - "boundary")
@@ -34,7 +34,6 @@ class AdaptiveObservationTest {
                 assertEquals("$name strict=$strict", first, on.firstOrNull())
                 assertFalse(120 in on)
                 if (name == "precise") assertFalse(115 in on)
-                if (!strict && name == "shifted") assertEquals(listOf(105,112,119), on)
             }
         }
     }

@@ -29,6 +29,17 @@ internal fun nearbyRouteIndices(entries: List<TraceEntry>): IntArray {
 
 /** Shared by the recorder's Arabic timeline and its standalone replay. */
 internal val TraceEntry.displayTitle: String get() = when (kind) {
+    "walk_steps" -> when (val steps = stepDelta) {
+        1L -> "خطوة مرصودة"
+        2L -> "خطوتان مرصودتان"
+        null -> "قراءة خطوات"
+        else -> "عدد الخطوات في القراءة $steps"
+    }
+    "step_detector_started" -> "بدء رصد الخطوات الفردية"
+    "step_counter_started" -> "تشغيل عدّاد الخطوات"
+    "step_counter_ready" -> "قراءة مرجعية لعدّاد الخطوات"
+    "step_sensor_unavailable" -> "تعذّر رصد الخطوات"
+    "step_sensor_stopped" -> "نهاية رصد الخطوات"
     "route" -> "نقطة من المسار"
     "monitor_fix" -> "قراءة موقع لرصد المسجد"
     "recording_started" -> "بداية التسجيل"

@@ -57,8 +57,11 @@ internal object MosqueObservationTrace {
         val name = if (areaId == null) null else areas.firstOrNull { it.geometry.id == areaId }?.name ?: areaId
         val prior = confirmedArea.takeIf { session == id }
         if (prior != null && name == null) {
-            val exit = fix != null && engine.detector.clearlyAway && !engine.isUnavailable
-            val reason = if (exit) R.string.trace_mosque_departed else R.string.trace_mosque_lost_evidence
+            val reason = when (engine.detector.departureOnLastFix.takeIf { fix != null }) {
+                AdaptiveVisitDetector.Departure.CLEAR_OUTSIDE -> R.string.trace_mosque_departed
+                AdaptiveVisitDetector.Departure.EXTERIOR_PATH -> R.string.trace_mosque_returned_to_path
+                null -> R.string.trace_mosque_lost_evidence
+            }
             SilenceTraceStore.append(c, "mosque_visit_ended", c.getString(reason, prior), latitude = fix?.point?.latitude,
                 longitude = fix?.point?.longitude, accuracyMeters = fix?.accuracyMeters, sessionId = id)
         }
@@ -69,7 +72,6 @@ internal object MosqueObservationTrace {
                     AdaptiveVisitDetector.Arrival.INSIDE -> R.string.trace_mosque_inside
                     AdaptiveVisitDetector.Arrival.EDGE -> R.string.trace_mosque_edge
                     AdaptiveVisitDetector.Arrival.EARLIER_PRECISE -> R.string.trace_mosque_earlier_precise
-                    AdaptiveVisitDetector.Arrival.NEARBY -> R.string.trace_mosque_nearby
                     null -> R.string.mosque_adaptive_hold
                 }
                 c.getString(R.string.trace_mosque_arrival, name, c.getString(reason))

@@ -2,16 +2,18 @@ package com.tunisianprayertimes.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,7 +21,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.R
@@ -35,15 +40,15 @@ internal fun PrayerHeroSilenceControl(
     enabled: Boolean = true,
 ) {
     val outline = BorderStroke(1.dp, Color.White.copy(alpha = 0.64f))
-    Row(
-        modifier = modifier,
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        itemVerticalAlignment = Alignment.CenterVertically,
     ) {
         Button(
             onClick = onClick,
             enabled = enabled,
-            modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp).testTag(TestTags.HERO_PHONE_SILENCE_BUTTON),
+            modifier = Modifier.heightIn(min = 48.dp).testTag(TestTags.HERO_PHONE_SILENCE_BUTTON),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(containerColor = GreenPrimaryDark, contentColor = Color.White),
@@ -59,16 +64,19 @@ internal fun PrayerHeroSilenceControl(
             }
         }
         if (!silenced) {
-            OutlinedIconButton(
+            val accessibleLabel = stringResource(R.string.manual_silence_choose_end)
+            TextButton(
                 onClick = onChooseDuration,
                 enabled = enabled,
-                modifier = Modifier.size(48.dp).testTag(TestTags.HERO_SILENCE_DURATION),
-                border = outline,
+                modifier = Modifier.heightIn(min = 48.dp).testTag(TestTags.HERO_SILENCE_DURATION)
+                    .semantics { contentDescription = accessibleLabel },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
             ) {
-                Icon(
-                    painterResource(R.drawable.ic_adhkar_clock),
-                    contentDescription = stringResource(R.string.manual_silence_choose_end),
-                    tint = Color.White,
+                Text(
+                    stringResource(R.string.manual_silence_change_duration),
+                    fontSize = 14.sp, lineHeight = 20.sp,
+                    textDecoration = TextDecoration.Underline,
                 )
             }
         }

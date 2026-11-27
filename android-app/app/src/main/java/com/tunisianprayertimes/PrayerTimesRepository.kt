@@ -146,6 +146,23 @@ object PrayerTimesRepository {
             .sortedWith(compareBy<PrayerOccurrence>({ it.at }, { it.prayerDay }))
     }
 
+    /** The next prayer shown in the timetable, including Tunisia's Eid prayers until the Eid day's Dhuhr. */
+    internal fun nextTimetablePrayer(context: Context, now: Instant, place: PrayerPlace): PrayerOccurrence? {
+        val daily = upcomingPrayers(context, now, place).firstOrNull()
+        if (place !is PrayerPlace.Inm) return daily
+        val today = now.atZone(place.zone).toLocalDate()
+        var next = daily
+        for (date in listOf(today, today.plusDays(1))) {
+            val day = prayerDay(context, date, place) ?: continue
+            val dhuhr = day[TimeEvent.DHUHR].at ?: continue
+            if (now >= dhuhr) continue
+            for ((prayer, at) in EidSilenceWindows.eidPrayers(context, place, date, day)) {
+                if (at > now && (next == null || at < next.at)) next = PrayerOccurrence(prayer, date, at)
+            }
+        }
+        return next
+    }
+
     /**
      * The Friday [date]'s Jumu'a time: the edited time of the place's country (6.9), or the set minutes before that
      * Friday's Asr (a mosque that prays an hour before Asr), never before Dhuhr; else [defaultJumuaTime].

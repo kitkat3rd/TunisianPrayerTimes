@@ -4,11 +4,13 @@ import android.content.Context
 import com.tunisianprayertimes.mosque.trace.TRACE_ROUTE_MAX_GAP_MS
 import com.tunisianprayertimes.mosque.trace.TraceEntry
 import com.tunisianprayertimes.mosque.trace.TraceSession
+import com.tunisianprayertimes.mosque.trace.TraceSteps
 import com.tunisianprayertimes.mosque.trace.breaksRouteContinuity
 import com.tunisianprayertimes.mosque.trace.displayTitle
 import com.tunisianprayertimes.mosque.trace.hasCoordinates
 import com.tunisianprayertimes.mosque.trace.nearbyRouteIndices
 import com.tunisianprayertimes.mosque.trace.nearbySilenceAreas
+import com.tunisianprayertimes.mosque.trace.stepDelta
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
@@ -43,17 +45,21 @@ object SilenceWalkExport {
     }
 
     private fun writeGeoJson(writer: Writer, session: TraceSession, entries: List<TraceEntry>, boundaries: JSONObject) {
+        val timeline = entries.sortedWith(compareBy(TraceEntry::at, TraceEntry::id))
+        val steps = TraceSteps(timeline)
         val metadata = JSONObject()
             .put("id", session.id)
             .put("startedAt", session.startedAt)
             .put("endedAt", session.endedAt ?: JSONObject.NULL)
             .put("timeZone", session.timeZoneId)
+            .put("steps", JSONObject().put("recordedCount", steps.recordedCount ?: JSONObject.NULL)
+                .put("sources", JSONArray(steps.sources)).put("interrupted", steps.interrupted)
+                .put("summary", steps.summary))
         writer.write("""{"type":"FeatureCollection","schemaVersion":1,"session":""")
         writer.write(scriptSafeJson(metadata))
         writer.write(""","boundaries":""")
         writer.write(scriptSafeJson(boundaries))
         writer.write(""","routeMaxGapMs":$TRACE_ROUTE_MAX_GAP_MS,"features":[""")
-        val timeline = entries.sortedWith(compareBy(TraceEntry::at, TraceEntry::id))
         val nearbyRoute = nearbyRouteIndices(timeline)
         // Write one feature at a time so a long walk doesn't require a second copy as a JSON tree.
         timeline.forEachIndexed { index, entry ->
@@ -68,6 +74,9 @@ object SilenceWalkExport {
                 .put("detail", entry.detail)
                 .put("accuracyMeters", entry.accuracyMeters?.takeIf { it.isFinite() && it >= 0 } ?: JSONObject.NULL)
             if (entry.breaksRouteContinuity) properties.put("breaksRouteContinuity", true)
+            entry.stepDelta?.let { properties.put("stepDelta", it) }
+            steps.intervalStart(entry)?.let { properties.put("stepIntervalStart", it) }
+            steps.recordedThrough(index)?.let { properties.put("recordedStepsThrough", it) }
             if (nearbyRoute[index] >= 0) properties.put("routeContextId", timeline[nearbyRoute[index]].id)
             writer.write(scriptSafeJson(JSONObject()
                 .put("type", "Feature").put("id", entry.id)

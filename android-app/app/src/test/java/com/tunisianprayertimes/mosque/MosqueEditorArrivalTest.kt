@@ -43,10 +43,30 @@ class MosqueEditorArrivalTest {
 
     @Test fun previewUsesTheSavedStricterRuleAndIgnoresStaleMockAndExpiredReadings() {
         val area = SilenceArea("draft", 0, listOf(outline))
-        assertEquals(AdaptiveVisitDetector.Arrival.NEARBY, preview(walk("shifted"), area).last().arrival)
-        assertNull(preview(walk("shifted"), area.copy(requireStrongerEvidence = true)).last().arrival)
+        for (strict in listOf(false, true)) {
+            val reports = preview(walk("shifted"), area.copy(requireStrongerEvidence = strict))
+            assertTrue(reports.all { it.distance > 0 && it.arrival == null })
+        }
+        val wideHall = area.copy(polygons = listOf(SilencePolygon(listOf(
+            point(-40.0, -40.0), point(40.0, -40.0), point(40.0, 40.0), point(-40.0, 40.0)
+        ))))
+        val indoorWalk = listOf(-12.0, -4.0, 4.0, 12.0).mapIndexed { index, x ->
+            PresenceFix(point(x, 0.0), 4.0, index * 5_000L)
+        }
+        assertEquals(AdaptiveVisitDetector.Arrival.INSIDE, preview(indoorWalk, wideHall).last().arrival)
+        assertNull(preview(indoorWalk, wideHall.copy(requireStrongerEvidence = true)).last().arrival)
         val fix = walk("inside").first()
         assertTrue(preview(listOf(fix, fix.copy(elapsedRealtimeMillis = 1500, isMock = true),
             fix.copy(elapsedRealtimeMillis = 121_000)), area, since = 1_000).isEmpty())
+    }
+
+    @Test fun aMeasuredInteriorApproachStillSupportsLaterCoarseDoorwayReadings() {
+        val area = SilenceArea("draft", 0, listOf(outline))
+        val approach = walk("precise").filter { it.elapsedRealtimeMillis <= 47_000 }
+        val drift = walk("door").filter { it.elapsedRealtimeMillis > 47_000 }
+        for (strict in listOf(false, true)) {
+            val reports = preview(approach + drift, area.copy(requireStrongerEvidence = strict))
+            assertEquals(AdaptiveVisitDetector.Arrival.EARLIER_PRECISE, reports.last().arrival)
+        }
     }
 }

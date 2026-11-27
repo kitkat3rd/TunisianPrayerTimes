@@ -19,15 +19,17 @@ enum class QuranPackStatus {
     Failed,
 }
 
-enum class QuranDownloadProblem { Network, Storage, Store, Integrity, Other }
+enum class QuranDownloadProblem { Network, Storage, Store, Integrity, Unpublished, Other }
 
 data class QuranPackState(
     val status: QuranPackStatus,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val problem: QuranDownloadProblem? = null,
+    /** An earlier verified edition of this tafsir is still readable during its update. */
+    val previousVersion: Boolean = false,
 ) {
-    val available: Boolean get() = status == QuranPackStatus.Available
+    val available: Boolean get() = status == QuranPackStatus.Available || previousVersion
 
     /** A download was asked for and has not ended. */
     val active: Boolean get() = status == QuranPackStatus.Pending || status == QuranPackStatus.Downloading ||

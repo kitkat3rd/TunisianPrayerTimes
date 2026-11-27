@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="launcher_icon_title">لون الأيقونة</string>
+    <string name="launcher_icon_teal">أخضر</string>
+    <string name="launcher_icon_blue">أزرق</string>
+</resources>

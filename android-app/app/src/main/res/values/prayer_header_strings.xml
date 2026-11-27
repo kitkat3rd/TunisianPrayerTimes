@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="next_prayer_countdown_live_title">الصلاة القادمة من الآن</string>
     <!-- Prayer tab: location header -->
     <string name="location_header_from_gps">حسب موقعك الحالي</string>
     <string name="location_change_action">تغيير الموقع</string>
@@ -12,9 +13,15 @@
     <!-- Prayer tab hero: immediate phone control and the upcoming prayer's auto-silence window -->
     <string name="hero_phone_silence_title">إسكات الهاتف</string>
     <string name="hero_phone_unsilence_title">إعادة الصوت</string>
-    <string name="next_prayer_silence_window">الإسكات المجدول من %1$s إلى %2$s</string>
-    <string name="next_prayer_silence_mosque_window">عند وجودك في المسجد، يسكت الهاتف بين %1$s و%2$s</string>
-    <string name="next_prayer_silence_fallback_window">الموقع غير متاح. قد يسكت الهاتف حسب الوقت من %1$s إلى %2$s.</string>
+    <string name="next_prayer_silence_window">إسكات %1$s من %2$s إلى %3$s</string>
+    <string name="next_prayer_silence_mosque_window">يمكن بدء إسكات %1$s في المسجد بين %2$s و%3$s</string>
+    <string name="hero_location_fallback">الموقع غير متاح. قد يسكت الهاتف حسب الوقت.</string>
+    <string name="hero_location_unavailable">الموقع غير متاح.</string>
+    <string name="hero_location_unavailable_status">%1$s · الموقع غير متاح</string>
+    <string name="hero_complete_setup">إكمال الإعداد</string>
+    <string name="hero_current_scheduled_prayer">الإسكات الآن لصلاة %1$s حتى %2$s</string>
+    <string name="hero_current_scheduled_prayers">إسكات الصلوات مفعّل الآن حتى %1$s</string>
+    <string name="hero_silence_end_date">%1$s، %2$s</string>
     <string name="prayer_silence_location_fallback">الموقع غير متاح. قد يسكت الهاتف حسب الوقت حتى يعود الموقع.</string>
     <string name="next_prayer_silence_no_window">لم تتوفّر فترة إسكات لصلاة %1$s</string>
     <string name="hero_finish_silence_setup">إكمال إعداد الإسكات</string>

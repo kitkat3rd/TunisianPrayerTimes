@@ -119,6 +119,62 @@ class SilenceWalkDetectionLifecycleTest : MosqueGraceFixture() {
         assertEquals(listOf(second, first), SilenceTraceStore.sessions(context).map { it.id })
     }
 
+    @Test fun returningAlongThePavementReleasesTheRuleAndFinishesOneReport() {
+        begin(secondsBeforeEnd = 300)
+        val id = requireNotNull(active())
+        var offset = -300L
+        var generation: Long? = null
+        fun move(east: Int, north: Int, accuracy: Float = 8f) {
+            offset += 5
+            at(offset)
+            val plan = requireNotNull(plan())
+            if (generation != plan.generation) {
+                AdaptiveMosqueMonitor.accepted(context, token, plan.generation)
+                generation = plan.generation
+            }
+            val location = Location(LocationManager.GPS_PROVIDER).apply {
+                longitude = east / 111_319.5
+                latitude = north / 110_574.0
+                this.accuracy = accuracy
+                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                time = wall.toEpochMilli()
+            }
+            MosqueSilenceMonitor.onLocation(context, token, location, plan.generation)
+        }
+
+        // The west wall is at east = 0. Follow its pavement to the door at north = 60 m.
+        move(-36, 5)
+        move(-26, 8)
+        move(-18, 11)
+        move(-10, 14)
+        for (north in 20..60 step 8) {
+            move(-5, north)
+            assertFalse(requested())
+        }
+        for (east in listOf(3, 11, 19, 25)) move(east, 60, 4f)
+        repeat(4) { move(25, 60, 4f) }
+        assertTrue(requested())
+        for (east in listOf(17, 10, 3)) move(east, 60, 4f)
+        move(-5, 60)
+        assertTrue(requested())
+        for (north in 52 downTo 20 step 8) move(-5, north)
+
+        assertTrue(wall < window.end)
+        assertFalse(requested())
+        assertNull(active())
+        val rows = events(id)
+        val exit = rows.single { it.kind == "mosque_visit_ended" }
+        assertEquals(context.getString(R.string.trace_mosque_returned_to_path, "Hall"), exit.detail)
+        assertEquals(-5 / 111_319.5, requireNotNull(exit.longitude), 0.000001)
+        assertTrue(exit.id < rows.single { it.kind == "rule_released" }.id)
+        assertEquals("recording_stopped", rows.last().kind)
+
+        for (north in listOf(16, 12, 8)) move(-5, north)
+        assertNull(active())
+        assertEquals(listOf(id), SilenceTraceStore.sessions(context).map { it.id })
+        assertEquals(rows, events(id))
+    }
+
     @Test fun aReturnFixCanStartASeparateWalkBeforeAnotherGeofenceIsDelivered() {
         val previous = departWhileWindowIsOpen()
         at(-35)

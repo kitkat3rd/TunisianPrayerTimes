@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.io.FileNotFoundException
 
 /** One file of a pack, at the same relative path as a bundled asset (e.g. quran/audio/hosary/001.mp3). */
-data class QuranPackFile(val path: String, val bytes: Long)
+data class QuranPackFile(val path: String, val bytes: Long, val sha256: String? = null)
 
 /** The zip the quran-cdn Worker serves for a pack; its key is content-addressed and never reused. */
 data class QuranPackArchive(val key: String, val bytes: Long, val sha256: String)
@@ -24,12 +24,13 @@ data class QuranPack(
     val bytes: Long,
     val archive: QuranPackArchive,
     val files: List<QuranPackFile>,
+    val cdnPublished: Boolean = true,
 ) {
     /**
      * Pages: the page scans. Book: the mushaf in the print's own type (quran/book: its fonts, plates and page layouts).
      * Either holds the Quran's pages alone, no appendix. Audio: a recitation's chapters.
      */
-    enum class Kind { Pages, Book, Audio }
+    enum class Kind { Pages, Book, Audio, Tafsir }
 
     enum class Delivery {
         /** A Play Asset Delivery pack in the bundle: the mushaf's pages and the first ten reciters. */
@@ -51,6 +52,8 @@ class QuranPackLayout(
 
     val book: QuranPack? = packs.firstOrNull { it.kind == QuranPack.Kind.Book }
 
+    val tafsir: QuranPack? = packs.firstOrNull { it.kind == QuranPack.Kind.Tafsir }
+
     /** The same layout limited to the packs Google Play delivers. */
     fun playPacks(): QuranPackLayout = QuranPackLayout(cdn, packs.filter { it.delivery == QuranPack.Delivery.Play })
 
@@ -66,6 +69,7 @@ class QuranPackLayout(
 
     companion object {
         const val ASSET = "quran/packs.json"
+        const val TAFSIR_ASSET = "quran/tafsir/ashur.db"
 
         @Volatile private var cached: Result<QuranPackLayout?>? = null
 
@@ -97,6 +101,7 @@ class QuranPackLayout(
                         "pages" -> QuranPack.Kind.Pages
                         "book" -> QuranPack.Kind.Book
                         "audio" -> QuranPack.Kind.Audio
+                        "tafsir" -> QuranPack.Kind.Tafsir
                         else -> error("Unknown Quran pack kind $kind")
                     },
                     delivery = when (val delivery = item.optString("delivery", "play")) {
@@ -108,7 +113,11 @@ class QuranPackLayout(
                     surahs = range?.let { it.getInt(0)..it.getInt(1) },
                     bytes = item.getLong("bytes"),
                     archive = QuranPackArchive(archive.getString("key"), archive.getLong("bytes"), archive.getString("sha256")),
-                    files = List(files.length()) { files.getJSONObject(it).let { file -> QuranPackFile(file.getString("path"), file.getLong("bytes")) } },
+                    files = List(files.length()) {
+                        val file = files.getJSONObject(it)
+                        QuranPackFile(file.getString("path"), file.getLong("bytes"), file.optString("sha256").takeIf(String::isNotEmpty))
+                    },
+                    cdnPublished = item.optBoolean("cdnPublished", true),
                 )
             }
             packs.forEach { pack ->
@@ -123,12 +132,21 @@ class QuranPackLayout(
                 require(pack.kind != QuranPack.Kind.Book || pack.files.all { it.path.startsWith("quran/book/") }) {
                     "Quran pack ${pack.name} holds files that are not the book's"
                 }
+                if (pack.kind == QuranPack.Kind.Tafsir) {
+                    val database = pack.files.singleOrNull()
+                    require(pack.name == "quran_tafsir_ashur" && database?.path == TAFSIR_ASSET &&
+                        database.sha256?.matches(SHA256) == true &&
+                        pack.reciterId == null && pack.surahs == null) { "Invalid tafsir pack ${pack.name}" }
+                } else {
+                    require(pack.files.none { it.path.startsWith("quran/tafsir/") }) { "Tafsir asset in ${pack.name}" }
+                }
             }
             require(packs.map { it.name }.toSet().size == packs.size) { "Duplicate Quran pack names" }
             return QuranPackLayout(cdn, packs)
         }
 
         private val PACK_NAME = Regex("[a-z][a-z0-9_]*")
+        private val SHA256 = Regex("[0-9a-f]{64}")
         private val ARCHIVE_KEY = Regex("v1/packs/[a-z][a-z0-9_]*-[0-9a-f]{12}\\.zip")
     }
 }

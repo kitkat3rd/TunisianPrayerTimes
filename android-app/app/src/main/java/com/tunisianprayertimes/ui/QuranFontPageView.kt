@@ -419,6 +419,7 @@ internal fun QuranReflowView(
     onHeading: (Int) -> Unit,
     /** The surahs whose heading on this page opens their card, with their names: TalkBack reaches them as actions. */
     headingNames: Map<Int, String> = emptyMap(),
+    onTafsirPage: (() -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
@@ -436,7 +437,7 @@ internal fun QuranReflowView(
         // A double tap lands where TalkBack puts it, not on a heading: each one is an action of the page, as printed.
         customActions = headingNames.map { (surah, name) ->
             CustomAccessibilityAction("الاستماع إلى سورة $name أو تكرارها") { currentOnHeading(surah); true }
-        }
+        } + listOfNotNull(tafsirPageAction(onTafsirPage))
     }) {
         val widthPx = constraints.maxWidth.toFloat()
         val margin = with(density) { 14.dp.toPx() }

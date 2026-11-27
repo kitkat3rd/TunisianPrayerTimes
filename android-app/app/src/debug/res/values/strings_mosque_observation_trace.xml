@@ -11,12 +11,12 @@
     <string name="trace_mosque_continued">%1$s يستمرّ إسكات الزيارة المؤكّدة حتى رصد المغادرة أو حتى %2$s على أقصى تقدير.</string>
     <string name="trace_mosque_inside">قراءات متتالية تؤكّد الوجود داخل الحدود</string>
     <string name="trace_mosque_walked_in">دخول من خارج الحدود أكّدته قراءات متتالية داخل المسجد</string>
-    <string name="trace_mosque_edge">اقتراب وتوقّف عند الحدود</string>
-    <string name="trace_mosque_earlier_precise">توقّف قرب الحدود بعد قراءة سابقة دقيقة</string>
-    <string name="trace_mosque_nearby">اقتراب وتوقّف مستمر قرب الحدود</string>
+    <string name="trace_mosque_edge">اقتراب تبعته قراءات متتالية داخل حدود المسجد</string>
+    <string name="trace_mosque_earlier_precise">قراءات دقيقة داخل المسجد قبل تراجع دقّة الموقع قرب الحدود</string>
     <string name="trace_mosque_arrival">تأكّد الوصول إلى %1$s (%2$s).</string>
     <string name="trace_mosque_exiting">رصد التحقق موقعًا خارج حدود المسجد ويترقب تأكيد الخروج.</string>
     <string name="trace_mosque_departed">تأكّدت مغادرة %1$s بعد قراءات متتالية بعيدًا عن المسجد.</string>
+    <string name="trace_mosque_returned_to_path">أظهرت قراءات الموقع أنك غادرت %1$s وعدت إلى المسار الذي سلكته خارج المسجد قبل الدخول.</string>
     <string name="trace_mosque_lost_evidence">لم تعد قراءات الموقع تؤكّد وجودك في %1$s.</string>
     <string name="trace_mosque_stopped">التحقق من الوصول إلى المسجد متوقف.</string>
     <string name="trace_mosque_failed">تعذّر على خدمة التحقق متابعة رصد الموقع.</string>

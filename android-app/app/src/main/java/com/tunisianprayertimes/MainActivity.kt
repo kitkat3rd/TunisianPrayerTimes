@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
+import com.tunisianprayertimes.mosque.trace.WalkStepPermission
 import com.tunisianprayertimes.ui.MainScreen
 import com.tunisianprayertimes.ui.theme.BgCream
 import com.tunisianprayertimes.ui.AppFontFamily
@@ -200,6 +201,7 @@ class MainActivity : AppCompatActivity() {
                             else stringResource(R.string.first_run_preparing_city, city))
                     }
                 } else {
+                    WalkStepPermission(onLauncher = true)
                     MainScreen(
                         activity = this,
                         requestedDestination = tabRequest.destination,

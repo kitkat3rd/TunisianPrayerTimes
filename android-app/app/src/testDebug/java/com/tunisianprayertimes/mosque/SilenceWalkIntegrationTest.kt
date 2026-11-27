@@ -7,7 +7,6 @@ import android.os.Looper
 import android.os.SystemClock
 import com.tunisianprayertimes.mosque.trace.SilenceTraceStore
 import org.json.JSONObject
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -23,12 +22,6 @@ import java.io.ByteArrayOutputStream
 @Config(sdk = [30], application = Application::class, shadows = [AvailablePlayServices::class],
     instrumentedPackages = ["com.google.android.gms.common"])
 class SilenceWalkIntegrationTest : MosqueGraceFixture() {
-    @After fun releaseTraceDatabase() {
-        MosqueSilenceMonitor.environmentChanged(context)
-        shadowOf(Looper.getMainLooper()).idle()
-        SilenceTraceStore.closeForTest()
-    }
-
     @Test fun observationRouteAndRuleEventsCanBeExportedAfterTheDetectorStops() {
         val main = shadowOf(Looper.getMainLooper())
         val gps = shadowOf(context.getSystemService(LocationManager::class.java))

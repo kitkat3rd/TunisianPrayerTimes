@@ -33,6 +33,7 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.trace.SilenceTraceStore
 import com.tunisianprayertimes.mosque.trace.TraceEntry
 import com.tunisianprayertimes.mosque.trace.TraceSession
+import com.tunisianprayertimes.mosque.trace.WalkStepPermission
 import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.PrayerSilencePalette
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
@@ -146,6 +147,7 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
             Modifier.widthIn(max = 640.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            WalkStepPermission(onLauncher = false)
             if (readFailed) {
                 Text(stringResource(R.string.silence_walk_read_failed))
                 OutlinedButton(onClick = { revision++ }) { Text(stringResource(R.string.silence_walk_retry)) }

@@ -364,17 +364,22 @@ class AdhkarFinishReminderTest {
 
     // ---- what the notification says ----
 
-    @Test fun theMorningPresetRunsFromFajrToDhuhr() {
+    @Test fun morningDefaultsScheduleTheFirstNudgeThirtyMinutesAfterFajr() {
         val preset = morningCollectionPreset()
-        assertEquals(DhikrTimeKind.FAJR, preset.start.kind)
-        assertEquals(DhikrTimeKind.DHUHR, preset.end.kind)
         val drafted = defaultDhikrReminder("morning_kingdom", DhikrCategory.MORNING)
-        assertEquals(DhikrTimeKind.DHUHR, drafted.end.kind)
-        assertNull(DhikrReminderScheduler.validate(context, preset, friday))
-        // The default silence leaves the morning three notifications: after Fajr, in the morning, before Dhuhr.
-        val times = dhikrNudgeTimes(preset, window(preset))
-        assertEquals(3, times.size)
-        assertEquals(LAST_NUDGE_LEAD_MILLIS, window(preset).endMillis - times.last())
+        val standalone = defaultDhikrReminder("morning_kingdom", DhikrCategory.MORNING, wholeCollection = false)
+        val fajr = requireNotNull(DhikrReminderScheduler.resolveTime(context, DhikrTime(DhikrTimeKind.FAJR), friday))
+        val dhuhr = requireNotNull(DhikrReminderScheduler.resolveTime(context, DhikrTime(DhikrTimeKind.DHUHR), friday))
+        for (rule in listOf(preset, drafted, standalone)) {
+            assertNull(DhikrReminderScheduler.validate(context, rule, friday))
+            val window = window(rule)
+            val times = dhikrNudgeTimes(rule, window)
+            assertEquals(fajr + 30 * minute, window.startMillis)
+            assertEquals(window.startMillis, times.first())
+            assertEquals(dhuhr, window.endMillis)
+            assertEquals(3, times.size)
+            assertEquals(LAST_NUDGE_LEAD_MILLIS, window.endMillis - times.last())
+        }
     }
     @Test fun aGentleCollectionNotificationSaysWhenThePeriodEnds() {
         val rule = morningCollectionPreset(); val window = window(rule); arm(rule, window)

@@ -6,6 +6,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.ManualSilenceMode
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.silence.EndResolution
+import com.tunisianprayertimes.silence.SilenceWindow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -15,6 +17,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.Calendar
 import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [26])
@@ -28,6 +32,25 @@ class PhoneSilenceHeroStateTest {
     @Before
     fun setup() {
         context = ApplicationProvider.getApplicationContext()
+    }
+
+    @Test
+    fun currentScheduleGivesThePrayerAndItsReleaseTimeEvenAfterTheAdhan() {
+        val now = Instant.ofEpochMilli(nowMillis)
+        val end = Instant.ofEpochMilli(futureEndMillis)
+        val day = now.atZone(ZoneId.systemDefault()).toLocalDate()
+        val fajr = SilenceWindow(Prayer.FAJR, day, now.minusSeconds(1200), now.minusSeconds(300), end,
+            EndResolution.AS_SET, false)
+        val active = requireNotNull(currentScheduledSilence(listOf(fajr), now))
+        assertEquals(context.getString(R.string.hero_current_scheduled_prayer, context.getString(R.string.prayer_fajr), "07:30"),
+            phoneSilenceReasonText(context, active, nowMillis))
+        assertNull(currentScheduledSilence(listOf(fajr), end))
+
+        val joined = fajr.copy(prayer = Prayer.DHUHR, start = end, end = end.plusSeconds(600))
+        val separate = joined.copy(prayer = Prayer.ASR, start = joined.end.plusSeconds(60), end = joined.end.plusSeconds(600))
+        val consecutive = requireNotNull(currentScheduledSilence(listOf(separate, joined, fajr), now))
+        assertEquals(context.getString(R.string.hero_current_scheduled_prayers, "07:40"),
+            phoneSilenceReasonText(context, consecutive, nowMillis))
     }
 
     @Test

@@ -70,6 +70,7 @@ internal fun QuranVerseCard(
      * copying and sharing serve reading the text, which this mode hides.
      */
     review: Boolean = false,
+    onTafsir: (() -> Unit)? = null,
 ) {
     QuranFloatingCard(modifier.testTag("quran_verse_card"), scrollKey = title) {
         if (hidesAfterMs != null) QuranCountdownLine(title, hidesAfterMs, GreenPrimary.copy(alpha = 0.55f))
@@ -99,6 +100,7 @@ internal fun QuranVerseCard(
             add { CardAction(R.drawable.ic_quran_repeat, "كرّر", onRepeat, Modifier.testTag("quran_verse_repeat")) }
             add { CardAction(R.drawable.ic_quran_slip, "أخطأت", onPoint, Modifier.testTag("quran_verse_point"), description = "أخطأت في هذه الآية: تسجيلها للمراجعة") }
             if (!review) {
+                if (onTafsir != null) add { CardAction(R.drawable.ic_tab_quran, "تفسير", onTafsir, Modifier.testTag("quran_verse_tafsir")) }
                 add { CardAction(R.drawable.ic_quran_copy, "انسخ", onCopy, Modifier.testTag("quran_verse_copy")) }
                 add { CardAction(R.drawable.ic_quran_share, "شارك", onShare, Modifier.testTag("quran_verse_share")) }
             }
@@ -156,6 +158,7 @@ internal fun QuranSurahCard(
     onStart: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    onTafsirIntro: (() -> Unit)? = null,
 ) {
     var asking by rememberSaveable { mutableStateOf(false) }
     QuranFloatingCard(modifier.testTag("quran_surah_card"), scrollKey = surahName to (count == null)) {
@@ -169,6 +172,7 @@ internal fun QuranSurahCard(
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(bottom = 4.dp)) {
                 CardAction(R.drawable.ic_quran_headphones, "استمع", onListen, Modifier.testTag("quran_surah_listen"), description = "الاستماع إلى سورة $surahName من أولها")
                 CardAction(R.drawable.ic_quran_repeat, "كرّر", onRepeat, Modifier.testTag("quran_surah_repeat"), description = "تكرار سورة $surahName")
+                if (onTafsirIntro != null) CardAction(R.drawable.ic_tab_quran, "عن السورة", onTafsirIntro, Modifier.testTag("quran_surah_tafsir"))
             }
         } else Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -194,7 +198,7 @@ internal fun QuranSurahCard(
 private val CardActionLabelStyle = TextStyle(fontFamily = AppFontFamily, fontSize = 12.sp)
 
 /** Every label a verse card's action may show, to measure the widest. */
-private val CardActionLabels = listOf("استمع", "كرّر", "أخطأت", "انسخ", "شارك")
+private val CardActionLabels = listOf("استمع", "كرّر", "أخطأت", "تفسير", "انسخ", "شارك")
 
 private object QuranRealTime : MotionDurationScale {
     override val scaleFactor: Float get() = 1f

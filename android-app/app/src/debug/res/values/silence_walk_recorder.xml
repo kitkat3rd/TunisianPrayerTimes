@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="silence_walk_step_detector">بدأ رصد الخطوات بمستشعر الخطوات.</string>
+    <string name="silence_walk_step_counter">بدأت متابعة عدّاد الخطوات. يبدأ العدّ من أول قراءة صالحة.</string>
+    <string name="silence_walk_steps_baseline">وصلت أول قراءة للعدّاد. سيُسجَّل عدد الخطوات المضافة منذ هذه القراءة.</string>
+    <string name="silence_walk_steps_reset">أُعيد ضبط عدّاد الهاتف. يستمرّ تسجيل الخطوات المضافة منذ القراءة الجديدة.</string>
+    <string name="silence_walk_steps_stopped">انتهت متابعة مستشعر الخطوات لهذا التسجيل.</string>
+    <string name="silence_walk_steps_permission_missing">تعذّر تسجيل الخطوات لأن إذن النشاط البدني غير متاح.</string>
+    <string name="silence_walk_steps_missing">لا يتوفّر مستشعر للخطوات على هذا الجهاز.</string>
+    <string name="silence_walk_steps_failed">تعذّر تشغيل مستشعر الخطوات.</string>
     <string name="silence_walk_permission_lost">تعذّر تسجيل نقاط المسار لأن إذن الموقع لم يعد متاحًا.</string>
     <string name="silence_walk_wait_provider">لا يتوفر مصدر للموقع الآن. سيتابع التسجيل عند عودته.</string>
     <string name="silence_walk_provider_failed">تعذّر طلب الموقع من الهاتف.</string>

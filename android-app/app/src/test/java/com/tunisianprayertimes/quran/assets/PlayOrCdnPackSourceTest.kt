@@ -19,11 +19,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** Play installs: Play's packs go through Play, the rest through the quran-cdn Worker. */
@@ -36,7 +38,8 @@ class PlayOrCdnPackSourceTest {
         val fetched = CopyOnWriteArrayList<Pair<List<String>, Boolean>>()
         val confirmed = CopyOnWriteArrayList<List<String>>()
         val removed = CopyOnWriteArrayList<List<String>>()
-        override fun directory(pack: QuranPack): File? = null
+        val directories = java.util.concurrent.ConcurrentHashMap<String, File>()
+        override fun directory(pack: QuranPack): File? = directories[pack.name]
         override fun fetch(packs: List<QuranPack>, allowMetered: Boolean) { fetched += packs.map { it.name } to allowMetered }
         override fun confirmMobileData(packs: List<QuranPack>, launcher: ActivityResultLauncher<IntentSenderRequest>) { confirmed += packs.map { it.name } }
         override fun remove(packs: List<QuranPack>) { removed += packs.map { it.name } }
@@ -117,6 +120,63 @@ class PlayOrCdnPackSourceTest {
         val states = awaitStates { it["quran_later_01"]?.status == QuranPackStatus.WaitingForWifi }
         assertEquals(QuranPackStatus.Downloading, states["quran_hosary_01"]?.status)
         assertTrue(states["quran_hosary_02"]?.status != QuranPackStatus.Failed)
+    }
+
+    @Test
+    fun oldCommentaryRemainsReadableDuringPlayUpdateAndNewDeliveryIsRetained() = runBlocking {
+        val old = edition('a', "old")
+        val updated = edition('b', "new!")
+        val installer = QuranPackInstaller(folder.newFolder())
+        installer.retainPlayTafsir(old, playAssets("old"))
+        val layout = QuranPackLayout("https://cdn.example/", listOf(updated))
+        val source = PlayOrCdnPackSource(layout, lazy { worker }, installer, scope) { play }
+        val name = updated.name
+        val progress = QuranPackState(QuranPackStatus.Downloading, 10, 100)
+        play.states.value = mapOf(name to progress)
+        withTimeout(5_000) { source.states.first { it[name] == progress.copy(previousVersion = true) } }
+        assertEquals("old", File(source.directory(updated)!!, db).readText())
+
+        play.directories[name] = playAssets("new!")
+        play.states.value = mapOf(name to QuranPackState.Available)
+        withTimeout(5_000) { while (!installer.isInstalled(updated)) delay(10) }
+        assertEquals("new!", File(installer.readableDirectory(updated)!!, db).readText())
+        assertEquals("new!", File(source.directory(updated)!!, db).readText())
+
+        // Play can still report its old directory briefly after the reader presses delete.
+        source.remove(listOf(updated))
+        withTimeout(5_000) { source.states.first { it[name] == QuranPackState.Missing } }
+        assertNull(source.directory(updated))
+        withTimeout(5_000) { while (installer.readableDirectory(updated) != null) delay(10) }
+        assertEquals(listOf(listOf(name)), play.removed)
+    }
+
+    private val db = "quran/tafsir/ashur.db"
+
+    private fun edition(hash: Char, body: String) = QuranPack(
+        "quran_tafsir_ashur", QuranPack.Kind.Tafsir, QuranPack.Delivery.Play, null, null, body.length.toLong(),
+        QuranPackArchive("v1/packs/quran_tafsir_ashur-${hash.toString().repeat(12)}.zip", 100, hash.toString().repeat(64)),
+        listOf(QuranPackFile(db, body.length.toLong(),
+            MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) })),
+    )
+
+    private fun playAssets(body: String) = folder.newFolder().apply {
+        File(this, db).apply { parentFile!!.mkdirs(); writeText(body) }
+    }
+
+    @Test
+    fun invalidPlayRevisionOfTheSameSizeLeavesTheVerifiedEditionReadable() = runBlocking {
+        val old = edition('a', "old")
+        val updated = edition('b', "new")
+        val installer = QuranPackInstaller(folder.newFolder())
+        installer.retainPlayTafsir(old, playAssets("old"))
+        val layout = QuranPackLayout("https://cdn.example/", listOf(updated))
+        play.directories[updated.name] = playAssets("bad")
+        play.states.value = mapOf(updated.name to QuranPackState.Available)
+        val source = PlayOrCdnPackSource(layout, lazy { worker }, installer, scope) { play }
+        withTimeout(5_000) { source.states.first { states ->
+            states[updated.name]?.let { it.problem == QuranDownloadProblem.Integrity && it.previousVersion } == true
+        } }
+        assertEquals("old", File(source.directory(updated)!!, db).readText())
     }
 
     @Test

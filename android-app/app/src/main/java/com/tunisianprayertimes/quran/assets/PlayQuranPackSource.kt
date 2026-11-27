@@ -31,6 +31,10 @@ internal class PlayQuranPackSource(
     override val states: StateFlow<Map<String, QuranPackState>> = mutableStates.asStateFlow()
     // Locations change when Play updates the app, so they are only kept until a file is missing.
     private val locations = ConcurrentHashMap<String, File>()
+    // PAD removes asynchronously. Ignore stale completion callbacks until the reader asks for
+    // this book again, and queue that request if removal is still in flight.
+    private val deletedTafsir = ConcurrentHashMap.newKeySet<String>()
+    private val removingTafsir = mutableMapOf<String, Boolean>()
 
     private val listener = AssetPackStateUpdateListener { state -> publish(state) }
 
@@ -40,6 +44,7 @@ internal class PlayQuranPackSource(
     }
 
     override fun directory(pack: QuranPack): File? {
+        if (pack.name in deletedTafsir) return null
         locations[pack.name]?.let { cached ->
             if (cached.isDirectory) return cached
             locations.remove(pack.name)
@@ -51,7 +56,17 @@ internal class PlayQuranPackSource(
     }
 
     override fun fetch(packs: List<QuranPack>, allowMetered: Boolean) {
-        val names = packs.map { it.name }.filter { mutableStates.value[it]?.available != true && !onDevice(it) }
+        val names = packs.filter { pack ->
+            if (pack.kind != QuranPack.Kind.Tafsir) true else synchronized(removingTafsir) {
+                if (pack.name in removingTafsir) {
+                    removingTafsir[pack.name] = true
+                    false
+                } else {
+                    deletedTafsir.remove(pack.name)
+                    true
+                }
+            }
+        }.map { it.name }.filter { mutableStates.value[it]?.available != true && !onDevice(it) }
         if (names.isEmpty()) return
         // Play decides about mobile data itself: above 200 MB it waits for Wi-Fi or for consent.
         mutableStates.update { states -> states + names.associateWith { QuranPackState(QuranPackStatus.Pending) } }
@@ -69,9 +84,22 @@ internal class PlayQuranPackSource(
         // A download under way first stops: removing the pack alone would let it go on and come back.
         runCatching { manager.cancel(packs.map { it.name }) }.onFailure { Log.w(TAG, "Play could not stop a download", it) }
         packs.forEach { pack ->
+            if (pack.kind == QuranPack.Kind.Tafsir) synchronized(removingTafsir) {
+                if (pack.name in removingTafsir) {
+                    removingTafsir[pack.name] = false
+                    return@forEach
+                }
+                removingTafsir[pack.name] = false
+                deletedTafsir.add(pack.name)
+                mutableStates.update { it + (pack.name to QuranPackState.Missing) }
+            }
             locations.remove(pack.name)
             manager.removePack(pack.name).addOnCompleteListener {
                 mutableStates.update { states -> states + (pack.name to QuranPackState.Missing) }
+                if (pack.kind == QuranPack.Kind.Tafsir) {
+                    val requestedAgain = synchronized(removingTafsir) { removingTafsir.remove(pack.name) == true }
+                    if (requestedAgain) fetch(listOf(pack), allowMetered = true)
+                }
             }
         }
     }
@@ -88,6 +116,7 @@ internal class PlayQuranPackSource(
         scope.launch(Dispatchers.IO) {
             // What is on the device counts at once, without waiting for Play, which may be offline.
             val present = runCatching { manager.packLocations }.getOrNull().orEmpty().mapNotNull { (name, location) ->
+                if (name in deletedTafsir) return@mapNotNull null
                 location.assetsPath()?.let(::File)?.takeIf { it.isDirectory }?.let { name to it }
             }.toMap()
             locations.putAll(present)
@@ -107,6 +136,7 @@ internal class PlayQuranPackSource(
     }
 
     private fun publish(state: AssetPackState) {
+        if (state.name() in deletedTafsir) return
         if (playUnavailable(state.errorCode())) onUnavailable()
         val reported = playPackState(state.status(), state.errorCode(), state.bytesDownloaded(), state.totalBytesToDownload())
         // A pack whose files are here stays usable whatever an answer from Play says; only remove() drops it.

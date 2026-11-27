@@ -41,8 +41,15 @@ internal class CdnQuranPackSource(
             layout.packs.withIndex().associate { (index, pack) ->
                 @Suppress("UNCHECKED_CAST")
                 val work = (values[index + 1] as List<WorkInfo>).lastOrNull()
-                val state = cdnPackState(installer.isInstalled(pack), work, pack.archive.bytes, metered)
-                pack.name to if (state.status == QuranPackStatus.Failed && pack.name in cleared) QuranPackState.Missing else state
+                val current = installer.isInstalled(pack)
+                val state = cdnPackState(current, work, pack.archive.bytes, metered)
+                val visible = when {
+                    !current && !pack.cdnPublished -> QuranPackState(QuranPackStatus.Failed, problem = QuranDownloadProblem.Unpublished)
+                    state.status == QuranPackStatus.Failed && pack.name in cleared -> QuranPackState.Missing
+                    else -> state
+                }
+                pack.name to if (!current && pack.kind == QuranPack.Kind.Tafsir && installer.readableDirectory(pack) != null)
+                    visible.copy(previousVersion = true) else visible
             }
         }.flowOn(Dispatchers.IO).stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
@@ -53,13 +60,14 @@ internal class CdnQuranPackSource(
         }
     }
 
-    override fun directory(pack: QuranPack): File? = installer.installedDirectory(pack).takeIf { it.isDirectory }
+    override fun directory(pack: QuranPack): File? = installer.readableDirectory(pack)
 
     override fun fetch(packs: List<QuranPack>, allowMetered: Boolean) {
         packs.forEach { cleared.remove(it.name) }
         packs.forEach { pack ->
+            if (!pack.cdnPublished) return@forEach
             val current = states.value[pack.name]
-            if (current?.available == true) return@forEach
+            if (current?.status == QuranPackStatus.Available) return@forEach
             val request = OneTimeWorkRequestBuilder<QuranPackDownloadWorker>()
                 .setConstraints(Constraints.Builder()
                     .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)

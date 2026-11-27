@@ -116,8 +116,8 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         }
         val near = distance <= radius + 100
         if (detector.arrival != null) {
-            if (detector.clearlyAway && sampling != Sampling.PRECISE) burst(now)
-            else if (detector.lastSupport == fix.elapsedRealtimeMillis && detector.outsideSince == null) {
+            if ((detector.clearlyAway || detector.returningToExteriorPath) && sampling != Sampling.PRECISE) burst(now)
+            else if (detector.lastSupport == fix.elapsedRealtimeMillis && !checkingExit) {
                 change(Sampling.BALANCED); burstEnd = null
             }
         } else if (!fallback) {
@@ -221,18 +221,19 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
             now - support >= 180_000 && (supportingBurst == null || now - supportingBurst!! >= 180_000)) {
             supportingBurst = now; burst(now)
         }
-        val fresh = support != null && now - support <= 30_000 && detector.outsideSince == null
+        val fresh = support != null && now - support <= 30_000 && !checkingExit
         requested = eligiblePeriod && (fallback || detector.arrival != null && (requested || fresh))
     }
 
     val desired get() = requested
+    private val checkingExit get() = detector.outsideSince != null || detector.returningToExteriorPath
     val isUnavailable get() = unavailable
     val requestEnd get() = listOfNotNull(burstEnd, diagnosticStart?.plus(90_000), recoveryStart?.plus(120_000)).minOrNull()
     val deadline get() = listOfNotNull(requestEnd, detector.expiry,
         diagnosticStart?.takeUnless { retried }?.plus(45_000)).minOrNull()
     val state get() = when {
         fallback -> PresenceState.SCHEDULE_FALLBACK
-        detector.outsideSince != null -> PresenceState.EXITING
+        checkingExit -> PresenceState.EXITING
         detector.arrival != null -> PresenceState.VISIT_CONFIRMED
         sampling != Sampling.PARKED -> PresenceState.ACQUIRING
         else -> PresenceState.IDLE

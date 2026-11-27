@@ -38,7 +38,7 @@ ol { list-style: none; margin: .65rem 0; padding: 0; max-height: 52vh; overflow:
 </style>
 <main>
   <header>
-    <div><h1>مسار اختبار الإسكات</h1><p id="session"></p></div>
+    <div><h1>مسار اختبار الإسكات</h1><p id="session"></p><p id="steps-summary"></p></div>
     <button id="download">تنزيل البيانات بصيغة GeoJSON</button>
   </header>
   <div class="grid">
@@ -57,7 +57,7 @@ ol { list-style: none; margin: .65rem 0; padding: 0; max-height: 52vh; overflow:
     </section>
     <section aria-labelledby="timeline-heading">
       <div class="heading"><h2 id="timeline-heading">السجل الزمني</h2>
-        <select id="filter" aria-label="عرض السجل"><option value="all">كل التسجيلات</option><option value="events">أحداث الإسكات والاختبار</option></select>
+        <select id="filter" aria-label="عرض السجل"><option value="all">كل التسجيلات</option><option value="events">أحداث الإسكات والاختبار</option><option id="step-filter" value="steps">الخطوات فقط</option></select>
       </div>
       <ol id="timeline"></ol>
       <div class="pages"><button id="previous">السابق</button><span id="page"></span><button id="next">التالي</button></div>
@@ -86,6 +86,8 @@ const isRoute = entry => entry.properties.kind === 'route';
 const isMonitor = entry => entry.properties.kind === 'monitor_fix';
 const rangeText = dateTime.format(session.startedAt) + (session.endedAt == null ? ' · جلسة جارية عند التصدير' : ' — ' + dateTime.format(session.endedAt));
 el('session').textContent = rangeText + ' · ' + displayZone;
+el('steps-summary').textContent = session.steps?.summary || 'لا تتوفّر بيانات خطوات لهذا المسار.';
+el('step-filter').hidden = !session.steps?.sources?.length;
 el('boundary-key').hidden = !boundaryFeatures.length;
 if (boundaryFeatures.length) {
   const names = boundaryFeatures.map(feature => feature.properties.name).join('، ');
@@ -260,8 +262,12 @@ let visibleIndices = [], page = 0;
 const pageSize = 40;
 function refreshFilter() {
   visibleIndices = [];
+  const filter = el('filter').value;
   entries.forEach((entry, i) => {
-    if (el('filter').value === 'all' || (!isRoute(entry) && !isMonitor(entry))) visibleIndices.push(i);
+    const kind = entry.properties.kind;
+    if (filter === 'steps' && kind !== 'walk_steps' && !kind.startsWith('step_')) return;
+    if (filter === 'events' && (isRoute(entry) || isMonitor(entry) || kind === 'walk_steps')) return;
+    visibleIndices.push(i);
   });
   el('seek').max = Math.max(0, visibleIndices.length - 1); el('seek').disabled = visibleIndices.length < 2;
 }
@@ -289,7 +295,14 @@ function select(index) {
   el('seek').value = Math.max(0, position);
   const entry = entries[index];
   el('selected-title').textContent = entry ? dateTime.format(entry.properties.at) + ' · ' + title(entry) : 'لا توجد تسجيلات مطابقة.';
-  el('selected-details').textContent = entry && entry.properties.detail !== title(entry) ? entry.properties.detail : '';
+  const detail = [];
+  if (entry) {
+    const p = entry.properties;
+    if (p.kind !== 'walk_steps' && p.detail && p.detail !== title(entry)) detail.push(p.detail);
+    if (p.stepIntervalStart != null) detail.push('خطوات بين ' + clock.format(p.stepIntervalStart) + ' و' + clock.format(p.at));
+    if (p.recordedStepsThrough != null) detail.push('مجموع الخطوات المرصودة حتى هذا الحدث ' + p.recordedStepsThrough);
+  }
+  el('selected-details').textContent = detail.join('\n');
   let location = '';
   if (entry) {
     const coords = entry.geometry?.coordinates;

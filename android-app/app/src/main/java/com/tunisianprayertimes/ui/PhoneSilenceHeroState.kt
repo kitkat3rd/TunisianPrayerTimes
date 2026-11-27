@@ -6,6 +6,9 @@ import com.tunisianprayertimes.ManualSilenceScheduler
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.MosquePrayerActions
+import com.tunisianprayertimes.silence.SilenceWindow
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Calendar
 import java.util.Locale
 
@@ -33,17 +36,28 @@ internal fun phoneStatusNoticeText(
     hasDnd: Boolean,
     silenceReason: PhoneSilenceReason?,
     showMissingDnd: Boolean = true,
+    nowMillis: Long = System.currentTimeMillis(),
 ): String? {
     if (!hasDnd && showMissingDnd) return context.getString(R.string.phone_status_permission_short)
     if (!isPhoneSilenced) return null
 
     return when {
-        silenceReason != null -> phoneSilenceReasonText(context, silenceReason)
+        silenceReason != null -> phoneSilenceReasonText(context, silenceReason, nowMillis)
         else -> context.getString(R.string.phone_status_silent_short)
     }
 }
 
-internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason): String {
+internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason, nowMillis: Long = System.currentTimeMillis()): String {
+    if ((reason.source == PhoneSilenceReasonSource.AUTO_PRAYER || reason.source == PhoneSilenceReasonSource.AUTO_PRAYER_UNKNOWN) &&
+        reason.endsAtMillis > nowMillis) {
+        val zone = ZoneId.systemDefault()
+        val endDate = Instant.ofEpochMilli(reason.endsAtMillis).atZone(zone).toLocalDate()
+        val endClock = formatTimeOfDay(reason.endsAtMillis)
+        val end = if (endDate == Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()) endClock
+            else context.getString(R.string.hero_silence_end_date, endClock, gregorianDateLabel(endDate))
+        return if (reason.prayer == null) context.getString(R.string.hero_current_scheduled_prayers, end)
+            else context.getString(R.string.hero_current_scheduled_prayer, prayerName(context, reason.prayer), end)
+    }
     if (reason.source in setOf(PhoneSilenceReasonSource.MANUAL_UNTIL_STOPPED, PhoneSilenceReasonSource.MANUAL_UNTIL_PRAYER, PhoneSilenceReasonSource.MANUAL_UNTIL_TIME) &&
         MosquePrayerActions.canUndo(context)) return context.getString(
         if (ManualSilenceScheduler.canScheduleExact(context)) R.string.phone_status_silent_manual_until_time else R.string.manual_approximate_time,
@@ -75,6 +89,25 @@ internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason
             else R.string.phone_status_silent_external,
         )
     }
+}
+
+/** The uninterrupted schedule covering now. An active flag alone can also be a travel bridge with no known end. */
+internal fun currentScheduledSilence(windows: List<SilenceWindow>, now: Instant): PhoneSilenceReason? {
+    val active = windows.filter { now in it }
+    if (active.isEmpty()) return null
+    var end = active.maxOf { it.end }
+    val prayers = active.mapTo(mutableSetOf()) { it.prayer }
+    for (window in windows.sortedBy { it.start }) {
+        if (window.start > end) break
+        if (window.start <= now) continue
+        prayers.add(window.prayer)
+        end = maxOf(end, window.end)
+    }
+    val prayer = prayers.singleOrNull()
+    return PhoneSilenceReason(
+        source = if (prayer == null) PhoneSilenceReasonSource.AUTO_PRAYER_UNKNOWN else PhoneSilenceReasonSource.AUTO_PRAYER,
+        prayer = prayer, endsAtMillis = end.toEpochMilli(),
+    )
 }
 
 internal fun resolvePhoneSilenceReason(

@@ -80,7 +80,7 @@ class QuranReflowViewTest {
      * The view on a clock that moves only when told: the eraser's pieces fade on the system's clock, which the test's
      * frames do not move, and would ask for frames without end.
      */
-    private fun show(hidden: Set<QuranVerseReference> = emptySet(), erasing: Boolean = false, counting: Boolean = false) {
+    private fun show(hidden: Set<QuranVerseReference> = emptySet(), erasing: Boolean = false, counting: Boolean = false, onTafsirPage: (() -> Unit)? = null) {
         rule.mainClock.autoAdvance = false
         rule.setContent {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -96,11 +96,20 @@ class QuranReflowViewTest {
                     onRead = { read += it },
                     onTap = { taps += it },
                     onHeading = {},
+                    onTafsirPage = onTafsirPage,
                 )
             }
         }
         rule.mainClock.advanceTimeByFrame()
         viewHeight = rule.onRoot().getUnclippedBoundsInRoot().height.value
+    }
+
+    @Test
+    fun largeTextPageOffersTheTafsirVersePickerToTalkBack() {
+        var opened = false
+        show(onTafsirPage = { opened = true })
+        rule.openTafsirAccessibilityAction()
+        assertTrue(opened)
     }
 
     @Test

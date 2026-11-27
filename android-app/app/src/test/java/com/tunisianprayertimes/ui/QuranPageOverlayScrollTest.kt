@@ -50,7 +50,7 @@ class QuranPageOverlayScrollTest {
     private var zoomed = false
     private var erased = false
 
-    private fun show(erasing: Boolean = false) {
+    private fun show(erasing: Boolean = false, onTafsirPage: (() -> Unit)? = null) {
         eraserOn.value = erasing
         val context = ApplicationProvider.getApplicationContext<Application>()
         val assetPath = "overlay-scroll-${folder.root.name}/page.png"
@@ -76,6 +76,7 @@ class QuranPageOverlayScrollTest {
                     verseAt = { _, y -> tappedY = y; null }, rectsOf = { emptyList() },
                     hiddenRects = if (eraserOn.value) listOf(QuranHighlightRect(0f, 0f, 1f, 1f)) else emptyList(),
                     erasing = eraserOn.value, lineAt = { _, _ -> QuranHighlightRect(0f, 0f, 1f, 1f) },
+                    onTafsirPage = onTafsirPage,
                     onErased = { erased = true },
                     onTap = {}, onZoomChanged = { zoomed = it }, onSettled = {},
                 )
@@ -84,6 +85,14 @@ class QuranPageOverlayScrollTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun printedPageOffersTheTafsirVersePickerToTalkBack() {
+        var opened = false
+        show(onTafsirPage = { opened = true })
+        compose.openTafsirAccessibilityAction()
+        assertTrue(opened)
     }
 
     private fun tapY(): Float {

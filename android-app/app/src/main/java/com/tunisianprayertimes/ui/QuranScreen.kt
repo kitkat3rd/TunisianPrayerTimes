@@ -493,6 +493,7 @@ private fun QuranReader(
     /** Counts the surahs opened that way: the same surah opened again brings its heading back into view. */
     var landingTurn by remember { mutableIntStateOf(0) }
     var panel by rememberSaveable { mutableStateOf<String?>(null) }
+    val tafsir = rememberQuranTafsirSession()
     var selectionDraft by rememberSaveable { mutableStateOf<String?>(null) }
     // Read through a State, a call at each use: past 256 registers, D8 lost reads of the plain value in the reader's
     // main lambda (see reviewOnPage), as it did of the recited verse's two values below.
@@ -1008,7 +1009,7 @@ private fun QuranReader(
             media.fetch(listOf(pagesPack), allowMetered = false)
         }
     }
-    LaunchedEffect(expanded, focus) { onHideNavigation(expanded || focus) }
+    LaunchedEffect(expanded, focus, tafsir.open) { onHideNavigation(expanded || focus || tafsir.open) }
 
     // The recording of the recited chapter, for the dock's verse-by-verse strip and the player's bubble.
     var track by remember { mutableStateOf<QuranSurahRecording?>(null) }
@@ -1064,6 +1065,8 @@ private fun QuranReader(
     var dueBannerClosedDay by rememberSaveable { mutableLongStateOf(today) }
     val dueBannerClosed by rememberUpdatedState(dueBannerClosedList.takeIf { dueBannerClosedDay == today }.orEmpty().toSet())
     val currentHifzPoints by rememberUpdatedState(hifzPoints)
+    fun tafsirGate(exposed: Set<QuranVerseReference>) =
+        hifzReadingGate(currentHifzPoints, currentDueIds, exposed, dueBannerClosed)
     fun readingGate(number: Int): List<HifzPoint> {
         if (reviewActive) return emptyList()
         val visible = currentCatalog?.versesOnPage(number).orEmpty().filter { it.ayah > 0 }.map { it.reference }.toSet()
@@ -1091,6 +1094,7 @@ private fun QuranReader(
             // The review turns to its points' pages, and the reader may look around them: neither is where reading
             // stands, nor the page to open on next time. Its end turns back to the reader's page, which is kept again.
             if (reviewActive) { first = false; return@collect }
+            if (tafsir.open) { first = false; return@collect }
             prefs.edit().putInt("last_page", it + 1).apply()
             if (first) { first = false; return@collect }
             if (autoTurned == it) return@collect
@@ -1147,6 +1151,7 @@ private fun QuranReader(
     LaunchedEffect(dragging) {
         if (dragging) {
             dragStarted[0] = true
+            tafsir.close()
             followAudio = false
             autoTurned = null
             selectionDraft = null
@@ -1164,7 +1169,7 @@ private fun QuranReader(
         val index = catalog ?: return@LaunchedEffect
         // The review keeps its point's page: a recitation resumed meanwhile, from the notification or a headset, plays
         // without turning it.
-        if (followAudio && !playback.loading && playback.playing && !reviewActive) {
+        if (followAudio && !playback.loading && playback.playing && !reviewActive && !tafsir.open && tafsir.pickerPage == 0) {
             val surah = playback.surah
             val ayah = playback.ayah ?: playback.gapAfter
             val versePages = if (surah != null && ayah != null) index.pagesForVerse(surah, ayah)
@@ -1230,10 +1235,33 @@ private fun QuranReader(
     }
 
     fun clearTransient() {
+        tafsir.close()
         selectionDraft = null
         rangeFromDraft = null
         rangeToDraft = null
         pendingRevealDraft = null
+    }
+    fun openTafsir(verse: QuranVerseReference, intro: Boolean = false) {
+        if (reviewMode || reviewActive || !tafsir.offered) return
+        clearTransient()
+        followAudio = false
+        expanded = false
+        tafsir.show(verse, intro)
+    }
+    fun closeTafsir() {
+        val verse = tafsir.verse
+        if (verse != null) selectionDraft = if (tafsir.intro) encodeSurah(verse.surah)
+            else encodeVerse(verse.copy(ayah = verse.ayah.coerceAtLeast(1)))
+        tafsir.close()
+    }
+    fun stepTafsir(verse: QuranVerseReference) {
+        val target = currentCatalog?.pagesForVerse(verse.surah, verse.ayah)?.firstOrNull() ?: return
+        tafsir.show(verse)
+        lastTouch.longValue = System.currentTimeMillis()
+        if (target != pager.currentPage + 1) scope.launch {
+            autoTurned = target - 1
+            pager.scrollToPage(target - 1)
+        }
     }
     /** Do not select (and therefore expose) a hidden answer before offering its pending question. */
     fun gateVerseReveal(verse: QuranVerseReference): Boolean {
@@ -1461,6 +1489,7 @@ private fun QuranReader(
     }
     /** «وضع المراجعة», from the eye in the bar or from the «المراجعة» sheet. */
     fun setVersesHidden(on: Boolean) {
+        if (on) tafsir.close()
         reviewMode = on
         prefs.edit().putBoolean("review_mode", on).apply()
         selectionDraft = null
@@ -2042,7 +2071,7 @@ private fun QuranReader(
     // A page stayed on, in front of the reader with no sheet over it, is read: the page restored as the reader opens, or
     // left in view as a sheet closes, counts only once it has been there a while. In large text, on the same terms,
     // each row counts once it has been in view that long (QuranReflowView).
-    val overPage = panel != null || stackedFix != null || editingPoint != null
+    val overPage = tafsir.open || tafsir.pickerPage != 0 || panel != null || stackedFix != null || editingPoint != null
     // Read through a State in the pages' lambda, as the reader's flags are there (D8). Not before the verses' index is
     // read, as the printed page waits for it: rows read meanwhile would be given and never counted on this visit.
     val readsRows by rememberUpdatedState(!overPage && !reviewMode && pagesReady && inFront && catalog != null)
@@ -2229,6 +2258,7 @@ private fun QuranReader(
         }
     }
     LaunchedEffect(panel) {
+        if (panel != null) tafsir.close()
         // A review closed some other way than its end, as when another panel replaces one brought back with the app:
         // its page to turn back to must not be the next review's.
         if (!reviewActive) reviewFromPage = null
@@ -2243,7 +2273,7 @@ private fun QuranReader(
     }
 
     /** Offer a real choice before the page's due answers become visible, including look-alike answers. */
-    val duePagePoints = if (panel != null || catalog == null || stackedFix != null || editingPoint != null) emptyList()
+    val duePagePoints = if (tafsir.open || panel != null || catalog == null || stackedFix != null || editingPoint != null) emptyList()
         else readingGate(page.number)
     fun readDuePage() {
         dueBannerClosedList = (dueBannerClosed + duePagePoints.map { it.id }).toList()
@@ -2442,7 +2472,7 @@ private fun QuranReader(
     ) {
         // The dock comes with a recitation (see dockLingers). The review on the page has its own audio strip in its card.
         // While a forgotten passage is chosen, its bar takes the dock's place: the page's last lines stay free to tap.
-        val showDock = !reviewOnPage && passageStart == null && (playback.playing || playback.loading || dockLingers || starter.pendingPacks.isNotEmpty())
+        val showDock = !tafsir.open && !reviewOnPage && passageStart == null && (playback.playing || playback.loading || dockLingers || starter.pendingPacks.isNotEmpty())
         // Fitted whole, the page has the whole reader: the header, the dock, the app's bar and the cards come over it,
         // and showing or hiding them never moves it. Filling the width, it scrolls, and the header, the dock and the bar
         // take their room from it, for the end of the page to scroll into view above them.
@@ -2513,6 +2543,9 @@ private fun QuranReader(
                             HifzSettings.write(context, hifzSettings)
                         },
                     )
+                    if (!reviewMode && !reviewActive && !tafsir.open && panel == null) {
+                        tafsir.announcementBooks?.let { QuranTafsirAnnouncement(it, prefs) }
+                    }
                     if (detailsFailing) {
                         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("تعذّر تجهيز البحث والتلاوة.", Modifier.weight(1f), fontSize = 12.sp, color = TextMuted)
@@ -2536,7 +2569,7 @@ private fun QuranReader(
                 },
             ) {
                 // Read by the page alone: the card or panel growing must not recompose the whole reader.
-                val bottomInset = { if (expanded) panelHeightPx else overlayHeightPx + cardAtFootPx }
+                val bottomInset = { if (tafsir.open) tafsir.heightPx else if (expanded) panelHeightPx else overlayHeightPx + cardAtFootPx }
                 val topInset = { if (headerOverlap) headerHeightPx else 0 }
                 // The most that can come over the page's head and foot: the header, and the app's bar with the dock on
                 // it. Fixed, so that the page fitted whole rests clear of them and never moves for them.
@@ -2569,9 +2602,12 @@ private fun QuranReader(
                      * A surah heading's frame opens the surah's card, as a verse opens its own. Otherwise it is paper: through
                      * the review, over hidden answers, while a passage is chosen, under the due banner, and in «مراجعة».
                      */
-                    val headingsLive = catalog != null && !reviewOnPage && !reviewMode && readingProtected.isEmpty() && rangeFrom == null &&
+                    val headingsLive = catalog != null && !tafsir.open && !reviewOnPage && !reviewMode && readingProtected.isEmpty() && rangeFrom == null &&
                         passageStart == null && duePagePoints.isEmpty()
                     val selected = buildList {
+                        if (tafsir.open && !tafsir.intro && tafsirGate(tafsir.passage).isEmpty()) {
+                            tafsir.passage.forEach { v -> addAll(highlights?.rectangles(number, v.surah, v.ayah).orEmpty()) }
+                        }
                         selection?.let { addAll(highlights?.rectangles(number, it.surah, it.ayah).orEmpty()) }
                         chosenSurah?.let { s -> highlights?.heading(number, s)?.let(::add) }
                         val from = rangeFrom
@@ -2655,6 +2691,10 @@ private fun QuranReader(
                         foldedAway -> if (readsInRows(number)) emptyList() else listOfNotNull(catalog?.versesOnPage(number)?.lastOrNull { it.ayah > 0 }
                             ?.let { v -> highlights?.rectangles(number, v.surah, v.ayah)?.maxByOrNull { it.bottom } })
                         index != pager.currentPage -> emptyList()
+                        tafsir.open -> tafsir.verse?.let { v ->
+                            if (tafsir.intro) listOfNotNull(highlights?.heading(number, v.surah))
+                            else highlights?.rectangles(number, v.surah, v.ayah).orEmpty()
+                        }.orEmpty()
                         // Fitted whole, the page never moves for the card about a verse or a passage: the card goes to the
                         // page's head instead (see cardAbout). A page that scrolls brings them into view.
                         selection != null -> if (scrolls) selection?.let { highlights?.rectangles(number, it.surah, it.ayah) }.orEmpty() else emptyList()
@@ -2668,7 +2708,7 @@ private fun QuranReader(
                     // scrolled to when it is out of view, as the found verse is once.
                     val reveal = when {
                         index != pager.currentPage || !scrolls || highlights == null -> emptyList()
-                        followAudio && playback.playing -> highlights.rectangles(number, playback.surah, recitedAyah)
+                        followAudio && playback.playing && !tafsir.open -> highlights.rectangles(number, playback.surah, recitedAyah)
                         // A surah opened from the index or a search: its heading, where it starts down the page.
                         landingSurah?.first == number -> listOfNotNull(landingSurah?.second?.let { highlights.heading(number, it) })
                         else -> emptyList()
@@ -2728,6 +2768,10 @@ private fun QuranReader(
                         headingRect = { s -> highlights?.heading(number, s) },
                         // The card open is not offered again: the action would close it.
                         headingNames = if (headingsLive) highlights?.headingsOn(number).orEmpty().filter { it != chosenSurah }.associateWith(surahName) else emptyMap(),
+                        onTafsirPage = if (tafsir.offered && !tafsir.open && index == pager.currentPage && catalog != null && panel == null &&
+                            !reviewMode && !reviewActive && rangeFrom == null && passageStart == null) {
+                            { followAudio = false; tafsir.pickerPage = number }
+                        } else null,
                         onHeading = { s ->
                             expanded = false
                             surahCountDraft = null
@@ -2762,6 +2806,7 @@ private fun QuranReader(
                         onRows = { rows -> if (rows == null) pagesInRows.remove(number) else pagesInRows[number] = rows },
                         onTap = { verse ->
                             when {
+                                tafsir.open -> closeTafsir()
                                 // The review on the page chooses nothing, and only «أظهر» shows the answer: a tap meant
                                 // for the eraser on the verse's number must not give it away.
                                 reviewOnPage -> Unit
@@ -2834,7 +2879,7 @@ private fun QuranReader(
                     val bubble = scrub?.let { "الآية ${it.ayah} · ${ltr(quranClock(it.positionMs))}" }
                         ?: holdDelta?.let { delta -> "${quranSignedClock(delta)}" + ((track?.ayahAt(QuranAudioController.state.value.positionMs) ?: playback.ayah)?.let { " · الآية $it" } ?: "") }
                     if (bubble != null) QuranBubble(bubble)
-                    val pillVisible = playback.playing && sessionVerse != null && !sessionOnPage && scrub == null && selection == null && chosenSurah == null && rangeFrom == null &&
+                    val pillVisible = !tafsir.open && tafsir.pickerPage == 0 && playback.playing && sessionVerse != null && !sessionOnPage && scrub == null && selection == null && chosenSurah == null && rangeFrom == null &&
                         passageStart == null &&
                         !expanded && !reviewOnPage
                     AnimatedVisibility(pillVisible) {
@@ -2912,7 +2957,7 @@ private fun QuranReader(
                         )
                         // The passage's card and the verse or surah card, below, take this place.
                         rangeFrom != null -> Unit
-                        (selection != null || chosenSurah != null) && !expanded -> Unit
+                        tafsir.open || ((selection != null || chosenSurah != null) && !expanded) -> Unit
                         // «مراجعة» gives the tap to the eraser.
                         tapHint && catalog != null && !expanded && !reviewMode -> QuranHint("اضغط على أي آية لتستمع منها أو تكرّرها أو تنسخها.") { hideHint("hint_tap_seen") }
                         stripHint && hasSession && showDock && !expanded -> QuranHint("اسحب شريط الآيات الذي فوق أزرار المشغّل لتنتقل إلى آية.") { hideHint("hint_strip_seen") }
@@ -2997,7 +3042,7 @@ private fun QuranReader(
                     if (selection != null) lastCardVerse[0] = selection
                     val cardVerse = selection ?: lastCardVerse[0] ?: QuranVerseReference(1, 1).takeIf { catalog != null }
                     // Built anew when a verse covered again is opened again, so that its countdown starts over.
-                    if (cardVerse != null) QuranCardSlot(shown = selection != null && rangeFrom == null && !expanded && duePagePoints.isEmpty()) { key(reopened) {
+                    if (cardVerse != null) QuranCardSlot(shown = !tafsir.open && selection != null && rangeFrom == null && !expanded && duePagePoints.isEmpty()) { key(reopened) {
                         QuranVerseCard(
                             hidesAfterMs = if (reviewMode && selection != null) hosaryMs(cardVerse).coerceAtLeast(QuranReviewMinMs) else null,
                             review = reviewMode,
@@ -3049,13 +3094,14 @@ private fun QuranReader(
                             onPoint = { panel = "hifzRecord:${cardVerse.surah}:${cardVerse.ayah}" },
                             onCopy = { copyOrShare(cardVerse, share = false) },
                             onShare = { copyOrShare(cardVerse, share = true) },
+                            onTafsir = if (tafsir.offered && !reviewMode && !reviewActive) ({ openTafsir(cardVerse) }) else null,
                             onDismiss = { selectionDraft = null },
                         )
                     } }
                     // A surah heading's card, built ahead and kept as the verse card is.
                     if (chosenSurah != null) lastCardSurah[0] = chosenSurah
                     val cardSurah = chosenSurah ?: lastCardSurah[0] ?: 1.takeIf { catalog != null }
-                    if (cardSurah != null) QuranCardSlot(shown = chosenSurah != null && rangeFrom == null && !expanded && duePagePoints.isEmpty()) {
+                    if (cardSurah != null) QuranCardSlot(shown = !tafsir.open && chosenSurah != null && rangeFrom == null && !expanded && duePagePoints.isEmpty()) {
                         QuranSurahCard(
                             surahName = surahName(cardSurah),
                             count = surahCountDraft,
@@ -3064,6 +3110,9 @@ private fun QuranReader(
                             onRepeat = { surahCountDraft = listening.surahTimes.takeIf { it != 1 } ?: 0 },
                             onCount = { surahCountDraft = it },
                             onStart = { startSurahFromHeading(cardSurah, surahCountDraft ?: 0) },
+                            onTafsirIntro = if (!reviewMode && !reviewActive && tafsir.hasIntro(cardSurah)) {
+                                { openTafsir(QuranVerseReference(cardSurah, 1), intro = true) }
+                            } else null,
                             onDismiss = { selectionDraft = null },
                         )
                     }
@@ -3147,6 +3196,43 @@ private fun QuranReader(
                 )
             }
         }
+        val tafsirVerse = tafsir.verse
+        if (tafsirVerse != null && tafsir.offered && catalog != null && !reviewMode && !reviewActive && panel == null) {
+            val pack = media?.tafsir
+            QuranTafsirPanel(
+                repository = tafsir.repository,
+                verse = tafsirVerse,
+                surahName = surahName,
+                verseText = { reference -> catalog.verse(reference)?.mushafText },
+                onVerseChange = ::stepTafsir,
+                onDismiss = ::closeTafsir,
+                modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { tafsir.heightPx = it.height },
+                intro = tafsir.intro,
+                forceFull = pageFillsWidth || touchExploration || configuration.fontScale > 1.3f,
+                isProtected = { tafsirGate(it).isNotEmpty() },
+                onReadAnyway = { verses ->
+                    dueBannerClosedList = (dueBannerClosed + tafsirGate(verses).map { it.id }).toList()
+                    dueBannerClosedDay = today
+                    updateLearning { it.expose(verses) }
+                },
+                onReview = { verses -> tafsirGate(verses).firstOrNull()?.let { startReview(first = it) } },
+                onPassageShown = { verses ->
+                    if (tafsir.open && !reviewMode && inFront && tafsirGate(verses).isEmpty()) {
+                        updateLearning { it.expose(verses) }
+                    }
+                },
+                onTouch = { lastTouch.longValue = System.currentTimeMillis() },
+                packRevision = if (media != null && pack != null) media.state(pack).let { it.available to it.previousVersion } else null,
+                downloadAction = if (media != null && pack != null) { _, started, cancelled ->
+                    QuranTafsirDownloadCard(
+                        media, pack, onUseMobileData = { media.source?.confirmMobileData(listOf(pack), mobileData) },
+                        onDownloadStarted = started, onDownloadCancelled = cancelled,
+                    )
+                } else null,
+                offPageText = { reference -> catalog.mushafTextOutsidePage(reference, page.number) },
+                onPassageHighlight = { verses -> tafsir.passage = verses },
+            )
+        }
         AnimatedVisibility(
             visible = expanded && hasSession,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -3171,6 +3257,14 @@ private fun QuranReader(
         }
     }
 
+    if (tafsir.pickerPage > 0 && catalog != null && tafsir.offered && !reviewMode && !reviewActive && panel == null) {
+        QuranTafsirVersePicker(
+            verses = catalog.versesOnPage(tafsir.pickerPage).map { it.reference }.filter { it.ayah > 0 || it.surah == 1 },
+            surahName = surahName,
+            onPick = { openTafsir(it) },
+            onDismiss = { tafsir.pickerPage = 0 },
+        )
+    }
     val currentPanel = panel
     when {
         currentPanel == null -> Unit
@@ -4298,6 +4392,7 @@ internal fun QuranPageImage(
     headingRect: (Int) -> QuranHighlightRect? = { null },
     /** The surahs whose heading on this page opens their card, with their names: TalkBack reaches them as actions. */
     headingNames: Map<Int, String> = emptyMap(),
+    onTafsirPage: (() -> Unit)? = null,
     /** A tap on a surah's heading, at its release. A verse near the point is the verse's: see [verseAt]. */
     onHeading: (Int) -> Unit = {},
     /**
@@ -4775,6 +4870,7 @@ internal fun QuranPageImage(
                 if (opens != null) currentOnHeading(opens) else currentOnTap(null)
             },
             headingNames = headingNames,
+            onTafsirPage = onTafsirPage,
         )
         return
     }
@@ -4789,7 +4885,7 @@ internal fun QuranPageImage(
                 }) + headingNames.map { (surah, name) ->
                     // A double tap lands where TalkBack puts it, not on a heading: each one is an action of the page.
                     CustomAccessibilityAction("الاستماع إلى سورة $name أو تكرارها") { currentOnHeading(surah); true }
-                }
+                } + listOfNotNull(tafsirPageAction(onTafsirPage))
             }
             // A page that fills the width, or sits behind the review card: one finger scrolls it and flings it. Outside
             // the zoom, which sees each move first, it leaves a pinch to the zoom as soon as a second finger is down,

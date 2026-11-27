@@ -32,6 +32,21 @@ class QuranPackLayoutTest {
     )
 
     @Test
+    fun tafsirHasItsOwnPackAndCannotSupplyAnotherAsset() {
+        val database = QuranPackLayout.TAFSIR_ASSET
+        val name = "quran_tafsir_ashur"
+        val valid = pack(name, "tafsir", listOf(database))
+        valid.getJSONArray("files").getJSONObject(0).put("sha256", "a".repeat(64))
+        val parsed = QuranPackLayout.parse(layout(valid))
+        assertEquals(parsed.packOf(database), parsed.tafsir)
+        assertEquals(QuranPack.Kind.Tafsir, parsed.tafsir?.kind)
+        for (item in listOf(pack(name, "tafsir", listOf("quran/pages/1.webp")),
+            pack(name, "pages", listOf(database)), pack("unknown_book", "tafsir", listOf(database)))) {
+            assertThrows(IllegalArgumentException::class.java) { QuranPackLayout.parse(layout(item)) }
+        }
+    }
+
+    @Test
     fun filesAndChaptersFindTheirPacks() {
         val layout = QuranPackLayout.parse(sample)
         assertEquals("quran_pages", layout.pages?.name)

@@ -41,6 +41,8 @@ class QuranCatalog internal constructor(
         )
     }
     private val versesByReference = verses.associateBy { it.reference }
+    private val splitFragments = entries.filter { !it.isFirstFragment || !it.isLastFragment }
+        .groupBy { QuranVerseReference(it.surah, it.ayah) }
     // Waqf positions belong to a complete verse, even when a search shows only its second page. Convert the
     // complete verse once, then slice by raw token count; grouping words first would shift the sign positions.
     // Lazy, like each verse's own words: converting the whole text here held the reader's verse taps for seconds,
@@ -69,6 +71,22 @@ class QuranCatalog internal constructor(
     fun verse(surah: Int, ayah: Int): QuranVerse? = verse(QuranVerseReference(surah, ayah))
 
     fun verse(reference: QuranVerseReference): QuranVerse? = versesByReference[reference]
+
+    /** Words absent from the visible page. Preserve waqf and token offsets across a page break. */
+    fun mushafTextOutsidePage(reference: QuranVerseReference, page: Int): String? {
+        val verse = verse(reference) ?: return null
+        if (page !in verse.pages) return verse.mushafText
+        if (verse.pages.size == 1) return null
+        val fragments = splitFragments[reference] ?: return null
+        var offset = 0
+        return buildList {
+            for (fragment in fragments) {
+                val end = offset + fragment.text.split(' ').size
+                if (fragment.page != page) addAll(verse.mushafWords.subList(offset, end))
+                offset = end
+            }
+        }.filter { it.isNotEmpty() }.joinToString(" ").ifBlank { null }
+    }
 
     fun textForVerse(surah: Int, ayah: Int): String? = verse(surah, ayah)?.text
 

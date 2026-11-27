@@ -19,8 +19,8 @@
     <string name="phone_status_silent_manual_until_time">الإسكات اليدوي حتى %1$s</string>
     <string name="phone_status_silent_manual_until_prayer">الإسكات اليدوي حتى صلاة %1$s</string>
     <string name="phone_status_silent_wake_alarm">الإسكات مفعل حتى منبه الاستيقاظ</string>
-    <string name="phone_status_silent_external">الهاتف في الوضع الصامت</string>
-    <string name="phone_status_dnd_active">وضع عدم الإزعاج مفعّل</string>
+    <string name="phone_status_silent_external">الوضع الصامت مفعّل خارج التطبيق</string>
+    <string name="phone_status_dnd_active">عدم الإزعاج مفعّل خارج التطبيق</string>
     <string name="btn_silence">تفعيل الإسكات 🔇</string>
     <string name="btn_silence_for_duration">تفعيل الإسكات لمدة %1$s 🔇</string>
     <string name="btn_silence_until_prayer">تفعيل الإسكات حتى %1$s 🔇</string>

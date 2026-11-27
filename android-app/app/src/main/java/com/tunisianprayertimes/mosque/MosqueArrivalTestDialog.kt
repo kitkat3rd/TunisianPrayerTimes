@@ -166,7 +166,8 @@ internal fun MosqueArrivalTestDialog(
             AdaptiveVisitDetector.Arrival.WALKED_IN -> R.string.mosque_test_walked_in
             AdaptiveVisitDetector.Arrival.INSIDE -> R.string.mosque_test_inside_confirmed
             AdaptiveVisitDetector.Arrival.EARLIER_PRECISE -> R.string.mosque_test_drift_confirmed
-            else -> R.string.mosque_test_near_confirmed
+            AdaptiveVisitDetector.Arrival.EDGE -> R.string.mosque_test_edge_confirmed
+            null -> R.string.mosque_test_collecting
         }
         last == null -> R.string.mosque_test_waiting
         last.clearlyAway -> R.string.mosque_test_far

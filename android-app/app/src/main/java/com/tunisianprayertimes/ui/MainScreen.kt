@@ -404,16 +404,18 @@ internal data class NextPrayerCountdownInfo(
     fun prayerOn(date: LocalDate): Prayer? = prayer.takeIf { prayerDay == date }
 }
 
+// No default values here: this body needs more than 256 registers, and D8 then lost reads of the hidden
+// `$default` parameter (check-dex-lost-params.py, 27 November). MainActivity, the only caller, passes them all.
 @Composable
 fun MainScreen(
     activity: androidx.appcompat.app.AppCompatActivity,
-    requestedDestination: String? = null,
-    requestedDestinationSequence: Int = 0,
-    requestedDhikrReminderId: String? = null,
-    requestedDhikrOccurrenceId: String? = null,
-    requestedQuranAction: String? = null,
-    requestedPrayersAction: String? = null,
-    requestedWorshipAction: String? = null,
+    requestedDestination: String?,
+    requestedDestinationSequence: Int,
+    requestedDhikrReminderId: String?,
+    requestedDhikrOccurrenceId: String?,
+    requestedQuranAction: String?,
+    requestedPrayersAction: String?,
+    requestedWorshipAction: String?,
 ) {
     val context = LocalContext.current
     val mainDestinations = remember { MainDestination.entries.toList() }
@@ -1202,6 +1204,8 @@ fun MainScreen(
                         }
                         TodayNextPrayerCard(
                             delegationId = delegationId,
+                            browsingAnotherDate = pickedPrayerEpochDay != null && pickedPrayerEpochDay != prayerToday.toEpochDay(),
+                            scheduleRevision = refreshTick,
                             isPhoneSilenced = phoneSilenced || phoneDndActive,
                             doNotDisturbActive = phoneDndActive,
                             hasDnd = hasDnd,
@@ -2193,6 +2197,8 @@ internal fun delegationSearchScore(delegation: Delegation, terms: List<String>):
 @Composable
 private fun TodayNextPrayerCard(
     delegationId: Int,
+    browsingAnotherDate: Boolean,
+    scheduleRevision: Int,
     isPhoneSilenced: Boolean,
     doNotDisturbActive: Boolean,
     hasDnd: Boolean,
@@ -2226,11 +2232,23 @@ private fun TodayNextPrayerCard(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val countdown = remember(timesKey, currentTimeMillis) {
+    val officialDateRecords by OfficialIslamicDates.updates.collectAsStateWithLifecycle()
+    val countdown = remember(timesKey, currentTimeMillis, scheduleRevision, officialDateRecords) {
         runCatching { resolveNextPrayerCountdown(context, currentTimeMillis) }.getOrNull()
     }
     val combined = configuredMode == AutomaticSilenceMode.TIME_AND_MOSQUE
     val showAutomaticReason = isPhoneSilenced && autoSilenceActive && !manualSilenceActive
+    val scheduledSilence = if (showAutomaticReason && !combined) {
+        val minute = currentTimeMillis / 60_000L
+        key(timesKey, scheduleRevision) {
+            produceState<PhoneSilenceReason?>(null, minute) {
+                value = withContext(Dispatchers.IO) {
+                    val now = java.time.Instant.ofEpochMilli(currentTimeMillis)
+                    currentScheduledSilence(SilenceScheduler.undismissedWindows(context, now), now)
+                }
+            }
+        }.value
+    } else null
     val mosqueContinuationEnd = if (showAutomaticReason && combined) {
         produceState<Long?>(null, context, currentTimeMillis) {
             value = withContext(ScheduleRefreshCoordinator.scheduling) {
@@ -2250,13 +2268,12 @@ private fun TodayNextPrayerCard(
         currentTimeMillis,
         configuredMode,
         mosqueContinuationEnd,
+        scheduledSilence,
     ) {
-        resolvePhoneSilenceReason(
+        scheduledSilence ?: resolvePhoneSilenceReason(
             isPhoneSilenced = isPhoneSilenced,
             autoSilenceActive = autoSilenceActive,
-            activeAutoSilencePrayer = if (showAutomaticReason && !combined) {
-                SilenceScheduler.currentSilenceWindowPrayer(context)
-            } else null,
+            activeAutoSilencePrayer = null,
             manualSilenceActive = manualSilenceActive,
             manualSilenceMode = manualSilenceMode,
             manualTargetPrayer = manualTargetPrayer,
@@ -2283,6 +2300,7 @@ private fun TodayNextPrayerCard(
 
     NextPrayerHeroCard(
         countdown = countdown,
+        browsingAnotherDate = browsingAnotherDate,
         prayerName = countdown?.let { prayerName(context, it.prayer) } ?: stringResource(R.string.prayer_data_unavailable_title),
         currentTimeMillis = currentTimeMillis,
         isPhoneSilenced = isPhoneSilenced,
@@ -2294,6 +2312,7 @@ private fun TodayNextPrayerCard(
         onRepairSilence = onRepairSilence,
         silenceActionPending = silenceActionPending,
         silenceActive = (manualSilenceActive || autoSilenceActive) && hasDnd,
+        scheduleRevision = scheduleRevision,
         manualActionLabel = manualActionLabel,
         onManualSilenceClick = onManualSilenceClick,
         onChooseManualDuration = onChooseManualDuration,
@@ -2325,10 +2344,8 @@ private fun PrayerSettingsCard(
     val lifecycleOwner = LocalLifecycleOwner.current
     val displayedPlace = remember(delegationId) { PrayerTimesRepository.place(context) }
     var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    val currentCalendar = remember(currentTimeMillis) {
-        Calendar.getInstance().apply { timeInMillis = currentTimeMillis }
-    }
-    val currentDayMillis = calendarDateMillis(java.time.Instant.ofEpochMilli(currentTimeMillis).atZone(displayedPlace.zone).toLocalDate())
+    val placeTime = java.time.Instant.ofEpochMilli(currentTimeMillis).atZone(displayedPlace.zone)
+    val currentDayMillis = calendarDateMillis(placeTime.toLocalDate())
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -2371,8 +2388,8 @@ private fun PrayerSettingsCard(
     val dailyAnchors = remember(delegationId, selectedLocalDate, refreshTick, phoneZone) {
         runCatching { prayerTimelineAnchors(context, selectedLocalDate, displayedPlace) }.getOrDefault(emptyMap())
     }
-    // Dhuhr in the phone's clock, for the Eid rows' cut-off (Tunisia only, A10).
-    val dhuhrClock = dailyAnchors[Prayer.DHUHR]?.let { Math.floorMod(it.minutes, 1440) } ?: (13 * 60)
+    // Evaluate the Eid cutoff on the place's civil day even when the phone is across midnight.
+    val placeDhuhr = dailyAnchors[Prayer.DHUHR]?.adhan?.atZone(displayedPlace.zone)
 
     val canGoBack = remember(delegationId, selectedDate) {
         val prev = Calendar.getInstance().apply {
@@ -2413,10 +2430,10 @@ private fun PrayerSettingsCard(
         )
         RamadanOverrideChecker.shouldShowEidFitrPrayer(
             date = gregDate,
-            nowHour = currentCalendar.get(Calendar.HOUR_OF_DAY),
-            nowMinute = currentCalendar.get(Calendar.MINUTE),
-            dhuhrHour = dhuhrClock / 60,
-            dhuhrMinute = dhuhrClock % 60,
+            nowHour = placeTime.hour,
+            nowMinute = placeTime.minute,
+            dhuhrHour = placeDhuhr?.hour ?: 13,
+            dhuhrMinute = placeDhuhr?.minute ?: 0,
             isToday = isToday,
         )
     }
@@ -2431,10 +2448,10 @@ private fun PrayerSettingsCard(
         )
         RamadanOverrideChecker.shouldShowEidAdhaPrayer(
             date = gregDate,
-            nowHour = currentCalendar.get(Calendar.HOUR_OF_DAY),
-            nowMinute = currentCalendar.get(Calendar.MINUTE),
-            dhuhrHour = dhuhrClock / 60,
-            dhuhrMinute = dhuhrClock % 60,
+            nowHour = placeTime.hour,
+            nowMinute = placeTime.minute,
+            dhuhrHour = placeDhuhr?.hour ?: 13,
+            dhuhrMinute = placeDhuhr?.minute ?: 0,
             isToday = isToday,
         )
     }
@@ -2447,7 +2464,7 @@ private fun PrayerSettingsCard(
     var moreTimetableSettings by rememberSaveable { mutableStateOf(false) }
 
     // Across midnight the hero can still be counting down to yesterday's Isha, or tomorrow's Fajr.
-    val nextPrayer = remember(delegationId, refreshTick, currentTimeMillis, dailyAnchors.isNotEmpty()) {
+    val nextPrayer = remember(delegationId, refreshTick, currentTimeMillis, correctedCalendar, dailyAnchors.isNotEmpty()) {
         if (dailyAnchors.isEmpty()) null else resolveNextPrayerCountdown(context, currentTimeMillis)
     }?.prayerOn(selectedLocalDate)
 
@@ -5039,7 +5056,7 @@ private fun prayerName(context: Context, prayer: Prayer): String = when (prayer)
 
 /**
  * The next prayer by instant over prayer days D − 1..D + 1 (6.6, 6.9): at 00:30 yesterday's 01:07 Isha is
- * still next. On a Friday, Jumu'a at its resolved time stands in Dhuhr's place.
+ * still next. Jumu'a and Tunisian Eid prayers use the same times as the timetable rows.
  */
 private fun resolveNextPrayerCountdown(
     context: Context,
@@ -5047,7 +5064,7 @@ private fun resolveNextPrayerCountdown(
 ): NextPrayerCountdownInfo? {
     val place = PrayerTimesRepository.place(context)
     val now = java.time.Instant.ofEpochMilli(nowMillis)
-    val next = PrayerTimesRepository.upcomingPrayers(context, now, place).firstOrNull() ?: return null
+    val next = PrayerTimesRepository.nextTimetablePrayer(context, now, place) ?: return null
     return NextPrayerCountdownInfo(
         prayer = next.prayer,
         at = next.at,
@@ -5090,7 +5107,7 @@ internal fun formatCountdownRemaining(targetAtMillis: Long, currentTimeMillis: L
         val remainingSeconds = ((remainingMillis + 999L) / 1_000L)
             .coerceAtLeast(0L)
             .toInt()
-        return "${remainingSeconds} ث"
+        return "${remainingSeconds}\u00a0ث"
     }
 
     val remainingMinutes = ((remainingMillis + 59_999L) / 60_000L)
@@ -5161,9 +5178,9 @@ private fun formatDurationText(totalMinutes: Int): String {
     val h = totalMinutes / 60
     val m = totalMinutes % 60
     return when {
-        h > 0 && m > 0 -> "${h} س و ${m} د"
-        h > 0 -> "${h} س"
-        else -> "${m} د"
+        h > 0 && m > 0 -> "${h}\u00a0س و\u00a0${m}\u00a0د"
+        h > 0 -> "${h}\u00a0س"
+        else -> "${m}\u00a0د"
     }
 }
 

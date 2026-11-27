@@ -16,11 +16,14 @@ import com.tunisianprayertimes.FirstRunPlaceChoice
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.PrayerSilenceConfig
+import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.RamadanOverrideChecker
 import com.tunisianprayertimes.engine.EventStatus
 import com.tunisianprayertimes.engine.EventTime
 import com.tunisianprayertimes.engine.TimeEvent
 import com.tunisianprayertimes.place.PrayerPlace
+import com.tunisianprayertimes.platform.SharedAndroid
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import java.time.Instant
 import java.time.LocalDate
@@ -81,6 +84,34 @@ class FirstTimetableUiTest {
         val next = NextPrayerCountdownInfo(Prayer.ISHA, civilDay.atTime(0, 47).atZone(zone).toInstant(), prayerDay, zone)
         assertEquals(null, next.prayerOn(civilDay))
         assertEquals(Prayer.ISHA, next.prayerOn(prayerDay))
+    }
+
+    @Test fun heroFollowsTheTimetablesSunriseAndEditedEidTimesThenAdvances() {
+        SharedAndroid.init(context)
+        val tunis = PrayerPlace.Inm(615)
+        val fitr = RamadanOverrideChecker.getEidFitrDate(1447)
+        val adha = RamadanOverrideChecker.getEidAdhaDate(1447)
+        PrefsManager.setAidAdhaTime(context, 8, 15)
+        for ((prayer, date) in listOf(Prayer.AID_FITR to fitr, Prayer.AID_ADHA to adha)) {
+            val eid = requireNotNull(eidTimelineAnchor(context, prayer, date, tunis))
+            val before = eid.adhan.minusSeconds(1)
+            val next = requireNotNull(PrayerTimesRepository.nextTimetablePrayer(context, before, tunis))
+            assertEquals(prayer, next.prayer)
+            assertEquals(date, next.prayerDay)
+            assertEquals(eid.adhan, next.at)
+            val nextDaily = PrayerTimesRepository.upcomingPrayers(context, before, tunis).first()
+            assertEquals(nextDaily, PrayerTimesRepository.nextTimetablePrayer(context, eid.adhan, tunis))
+        }
+    }
+
+    @Test fun hiddenEidRowAfterDhuhrIsNotPromotedToTheHeroByALateCustomTime() {
+        SharedAndroid.init(context)
+        val tunis = PrayerPlace.Inm(615)
+        val date = RamadanOverrideChecker.getEidAdhaDate(1447)
+        PrefsManager.setAidAdhaTime(context, 14, 0)
+        val afterDhuhr = date.atTime(13, 30).atZone(tunis.zone).toInstant()
+        val daily = PrayerTimesRepository.upcomingPrayers(context, afterDhuhr, tunis).first()
+        assertEquals(daily, PrayerTimesRepository.nextTimetablePrayer(context, afterDhuhr, tunis))
     }
 
     @Test fun savedWindowAcrossTheRepeatedHourShowsBothOffsets() {

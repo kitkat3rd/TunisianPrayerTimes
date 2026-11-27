@@ -12,6 +12,7 @@ import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.PrayerTimesRepository
 import com.tunisianprayertimes.SilenceStatus
 import com.tunisianprayertimes.ui.defaultDhikrReminder
+import com.tunisianprayertimes.ui.morningCollectionPreset
 import com.tunisianprayertimes.ui.salawatDhikrPreset
 import com.tunisianprayertimes.ui.tahlilDhikrPreset
 import org.junit.*
@@ -104,22 +105,22 @@ class AdhkarFlowTest {
         assertEquals(2, repo.state.value.sessions.getValue(first).counts["salah_istighfar"])
         assertEquals(first, repo.openSession(listOf("salah_istighfar")))
     }
-    @Test fun standaloneTahlilDefaultsScheduleTheFirstNudgeFortyFiveMinutesAfterAdhan() {
+    @Test fun standaloneTahlilDefaultsScheduleThirtyMinutesAfterFajrOrFortyFiveAfterAsr() {
         val id = DhikrCatalog.DAILY_TAHLIL_ID
         val defaults = listOf(
-            tahlilDhikrPreset() to DhikrTimeKind.FAJR,
-            defaultDhikrReminder(id, null) to DhikrTimeKind.FAJR,
-            defaultDhikrReminder(id, DhikrCategory.MORNING, wholeCollection = false) to DhikrTimeKind.FAJR,
-            defaultDhikrReminder(id, DhikrCategory.EVENING, wholeCollection = false) to DhikrTimeKind.ASR,
+            Triple(tahlilDhikrPreset(), DhikrTimeKind.FAJR, 30),
+            Triple(defaultDhikrReminder(id, null), DhikrTimeKind.FAJR, 30),
+            Triple(defaultDhikrReminder(id, DhikrCategory.MORNING, wholeCollection = false), DhikrTimeKind.FAJR, 30),
+            Triple(defaultDhikrReminder(id, DhikrCategory.EVENING, wholeCollection = false), DhikrTimeKind.ASR, 45),
         )
-        for ((reminder, prayer) in defaults) {
+        for ((reminder, prayer, minutesAfterAdhan) in defaults) {
             val adhan = requireNotNull(DhikrReminderScheduler.resolveTime(context, DhikrTime(prayer), friday))
             val period = window(reminder)
             assertEquals(100, reminder.targetCount)
-            assertEquals(adhan + 45 * 60_000L, period.startMillis)
+            assertEquals(adhan + minutesAfterAdhan * 60_000L, period.startMillis)
             assertEquals(period.startMillis, dhikrNudgeTimes(reminder, period).first())
         }
-        assertEquals(DhikrTime(DhikrTimeKind.FAJR), defaultDhikrReminder(id, DhikrCategory.MORNING).start)
+        assertEquals(DhikrTime(DhikrTimeKind.FAJR, offsetMinutes = 30), defaultDhikrReminder(id, DhikrCategory.MORNING).start)
         assertEquals(DhikrTime(DhikrTimeKind.ASR), defaultDhikrReminder(id, DhikrCategory.EVENING).start)
     }
     @Test fun morningCollectionRunsFromFajrToFajrAndSurvivesRestart() {
@@ -1316,10 +1317,12 @@ class AdhkarFlowTest {
         assertTrue(JSONObject(event()).getLong("at") > actual)
         assertEquals(0, repo.state.value.occurrences.getValue(window.progressKey).count)
     }
-    @Test fun nudgeIsDeferredDuringAppSilenceAndDeliveredAfterItEnds() {
-        val rule = rule(1); repo.save(rule)
+    @Test fun morningNudgeIsDeferredDuringAppSilenceAndDeliveredAfterItEnds() {
+        val rule = morningCollectionPreset()
         val window = window(rule)
-        DhikrReminderScheduler.refresh(context, rearm = true, nowMillis = window.startMillis - 1)
+        val beforeStart = window.startMillis - 1
+        repo.save(rule, now = beforeStart)
+        DhikrReminderScheduler.refresh(context, rearm = true, nowMillis = beforeStart)
         val event = event()
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         Shadows.shadowOf(notificationManager).setNotificationPolicyAccessGranted(true)
@@ -1331,6 +1334,7 @@ class AdhkarFlowTest {
 
         deliver(event, window.startMillis)
         assertEquals(0, notificationManager.activeNotifications.size)
+        assertTrue(SilenceStatus.isAppControlledSilenceActive(context))
         val deferred = context.getSharedPreferences("adhkar_schedule_v2", 0).getString("event:" + rule.id, null)!!
         assertEquals(silenceEnd, JSONObject(deferred).getLong("at"))
 
@@ -1591,7 +1595,7 @@ class AdhkarFlowTest {
         val personal = repo.saveCustom(DhikrEntry(id = "", title = "وردي", text = "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ",
             reference = "", defaultCount = 3, categories = emptySet(), custom = true))
         repo.setCollectionMembership(DhikrCategory.MORNING, personal.id, true)
-        val collection = com.tunisianprayertimes.ui.morningCollectionPreset().copy(dhikrId = personal.id)
+        val collection = morningCollectionPreset().copy(dhikrId = personal.id)
         repo.save(collection)
         val own = DhikrReminder(dhikrId = personal.id, targetCount = 3, start = DhikrTime(minuteOfDay = 480), end = DhikrTime(minuteOfDay = 540))
         repo.save(own)
@@ -1661,7 +1665,7 @@ class AdhkarFlowTest {
     @Test fun morningAndEveningRemindersStayWithinTheirOccasion() {
         fun problem(rule: DhikrReminder) = DhikrReminderScheduler.validate(context, rule, LocalDate.of(2026, 10, 5))
         val evening = com.tunisianprayertimes.ui.eveningCollectionPreset()
-        val morning = com.tunisianprayertimes.ui.morningCollectionPreset()
+        val morning = morningCollectionPreset()
         assertNull(problem(evening))
         assertNull(problem(evening.copy(end = DhikrTime(DhikrTimeKind.FAJR), endNextDay = true)))
         assertNull(problem(morning.copy(end = DhikrTime(DhikrTimeKind.DHUHR))))
@@ -1720,7 +1724,7 @@ class AdhkarFlowTest {
         assertEquals(at(tuesday, 11), DhikrReminderScheduler.currentOrNextWindow(context, stored(rule.id), now)?.startMillis)
     }
     @Test fun entryStandingForACollectionIsNotAnEdit() {
-        val rule = com.tunisianprayertimes.ui.morningCollectionPreset()
+        val rule = morningCollectionPreset()
         repo.save(rule, at(tuesday.minusDays(1), 12))
         assertFalse(repo.state.value.changesSchedule(stored(rule.id).copy(dhikrId = "ayat_kursi")))
         assertTrue(repo.state.value.changesSchedule(stored(rule.id).copy(collection = DhikrCategory.EVENING)))

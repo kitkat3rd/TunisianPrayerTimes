@@ -1476,12 +1476,11 @@ internal fun reminderDefaultGoal(entry: DhikrEntry): Int =
     if (entry.id == DhikrCatalog.SALAWAT_ID) SALAWAT_DAILY_GOAL else entry.defaultCount
 /** The 100-times-a-day tahlil (Bukhari 3293, Muslim 2691), not the single post-prayer one. */
 internal const val TAHLIL_DAILY_ID = DhikrCatalog.DAILY_TAHLIL_ID
+private val morningReminderStart = DhikrTime(DhikrTimeKind.FAJR, offsetMinutes = 30)
 internal fun tahlilDhikrPreset() = DhikrReminder(dhikrId = TAHLIL_DAILY_ID, targetCount = 100, daysOfWeek = (1..7).toSet(),
-    start = DhikrTime(DhikrTimeKind.FAJR, offsetMinutes = 45), end = DhikrTime(DhikrTimeKind.MAGHRIB), cadence = DhikrCadence.GENTLE)
-// Fajr to Dhuhr: the morning adhkar are read until Dhuhr at the latest. The best time ends at sunrise, but after the
-// prayer silence only a short stretch of Fajr to Shuruk is left, too short for a second notification.
+    start = morningReminderStart, end = DhikrTime(DhikrTimeKind.MAGHRIB), cadence = DhikrCadence.GENTLE)
 internal fun morningCollectionPreset() = DhikrReminder(dhikrId = "morning_kingdom", collection = DhikrCategory.MORNING,
-    targetCount = 1, daysOfWeek = (1..7).toSet(), start = DhikrTime(DhikrTimeKind.FAJR),
+    targetCount = 1, daysOfWeek = (1..7).toSet(), start = morningReminderStart,
     end = DhikrTime(DhikrTimeKind.DHUHR), cadence = DhikrCadence.GENTLE)
 internal fun eveningCollectionPreset() = DhikrReminder(dhikrId = "evening_kingdom", collection = DhikrCategory.EVENING,
     targetCount = 1, daysOfWeek = (1..7).toSet(), start = DhikrTime(DhikrTimeKind.ASR),
@@ -1499,12 +1498,12 @@ internal fun defaultDhikrReminder(id: String, category: DhikrCategory?, entries:
         val preset = tahlilDhikrPreset()
         return when (category) {
             DhikrCategory.MORNING -> preset.copy(end = DhikrTime(DhikrTimeKind.DHUHR))
-            DhikrCategory.EVENING -> preset.copy(start = preset.start.copy(kind = DhikrTimeKind.ASR))
+            DhikrCategory.EVENING -> preset.copy(start = DhikrTime(DhikrTimeKind.ASR, offsetMinutes = 45))
             else -> preset
         }
     }
     val times = when (category) {
-        DhikrCategory.MORNING -> DhikrTime(DhikrTimeKind.FAJR) to DhikrTime(DhikrTimeKind.DHUHR)
+        DhikrCategory.MORNING -> morningReminderStart to DhikrTime(DhikrTimeKind.DHUHR)
         DhikrCategory.EVENING -> DhikrTime(DhikrTimeKind.ASR) to DhikrTime(DhikrTimeKind.MAGHRIB)
         DhikrCategory.NIGHT -> DhikrTime(DhikrTimeKind.MAGHRIB, offsetMinutes = 15) to DhikrTime(DhikrTimeKind.ISHA)
         DhikrCategory.SALAH -> DhikrTime(DhikrTimeKind.DHUHR, offsetMinutes = 15) to DhikrTime(DhikrTimeKind.DHUHR, offsetMinutes = 60)

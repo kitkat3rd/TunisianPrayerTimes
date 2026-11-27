@@ -301,6 +301,9 @@ internal fun PrayerTabSettingsSheet(
                             )
                         }
                     }
+                    PrayerSettingsGroup(title = stringResource(R.string.launcher_icon_title)) {
+                        LauncherIconChoice()
+                    }
                 } else {
                     PrayerMethodSection(
                         place = calculationPlace,

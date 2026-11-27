@@ -188,6 +188,11 @@ object SilenceScheduler {
     internal fun windowOf(context: Context, prayer: Prayer, day: LocalDate): SilenceWindow? =
         planner(context).windowsOf(day).firstOrNull { it.prayer == prayer }
 
+    internal fun undismissedWindows(context: Context, at: Instant): List<SilenceWindow> {
+        RamadanOverrideChecker.loadCachedOverrideIfNeeded()
+        return planner(context).windows(at).filterNot { isDismissed(context, it.prayer, it.prayerDay, it) }
+    }
+
     @VisibleForTesting
     @Synchronized
     internal fun scheduleAllInternal(context: Context, now: Calendar, allowDelegationBridge: Boolean = true) {

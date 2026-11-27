@@ -19,6 +19,75 @@ import java.io.ByteArrayOutputStream
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SilenceWalkExportTest {
+    private fun event(second: Long, kind: String, detail: String = "") =
+        TraceEntry(second, second * 1_000, kind, detail, null, null, null)
+
+    private fun exported(entries: List<TraceEntry>): JSONObject {
+        val output = ByteArrayOutputStream()
+        val session = TraceSession(1, 0, entries.maxOf { it.at } + 1_000, "Europe/Paris")
+        SilenceWalkExport.writeHtml(ApplicationProvider.getApplicationContext<Context>(), session, entries, output)
+        val data = output.toString("UTF-8").substringAfter("type=\"application/geo+json\" id=\"trace\">")
+            .substringBefore("</script>")
+        return JSONObject(data)
+    }
+
+    @Test
+    fun distinguishesMissingStepDataFromZeroObservedSteps() {
+        fun summary(vararg kinds: String): JSONObject =
+            exported(kinds.mapIndexed { index, kind -> event(index.toLong(), kind) })
+                .getJSONObject("session").getJSONObject("steps")
+
+        for (kind in listOf("recording_started", "step_sensor_unavailable", "step_counter_started")) {
+            val steps = summary(kind)
+            assertTrue(steps.has("recordedCount"))
+            assertTrue("Expected unknown step count for $kind", steps.isNull("recordedCount"))
+        }
+        val detector = summary("step_detector_started", "step_sensor_stopped")
+        assertEquals(0, detector.getInt("recordedCount"))
+        assertEquals("detector", detector.getJSONArray("sources").getString(0))
+        val counter = summary("step_counter_started", "step_counter_ready", "step_sensor_stopped")
+        assertEquals(0, counter.getInt("recordedCount"))
+        assertEquals("counter", counter.getJSONArray("sources").getString(0))
+    }
+
+    @Test
+    fun exportsStepDeltasWithSensorTimeAndRecordedTotalsAcrossCounterResets() {
+        val entries = listOf(
+            event(1, "recording_started"),
+            event(2, "step_counter_started"),
+            event(3, "step_counter_ready"),
+            event(8, "walk_steps", "5"),
+            event(9, "rule_requested"),
+            event(12, "walk_steps", "2"),
+            event(14, "step_counter_ready"),
+            event(18, "walk_steps", "3"),
+            event(19, "step_sensor_stopped"),
+            event(20, "step_detector_started"),
+            event(21, "walk_steps", "1"),
+        )
+        val data = exported(entries.reversed())
+        val steps = data.getJSONObject("session").getJSONObject("steps")
+        assertEquals(11, steps.getInt("recordedCount"))
+        val sources = steps.getJSONArray("sources")
+        assertEquals(setOf("detector", "counter"), (0 until sources.length()).map(sources::getString).toSet())
+
+        val features = data.getJSONArray("features")
+        fun properties(row: Int) = features.getJSONObject(row).getJSONObject("properties")
+        assertTrue(properties(1).isNull("recordedStepsThrough"))
+        assertEquals(0, properties(2).getInt("recordedStepsThrough"))
+        assertEquals(5, properties(3).getInt("stepDelta"))
+        assertEquals(3_000L, properties(3).getLong("stepIntervalStart"))
+        assertEquals(8_000L, properties(3).getLong("at"))
+        assertTrue(features.getJSONObject(3).isNull("geometry"))
+        assertEquals(5, properties(4).getInt("recordedStepsThrough"))
+        assertFalse(properties(4).has("stepDelta"))
+        assertEquals(8_000L, properties(5).getLong("stepIntervalStart"))
+        assertEquals(14_000L, properties(7).getLong("stepIntervalStart"))
+        assertEquals(1, properties(10).getInt("stepDelta"))
+        assertTrue(properties(10).isNull("stepIntervalStart"))
+        assertEquals(11, properties(10).getInt("recordedStepsThrough"))
+    }
+
     @Test
     fun includesOnlyNearbyEnabledBoundaryPartsWithTheirNamesAndHolesAtExportTime() {
         val context = ApplicationProvider.getApplicationContext<Context>()

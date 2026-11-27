@@ -33,6 +33,12 @@ data class SilencePolygon(val exterior: List<GeoPoint>, val holes: List<List<Geo
 
     internal fun inHole(point: GeoPoint): Boolean = holes.any { pointInRing(point, openRing(it)) }
 
+    /** Two exterior samples can straddle a building or cut across a concave corner. */
+    internal fun crossesExterior(from: GeoPoint, to: GeoPoint): Boolean {
+        val ring = openRing(exterior)
+        return ring.indices.any { i -> segmentsIntersect(from, to, ring[i], ring[(i + 1) % ring.size]) }
+    }
+
     internal fun boundaryDistance(point: GeoPoint): Double = (listOf(exterior) + holes).minOf { ring ->
         val vertices = openRing(ring)
         vertices.indices.minOf { i ->
@@ -138,9 +144,12 @@ internal fun project(point: GeoPoint, origin: GeoPoint): Pair<Double, Double> {
 }
 
 /** Allow for a brisk walking pace plus the reported horizontal errors of both fixes. */
+internal fun walkingDistanceAllowance(elapsedMillis: Long, combinedAccuracyMeters: Double): Double =
+    combinedAccuracyMeters + 4.0 * elapsedMillis / 1_000.0
+
 internal fun GeoPoint.reachableOnFootFrom(previous: GeoPoint, elapsedMillis: Long, combinedAccuracyMeters: Double): Boolean {
     val (east, north) = project(this, previous)
-    return hypot(east, north) <= combinedAccuracyMeters + 4.0 * elapsedMillis / 1_000.0
+    return hypot(east, north) <= walkingDistanceAllowance(elapsedMillis, combinedAccuracyMeters)
 }
 
 private fun distanceToSegment(ax: Double, ay: Double, bx: Double, by: Double): Double {

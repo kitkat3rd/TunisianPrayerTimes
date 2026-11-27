@@ -58,3 +58,28 @@ themed. `sheet-large.png` shows all ten the same way.
 Not installed and not tried with `round3/_gen/export_app.py`. That script needs a flat
 background colour; the teal folders use a radial gradient (`#007567` to `#004D40`), so
 they need either a flat teal or gradient support in the exporter.
+
+## Blue colours on the same shapes (27 November)
+
+The owner wants the app's user to choose the logo's colours, and asked whether
+`06-one-axis-cream` is good for its shapes or only for its colours. These two folders
+hold the one-axis drawing in blue. Only the colours differ: the path data is the same,
+byte for byte, as in 05 and 06.
+
+| Folder | Made from | Colours |
+|---|---|---|
+| `11-one-axis-blue` | `05-one-axis-teal` | The field and whites of `round3/02-arch-blue/polished`: gradient `#2E70B8` / `#245FA5` / `#1B4D88`, arch `#FFFDFA` with a `#D6E5F3` fold, cover `#153C66`, page lines `#1B4D88`. The sand minaret is 05's. |
+| `12-one-axis-blue-cream` | `06-one-axis-cream` | Teal `#004D40` becomes `#1B4D88` and `#00695C` becomes `#2E70B8`. Nothing else changes. |
+
+**Installed 27 November:** `06-one-axis-cream` is the phone app's logo, and
+`12-one-axis-blue-cream` is its second colour. The app's user chooses between them at the
+end of the prayer tab's settings sheet. Each colour is one launcher entry in the manifest
+(`LauncherTeal`, `LauncherBlue`), and `LauncherIcon.kt` turns one on. To export again:
+
+```
+python -I ../round3/_gen/export_app.py ../round4/06-one-axis-cream blue=../round4/12-one-axis-blue-cream
+```
+
+They were made with `sed` colour swaps on the SVG files, not with `_gen/gen.py`, so
+`gen.py` does not know them. `sheet-blue.png` shows them next to the polished blue
+logo and 06 at 200, 80, 48, 32 and 24 px, as the launcher's central 72dp crop.

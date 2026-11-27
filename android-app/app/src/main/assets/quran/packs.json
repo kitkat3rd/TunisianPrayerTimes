@@ -4352,6 +4352,25 @@
     "bytes": 110081014,
     "sha256": "b7f3e86bf91b79f332fd0300c5cc49c81dde34ef1aeb7208ce9282a62873702c"
    }
+  },
+  {
+   "name": "quran_tafsir_ashur",
+   "kind": "tafsir",
+   "delivery": "play",
+   "cdnPublished": false,
+   "bytes": 28008448,
+   "files": [
+    {
+     "path": "quran/tafsir/ashur.db",
+     "bytes": 28008448,
+     "sha256": "ff6946d4f31e3920b935076a5fa64da414140a7c6a4831e403fccf9e30363e1c"
+    }
+   ],
+   "archive": {
+    "key": "v1/packs/quran_tafsir_ashur-43c9580ed5ac.zip",
+    "bytes": 7647106,
+    "sha256": "43c9580ed5acbfe32dcbdd19751caf8faf1cba6712650c0fd2bb65bb5eb6207a"
+   }
   }
  ]
 }

@@ -5,7 +5,7 @@
     <string name="mosque_mode_time">حسب الوقت فقط</string>
     <string name="mosque_mode_combined">حسب الوقت وموقع المسجد</string>
     <string name="mosque_method_time_detail">يسكت الهاتف خلال فترات الصلاة التي حدّدتها، أينما كنت.</string>
-    <string name="mosque_method_arrival_detail">يسكت الهاتف خلال الفترة المحدّدة عندما تؤكّد قراءات الموقع وجودك داخل مسجد محفوظ، أو اقترابك وتوقّفك عنده. إذا انتهت الفترة وأنت في المسجد، يمكن أن يستمرّ الإسكات حتى تأكيد مغادرتك، لمدة تصل إلى 15 دقيقة إضافية. قد يبدأ فحص موقعك في الخلفية قبل الأذان بعشر دقائق، أو عند بدء الفترة إن كانت أسبق. إذا تعذّر تحديد موقعك، قد يسكت الهاتف حتى في المنزل.</string>
+    <string name="mosque_method_arrival_detail">يسكت الهاتف خلال الفترة المحدّدة عندما تؤكّد قراءات الموقع وجودك داخل مسجد محفوظ. ويمكن للتطبيق تأكيد مغادرتك حتى قرب المسجد إذا رصد عودتك إلى المسار الذي سلكته قبل الدخول. إذا انتهت الفترة وأنت في المسجد، يمكن أن يستمرّ الإسكات حتى تأكيد مغادرتك، لمدة تصل إلى 15 دقيقة إضافية. قد يبدأ فحص موقعك في الخلفية قبل الأذان بعشر دقائق، أو عند بدء الفترة إن كانت أسبق. إذا تعذّر تحديد موقعك، قد يسكت الهاتف حتى في المنزل.</string>
     <string name="mosque_requirements_ready">المتطلبات مكتملة</string>
     <string name="mosque_areas_count">المفعّلة: %1$d من %2$d</string>
     <string name="mosque_setup_enrollment_failed">تعذّر إعداد أوضاع الإسكات</string>
@@ -139,7 +139,7 @@
     <string name="mosque_release_pending">لم يتأكد إيقاف وضع الإسكات في الهاتف. راجع إعدادات عدم الإزعاج؛ سيعيد التطبيق محاولة سحب إسكاتِه عند توفر الوصول.</string>
     <string name="mosque_adaptive_early">يتحقق التطبيق من موقعك قبل بدء فترة الإسكات.</string>
     <string name="mosque_adaptive_fallback">الإسكات حسب الجدول لأن الموقع غير متاح.</string>
-    <string name="mosque_adaptive_strict">انتظار تأكيد التوقّف عند هذا المسجد واستبعاد التوقّف غير المؤكّد مقابله</string>
+    <string name="mosque_adaptive_strict">انتظار تأكيد توقّفك داخل هذا المسجد قبل الإسكات</string>
     <string name="mosque_adaptive_skip">تخطّي %1$s</string>
     <string name="mosque_adaptive_manual">إسكات يدوي حتى نهاية %1$s</string>
     <string name="mosque_adaptive_undo">التراجع عن الإسكات اليدوي لهذه الصلاة</string>
@@ -156,8 +156,8 @@
     <string name="mosque_test_low_accuracy">هذه القراءة غير دقيقة بما يكفي لتأكيد الوصول.</string>
     <string name="mosque_test_inside_confirmed">نجح الاختبار. أكّدت قراءات متتالية وجودك داخل المسجد.</string>
     <string name="mosque_test_walked_in">نجح الاختبار. أكّدت قراءات الموقع دخولك إلى المسجد.</string>
-    <string name="mosque_test_drift_confirmed">نجح الاختبار. أكدت القراءات الأولى وصولك قبل أن تضعف دقة الموقع.</string>
-    <string name="mosque_test_near_confirmed">نجح الاختبار. أكدت القراءات اقترابك ثم توقّفك عند المسجد.</string>
+    <string name="mosque_test_drift_confirmed">نجح الاختبار. أكّدت قراءات دقيقة وجودك داخل المسجد قبل أن تضعف دقّة الموقع.</string>
+    <string name="mosque_test_edge_confirmed">نجح الاختبار. بعد اقترابك من المسجد، رصدت قراءات متتالية موقعك داخل حدوده.</string>
     <string name="mosque_test_no_readings">انتهى الاختبار دون قراءة موقع صالحة. تحقق من تشغيل الموقع ثم أعد المحاولة.</string>
     <string name="mosque_test_no_arrival">انتهت الدقيقتان دون تأكيد الوصول إلى المسجد.</string>
     <string name="mosque_test_failed">تعذّر بدء قراءات الموقع. تحقق من إعدادات الموقع ثم أعد المحاولة.</string>

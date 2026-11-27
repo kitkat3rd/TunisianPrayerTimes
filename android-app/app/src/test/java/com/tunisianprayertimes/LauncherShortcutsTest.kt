@@ -63,7 +63,7 @@ class LauncherShortcutsTest {
         assertEquals(SilenceShortcutActions.SILENCE, shortcut("silence_toggle").intent?.action)
         assertEquals(MainTabNavigation.QURAN_ACTION_HIFZ_REVIEW,
             shortcut("hifz_review").intent?.getStringExtra(MainTabNavigation.EXTRA_QURAN_ACTION))
-        assertEquals(MainActivity::class.java.name, shortcut("silence_toggle").activity?.className)
+        assertEquals(LauncherIcon.Teal.component(context), shortcut("silence_toggle").activity)
         assertEquals(SilenceShortcutActivity::class.java.name, shortcut("silence_toggle").intent?.component?.className)
     }
 

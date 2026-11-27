@@ -16,8 +16,9 @@ def find_markers(data, markers):
 
 def inspect(artifact):
     components = ("SilenceWalkActivity", "SilenceWalkShortcutActivity", "SilenceWalkRecorderService",
-                  "DebugTunisianPrayerTimesApplication")
-    implementations = components + ("SilenceTraceStore", "SilenceWalkExport", "SilenceWalkSensors", "silence-walks.db",
+                  "LatestWalkReportReceiver", "DebugTunisianPrayerTimesApplication")
+    implementations = components + ("SilenceTraceStore", "SilenceWalkExport", "SilenceWalkSensors", "SilenceWalkSteps",
+                                    "silence-walks.db", "silence-walk-reports",
                                     "silence-walk://recordings", "silence_walk_recorder", "debug_silence_walk",
                                     "START_SILENCE_WALK", "STOP_SILENCE_WALK",
                                     "silence_walk_start", "silence_walk_stop")
@@ -34,12 +35,13 @@ def inspect(artifact):
         failures.extend(name for name in names if name == asset or name.endswith("/" + asset))
         resource_markers = ("silence_walk_title", "silence_walk_notification", "trace_mosque_sampling_precise",
                             "trace_prayer_observe_alarm", "shortcut_stop_walk_recording")
+        manifest_markers = components + ("android.permission.ACTIVITY_RECOGNITION",)
         checks = {
-            manifest: components,
+            manifest: manifest_markers,
             resources: resource_markers,
         }
         if bundle:
-            checks.update({name: components for name in names if name.endswith("/manifest/AndroidManifest.xml")})
+            checks.update({name: manifest_markers for name in names if name.endswith("/manifest/AndroidManifest.xml")})
             checks.update({name: resource_markers for name in names if name.endswith("/resources.pb")})
         checks.update({name: implementations for name in dex})
         for filename, markers in checks.items():

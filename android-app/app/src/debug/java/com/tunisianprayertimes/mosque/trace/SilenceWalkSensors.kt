@@ -23,7 +23,7 @@ import com.tunisianprayertimes.R
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-/** Additional route and sound observations while the mosque location service is running. */
+/** Additional route, motion and sound observations while the mosque location service is running. */
 internal class SilenceWalkSensors private constructor(private val context: Context, private val id: Long) {
     companion object {
         private val main = Handler(Looper.getMainLooper())
@@ -50,9 +50,15 @@ internal class SilenceWalkSensors private constructor(private val context: Conte
             current = null
             sensors.close()
         }
+
+        fun refreshStepPermission(context: Context) = onMain {
+            val sensors = current ?: return@onMain
+            if (sensors.context === context.applicationContext && sensors.isCurrent()) sensors.steps.start()
+        }
     }
 
     private val locations = context.getSystemService(LocationManager::class.java)
+    private val steps = SilenceWalkSteps(context, id)
     private var activeProvider: String? = null
     private var listener: LocationListener? = null
     private var locationStatus: String? = null
@@ -91,6 +97,7 @@ internal class SilenceWalkSensors private constructor(private val context: Conte
         } catch (_: RuntimeException) {
             reportError(R.string.silence_walk_sensor_failed)
         }
+        steps.start()
         captureSound()
         updateProvider()
     }
@@ -199,6 +206,7 @@ internal class SilenceWalkSensors private constructor(private val context: Conte
     }
 
     private fun close() {
+        steps.close()
         removeLocationListener()
         if (watching) {
             watching = false

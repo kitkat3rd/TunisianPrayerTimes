@@ -27,6 +27,7 @@ import com.tunisianprayertimes.quran.assets.QuranPackLayout
 import com.tunisianprayertimes.quran.assets.QuranPackSource
 import com.tunisianprayertimes.quran.assets.QuranPackState
 import com.tunisianprayertimes.quran.assets.QuranPackStatus
+import com.tunisianprayertimes.quran.tafsir.TafsirRepository
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.CardBorder
 import com.tunisianprayertimes.ui.theme.TextMuted
@@ -44,6 +45,7 @@ internal class QuranMedia(
     private val metered: () -> Boolean = { false },
     /** The build carries the book itself: the pages need no pack (a debug build made with -PquranFonts). */
     private val bookBundled: Boolean = false,
+    private val declaredTafsir: String? = null,
 ) {
     // A new reader must start with the source's current snapshot. Starting empty briefly labelled
     // already downloaded pages as missing on every return to the tab.
@@ -62,6 +64,9 @@ internal class QuranMedia(
      * else the page scans.
      */
     val pages: QuranPack? get() = layout?.book ?: layout?.pages
+
+    /** A release offering the full commentary as a download. A standalone install already bundles it. */
+    val tafsir: QuranPack? get() = layout?.tafsir?.takeIf { it.name == declaredTafsir && it.name !in bundled }
 
     val pagesReady: Boolean get() = bookBundled || (pages?.let { state(it).available } ?: true)
 
@@ -95,7 +100,7 @@ internal fun rememberQuranMedia(): QuranMedia? {
                 val layout = QuranAssets.layout(context)
                 if (layout == null) QuranMedia.Bundled
                 else QuranMedia(layout, QuranAssets.source(context), QuranAssets.bundledPacks(context), { isMeteredNetwork(context) },
-                    QuranAssets.bookBundled(context))
+                    QuranAssets.bookBundled(context), layout.tafsir?.let { TafsirRepository(context).declaredPack("ashur") })
             }.getOrElse { QuranMedia.Bundled }
         }
     }
@@ -243,6 +248,7 @@ internal fun quranDownloadProblemText(problem: QuranDownloadProblem?): String = 
     QuranDownloadProblem.Storage -> "لا توجد مساحة كافية على الجهاز."
     QuranDownloadProblem.Store -> "تعذّر التنزيل من متجر Google Play. حدّثه ثم أعد المحاولة."
     QuranDownloadProblem.Integrity -> "وصل الملف تالفًا. أعد المحاولة."
+    QuranDownloadProblem.Unpublished -> "ملفّ التفسير غير متاح للتنزيل في هذا الإصدار. يمكنك قراءته في نسخة التطبيق المرفقة بالتفسير."
     QuranDownloadProblem.Other, null -> "تعذّر التنزيل. أعد المحاولة."
 }
 
