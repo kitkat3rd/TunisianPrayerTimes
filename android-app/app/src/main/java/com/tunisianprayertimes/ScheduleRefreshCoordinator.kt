@@ -56,6 +56,7 @@ object ScheduleRefreshCoordinator {
             // The fasting reminder comes after the Maghrib silence, at the place's times: it moves with them.
             runCatching { com.tunisianprayertimes.fasting.FastingReminder.refresh(appContext) }
                 .onFailure { Log.w("ScheduleRefresh", "Could not restore the fasting reminder", it) }
+            com.tunisianprayertimes.worship.WorshipReminder.refreshAll(appContext)
             // «ذكر الموت» keeps out of prayer times: it moves with them too.
             runCatching { com.tunisianprayertimes.remembrance.DeathReminder.refresh(appContext) }
                 .onFailure { Log.w("ScheduleRefresh", "Could not restore the remembrance reminder", it) }

@@ -15,8 +15,11 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -76,6 +79,7 @@ class AdhkarReaderEntryPointTest {
                         onMove = { direction ->
                             session = session.copy(index = (session.index + direction).mod(session.itemIds.size))
                         },
+                        onJumpToIndex = { index -> session = session.copy(index = index) },
                         onAdvance = { advances++ }, onSkip = {}, onRemove = {}, onFavourite = {}, onCollections = {}, onEditCustom = {},
                         onDeleteCustom = {}, onAddToCollection = {}, onReorderCollection = {}, onTextSize = {},
                         onHaptics = {}, onVariant = {}, reminder = reminder, reminderActionLabel = "إنشاء تذكير لهذا الذكر",
@@ -163,6 +167,28 @@ class AdhkarReaderEntryPointTest {
         assertEquals(ProgressBarRangeInfo(2f, 0f..3f), after[SemanticsProperties.ProgressBarRangeInfo])
         assertEquals("الذكر 2 من 3، تمّ 2 من 3", after[SemanticsProperties.StateDescription])
         assertReadingHeader()
+    }
+
+    @Test fun progressBarsJumpInReadingOrderWithoutCountingOrAdvancing() {
+        linkReminder()
+        val progress = compose.onNodeWithTag("adhkar_list_progress")
+
+        for (index in listOf(ids.lastIndex, 0, 1)) {
+            progress.performTouchInput {
+                val slotWidth = width.toFloat() / ids.size
+                click(Offset(width - slotWidth * (index + 0.5f), center.y))
+            }
+            compose.onNodeWithContentDescription("الذكر " + latinNumber(index + 1)).assertIsSelected()
+            assertEquals(ids[index], session.itemId)
+            assertReadingHeader()
+        }
+
+        compose.onNodeWithContentDescription("الذكر 4").performClick()
+        compose.onNodeWithContentDescription("الذكر 4").assertIsSelected()
+        assertEquals(ids[3], session.itemId)
+        assertEquals("notification-occurrence", session.occurrenceId)
+        assertEquals(emptyList<Int>(), counts)
+        assertEquals(0, advances)
     }
 
     @Test fun quranPassageTitleAppearsOnlyOnceForBothEntryPoints() {

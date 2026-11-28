@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="prayer_feature_place_required">اختر مدينتك أولًا ليُحدَّد الموعد بحسب مواقيت الصلاة فيها.</string>
+    <string name="prayer_feature_place_required">اختر مدينتك لتحديد موعد الصلاة.</string>
     <string name="prayer_data_unavailable_title">مواقيت الصلاة غير متوفرة</string>
-    <string name="prayer_data_unavailable_today">لا تتوفر مواقيت اليوم للموقع المحدد في بيانات التطبيق. يمكنك اختيار موقع آخر.</string>
-    <string name="prayer_data_unavailable_date">لا تتوفر مواقيت هذا التاريخ للموقع المحدد. يمكنك العودة لليوم أو اختيار موقع آخر.</string>
+    <string name="prayer_data_unavailable_today">مواقيت اليوم غير متوفرة لهذا الموقع</string>
+    <string name="prayer_data_unavailable_date">مواقيت هذا التاريخ غير متوفرة لهذا الموقع</string>
     <string name="prayer_data_choose_location">اختيار الموقع</string>
 </resources>

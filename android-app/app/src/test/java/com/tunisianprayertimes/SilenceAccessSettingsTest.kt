@@ -40,4 +40,18 @@ class SilenceAccessSettingsTest {
             settingsAttempts(SecurityException(), ActivityNotFoundException()),
         )
     }
+
+    @Test fun unavailableBatteryPageFallsBackToDetailsForTheSameInstallation() {
+        val intents = mutableListOf<Intent>()
+        val context = object : ContextWrapper(ApplicationProvider.getApplicationContext<Application>()) {
+            override fun startActivity(intent: Intent) {
+                intents.add(intent)
+                if (intents.size == 1) throw ActivityNotFoundException()
+            }
+        }
+        SilenceAccessSettings.openAppBattery(context)
+        assertEquals(listOf(SilenceAccessSettings.APP_BATTERY_DETAIL, Settings.ACTION_APPLICATION_DETAILS_SETTINGS),
+            intents.map { it.action })
+        assertEquals(List(2) { "package:${context.packageName}" }, intents.map { it.dataString })
+    }
 }

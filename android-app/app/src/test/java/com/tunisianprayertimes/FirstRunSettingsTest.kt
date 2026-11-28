@@ -45,6 +45,7 @@ class FirstRunSettingsTest {
         assertTrue(PrefsManager.isFreshOnboarding(context))
         assertTrue(PrefsManager.isFirstLaunch(context))
         assertTrue(PrefsManager.isFirstRunSilencePending(context))
+        assertTrue(PrefsManager.isFirstRunQuranDownloadsPending(context))
         assertFalse(PrefsManager.hasConfirmedPlace(context))
         assertFalse(PrefsManager.isFirstRunSetupSuggested(context))
         assertFalse(PrefsManager.isEnabled(context))
@@ -70,6 +71,7 @@ class FirstRunSettingsTest {
         assertFalse(PrefsManager.isFirstRunSetupSuggested(context))
         assertFalse(PrefsManager.isFreshOnboarding(context))
         assertFalse(PrefsManager.isFirstRunSilencePending(context))
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
         assertTrue(PrefsManager.isEnabled(context))
         assertTrue(PrefsManager.isCallEndVibrationEnabled(context))
         assertFalse(PrefsManager.isAutoLocationUpdateEnabled(context))
@@ -81,6 +83,7 @@ class FirstRunSettingsTest {
         assertTrue(PrefsManager.isFirstLaunch(context))
         assertFalse(PrefsManager.isFreshOnboarding(context))
         assertTrue(PrefsManager.isFirstRunSilencePending(context))
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
     }
 
     @Test fun unfinishedLegacyTourWithSavedPlaceAndExplicitSettingsResumesAtTheTimetable() {
@@ -144,10 +147,12 @@ class FirstRunSettingsTest {
     @Test fun restoreCallbackAfterStartupCorrectsEligibilityToo() {
         PrefsManager.initializeFirstRun(context)
         assertTrue(PrefsManager.isFreshOnboarding(context))
+        assertTrue(PrefsManager.isFirstRunQuranDownloadsPending(context))
         PrefsManager.markOnboardingRestored(context)
         PrefsManager.initializeFirstRun(context)
         assertFalse(PrefsManager.isFreshOnboarding(context))
         assertFalse(PrefsManager.isFirstRunSilencePending(context))
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
     }
 
     @Test fun aCopiedFeatureStoreAloneExcludesAnOtherwiseFreshLookingInstall() {
@@ -156,6 +161,7 @@ class FirstRunSettingsTest {
         assertFalse(PrefsManager.isFreshOnboarding(context))
         assertTrue(PrefsManager.usesPlaceOnboarding(context))
         assertFalse(PrefsManager.isFirstRunSilencePending(context))
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
         assertFalse(PrefsManager.canUsePlaceForAutomation(context))
         assertTrue(AdhanSettings.isEnabled(context, Prayer.FAJR))
     }
@@ -244,6 +250,7 @@ class FirstRunSettingsTest {
             .putBoolean("silence_enabled", false).commit()
         PrefsManager.initializeFirstRun(context)
         assertFalse(PrefsManager.isFirstRunSilencePending(context))
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
         assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
     }
 
@@ -283,6 +290,30 @@ class FirstRunSettingsTest {
             stopRouting()
             stopLocation()
         }
+    }
+
+    @Test fun quranOfferSurvivesRestartAfterSilenceAndDismissalNotifiesOtherScreens() {
+        PrefsManager.initializeFirstRun(context)
+        PrefsManager.completeFirstRun(context, FirstRunPlaceChoice.Local(sfax))
+        PrefsManager.declineFirstRunSilence(context)
+        PrefsManager.initializeFirstRun(context)
+        assertTrue(PrefsManager.isFirstRunQuranDownloadsPending(context))
+
+        shadowOf(Looper.getMainLooper()).idle()
+        var routingUpdates = 0
+        val stopRouting = PrefsManager.observeFirstRunDecisions(context) { routingUpdates++ }
+        try {
+            PrefsManager.finishFirstRunQuranDownloads(context)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(1, routingUpdates)
+        } finally {
+            stopRouting()
+        }
+        PrefsManager.initializeFirstRun(context)
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
+        assertFalse(PrefsManager.isFirstRunSilencePending(context))
+        assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
+        assertEquals("sfax", PrefsManager.getLocationSelection(context).localityId)
     }
 
     @Test fun browsingPersistsTheSuggestedPlaceAndFinishesWithoutConfirmingIt() {

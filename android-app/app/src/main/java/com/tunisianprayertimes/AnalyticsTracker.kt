@@ -23,14 +23,25 @@ object AnalyticsTracker {
         runCatching { FirebaseAnalytics.getInstance(context.applicationContext).setAnalyticsCollectionEnabled(allowed) }
     }
 
-    private fun collectionAllowedInRegion(context: Context): Boolean {
+    private fun collectionAllowedInRegion(context: Context): Boolean = collectionAllowed(regionCountries(context))
+
+    internal fun mosqueMetricsAllowed(context: Context): Boolean {
+        // Per-install field testing on a developer-owned phone, enabled through ADB.
+        // The mosque participation switch is still checked before recording and before upload.
+        if (BuildConfig.DEBUG && java.io.File(context.noBackupFilesDir, "mosque-report-field-test").isFile) return true
+        val countries = regionCountries(context).filter { it.matches(Regex("[A-Za-z]{2}")) }.toMutableList()
+        if (PrefsManager.hasConfirmedPlace(context) && PrefsManager.getPlace(context) is com.tunisianprayertimes.place.PrayerPlace.Inm) countries.add("TN")
+        return countries.isNotEmpty() && collectionAllowed(countries)
+    }
+
+    private fun regionCountries(context: Context): List<String> {
         val phone = context.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
-        val countries = listOfNotNull(
+        return listOfNotNull(
             runCatching { phone?.simCountryIso }.getOrNull(),
             runCatching { phone?.networkCountryIso }.getOrNull(),
             runCatching { (PrefsManager.getPlace(context) as? com.tunisianprayertimes.place.PrayerPlace.Coordinates)?.countryCode }.getOrNull(),
         )
-        return collectionAllowed(countries)
+
     }
 
     /** False when any of [countries] (ISO codes, any case) is one where analytics would need the user's consent. */

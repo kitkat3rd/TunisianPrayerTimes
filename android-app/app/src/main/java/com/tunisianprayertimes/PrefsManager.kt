@@ -55,6 +55,7 @@ object PrefsManager {
     private const val KEY_FIRST_LAUNCH = "first_launch_done"
     private const val KEY_FIRST_RUN_DEFAULTS_INITIALIZED = "place_onboarding_defaults_initialized"
     private const val KEY_FIRST_RUN_SILENCE_PENDING = "first_run_silence_pending"
+    private const val KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING = "first_run_quran_downloads_pending"
     private const val KEY_FRESH_ONBOARDING = "fresh_place_onboarding"
     private const val KEY_FIRST_RUN_SETUP_SUGGESTED = "suggest_prayer_setup"
     private const val KEY_AUTO_SILENCE_ACTIVE = "auto_silence_active"
@@ -375,7 +376,9 @@ object PrefsManager {
     }
 
     internal fun observeFirstRunDecisions(context: Context, onChanged: () -> Unit): () -> Unit =
-        observePreferences(context, setOf(KEY_FIRST_LAUNCH, KEY_FIRST_RUN_SILENCE_PENDING, KEY_PLACE_PROVISIONAL), onChanged)
+        observePreferences(context, setOf(
+            KEY_FIRST_LAUNCH, KEY_FIRST_RUN_SILENCE_PENDING, KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING, KEY_PLACE_PROVISIONAL,
+        ), onChanged)
 
     private fun observePreferences(context: Context, keys: Set<String>, onChanged: () -> Unit): () -> Unit {
         val settings = prefs(context)
@@ -427,7 +430,7 @@ object PrefsManager {
             // A restored install has a negative marker from the backup agent, even when this preference
             // file was absent from its backup. A partial old tour or an in-place upgrade is also excluded.
             // An unused install may receive an APK update before it is opened for the first time.
-            // Its onboarding still includes silence. Measurement keeps its stricter package-date check.
+            // Its onboarding still includes silence. The Qur'an offer and measurement are for new installs only.
             val unconfigured = settings.all.isEmpty() && !hasRecoveredFeatureChoices(context)
             val fresh = unconfigured && runCatching {
                 @Suppress("DEPRECATION")
@@ -436,6 +439,7 @@ object PrefsManager {
             }.getOrDefault(false)
             edit.putBoolean(KEY_FRESH_ONBOARDING, fresh).putBoolean(KEY_FIRST_RUN_SETUP_SUGGESTED, true)
                 .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, unconfigured)
+                .putBoolean(KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING, fresh)
             if (unconfigured) edit.putString(KEY_MANUAL_SILENCE_MODE, ManualSilenceMode.DURATION.name)
             // An unfinished tour could already have saved individual choices before it was closed.
             if (!settings.contains(KEY_ENABLED)) edit.putBoolean(KEY_ENABLED, false)
@@ -473,7 +477,8 @@ object PrefsManager {
     internal fun markOnboardingRestored(context: Context) = synchronized(SilenceCoordinator.serial) {
         synchronized(this) {
             prefs(context).edit().putBoolean(KEY_FRESH_ONBOARDING, false)
-                .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
+                .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false)
+                .putBoolean(KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING, false).apply()
         }
     }
 
@@ -481,6 +486,13 @@ object PrefsManager {
 
     internal fun isFirstRunSilencePending(context: Context): Boolean =
         prefs(context).getBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false)
+
+    internal fun isFirstRunQuranDownloadsPending(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING, false)
+
+    internal fun finishFirstRunQuranDownloads(context: Context) {
+        prefs(context).edit().putBoolean(KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING, false).apply()
+    }
 
     internal fun finishFirstRunSilenceOffer(context: Context) = synchronized(SilenceCoordinator.serial) {
         prefs(context).edit().putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
@@ -568,7 +580,8 @@ object PrefsManager {
 
     fun markFirstLaunchDone(context: Context) = synchronized(SilenceCoordinator.serial) {
         prefs(context).edit().putBoolean(KEY_FIRST_LAUNCH, true)
-            .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false).apply()
+            .putBoolean(KEY_FIRST_RUN_SILENCE_PENDING, false)
+            .putBoolean(KEY_FIRST_RUN_QURAN_DOWNLOADS_PENDING, false).apply()
     }
 
     fun setEnabled(context: Context, enabled: Boolean) {
@@ -808,6 +821,9 @@ object PrefsManager {
     fun isCallEndVibrationEnabled(context: Context): Boolean {
         return prefs(context).getBoolean(KEY_CALL_END_VIBRATION_ENABLED, true)
     }
+
+    internal fun hasChosenCallEndVibration(context: Context): Boolean =
+        prefs(context).contains(KEY_CALL_END_VIBRATION_ENABLED)
 
     fun setCallEndVibrationEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_CALL_END_VIBRATION_ENABLED, enabled).apply()

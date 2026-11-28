@@ -197,6 +197,7 @@ object SilenceScheduler {
     @Synchronized
     internal fun scheduleAllInternal(context: Context, now: Calendar, allowDelegationBridge: Boolean = true) {
         if (!PrefsManager.isEnabled(context) || MosqueSilenceSettings.mode(context) == null) {
+            com.tunisianprayertimes.mosque.MosqueMetrics.scheduled(context, emptyList(), now.timeInMillis)
             cancelAll(context)
             return
         }
@@ -209,6 +210,8 @@ object SilenceScheduler {
         val today = nowInstant.atZone(place.zone).toLocalDate()
         val scanned = (-SilenceWindowPlanner.LOOK_BACK_DAYS..SilenceWindowPlanner.LOOK_AHEAD_DAYS).map { today.plusDays(it) }
         val windows = planner.windows(nowInstant)
+        com.tunisianprayertimes.mosque.MosqueMetrics.scheduled(context,
+            if (MosqueSilenceSettings.combined(context)) windows.filterNot { isDismissed(context, it.prayer, it.prayerDay, it) } else emptyList(), nowMillis)
         val armed = HashSet<Pair<Prayer, LocalDate>>()
         var currentlyInSilenceWindow = false
         var earliestUpcomingSilenceMs = Long.MAX_VALUE
@@ -282,6 +285,7 @@ object SilenceScheduler {
 
     @Synchronized
     fun cancelAll(context: Context) {
+        com.tunisianprayertimes.mosque.MosqueMetrics.scheduled(context, emptyList(), now().toEpochMilli())
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         for (prayer in Prayer.entries) {
             for (slot in 0 until DAY_SLOTS) {

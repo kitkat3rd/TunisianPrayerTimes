@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_city_location_missing">لتحديث المدينة، اسمح باستخدام الموقع أثناء فتح التطبيق. يكفي الموقع التقريبي.</string>
+    <string name="access_city_change_alerts">إشعارات تغيير المدينة</string>
+</resources>

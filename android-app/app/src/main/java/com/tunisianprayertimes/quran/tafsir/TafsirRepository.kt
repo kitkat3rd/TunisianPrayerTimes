@@ -3,6 +3,7 @@ package com.tunisianprayertimes.quran.tafsir
 import android.content.Context
 import com.tunisianprayertimes.quran.QuranRepository
 import com.tunisianprayertimes.quran.QuranVerseReference
+import com.tunisianprayertimes.quran.assets.QuranPackLayout
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -64,6 +65,8 @@ data class TafsirReading(
     val previousEnd: Int? = null,
     val nextEnd: Int? = null,
     val passageNotes: List<TafsirNote> = notes,
+    val glossaryBook: TafsirBook? = null,
+    val glossaryAvailable: Boolean = false,
 )
 
 private data class TafsirChapter(
@@ -81,13 +84,16 @@ enum class TafsirCatalogStatus { EMPTY, AVAILABLE, PARTIAL, INVALID }
 class TafsirRepository private constructor(
     private val context: Context?,
     private val assetText: (String) -> String?,
+    private val packs: TafsirPackAccess,
     private val verseCount: (Int) -> Int?,
 ) {
-    constructor(context: Context) : this(context.applicationContext, assetReader(context.applicationContext), { surah ->
-        QuranRepository.loaded()?.surahs?.getOrNull(surah - 1)?.verseCount
-    })
-    internal constructor(assetText: (String) -> String?) : this(null, assetText, { null })
-    internal constructor(assetText: (String) -> String?, verseCount: (Int) -> Int?) : this(null, assetText, verseCount)
+    constructor(context: Context) : this(
+        context.applicationContext, assetReader(context.applicationContext), TafsirPackData(context.applicationContext),
+        { surah -> QuranRepository.loaded()?.surahs?.getOrNull(surah - 1)?.verseCount },
+    )
+    internal constructor(
+        assetText: (String) -> String?, packs: TafsirPackAccess, verseCount: (Int) -> Int? = { null },
+    ) : this(null, assetText, packs, verseCount)
 
     private val indexText by lazy { decode { assetText("quran/tafsir/catalog.json") } }
     private val index by lazy { decode { indexText?.let(::JSONObject) }?.takeIf { it.optInt("version") == 1 } }
@@ -107,27 +113,21 @@ class TafsirRepository private constructor(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Triple<String, Int, String>, TafsirChapter>) =
             size > 6
     }
-    private var packedEdition: Pair<String, TafsirBook>? = null
+    private val packedEditions = mutableMapOf<String, Pair<String, TafsirBook>>()
 
-    /** Only publicly released, catalogued packs belong in the reader’s download list. */
-    fun declaredPack(bookId: String): String? =
-        if (index?.optBoolean("preview") == true) null else catalog.firstOrNull { it.id == bookId }?.pack
+    /** Published catalog metadata, including works available to download before any are installed. */
+    fun downloadableBooks(): List<TafsirBook> = catalog.filter { !it.preview && it.pack != null }
+    fun declaredPack(bookId: String): String? = downloadableBooks().firstOrNull { it.id == bookId }?.pack
 
     fun books(): List<TafsirBook> {
         val app = context
         val metadata = index
         if (app != null && (metadata != null || indexText == null) && metadata?.optBoolean("preview") != true) {
-            // Retained older packs get corrections for their actual text. Its bundled excerpts
-            // still belong to the current APK's edition (and must never use the old pack's patch).
-            val installed = catalog.associate { book ->
-                val bases = buildSet {
-                    book.baseId?.let(::add)
-                    if (book.pack != null) packRevision(book)?.let { revision ->
-                        installedEdition(book, revision)?.baseId?.let(::add)
-                    }
-                }
-                book.id to bases
-            }
+            val installed = catalog.mapNotNull { book ->
+                val revision = packRevision(book) ?: return@mapNotNull null
+                val base = installedEdition(book, revision)?.baseId ?: return@mapNotNull null
+                book.id to setOf(base)
+            }.toMap()
             TafsirCorrections.scheduleEditions(app, metadata ?: JSONObject(), installed)
         }
         return catalog
@@ -144,75 +144,74 @@ class TafsirRepository private constructor(
         }
     }
 
-    fun isInstalled(book: TafsirBook): Boolean = book.pack == null ||
-        (context != null && decode { TafsirPackData.available(context) } == true)
+    fun isInstalled(book: TafsirBook): Boolean = packRevision(book) != null
 
-    fun introduction(surah: Int): TafsirUnit? {
-        val book = catalog.find { it.id == "ashur" && surah in it.introSurahs } ?: return null
-        // The introduction must remain readable even with a broken or absent full pack.
-        val unit = bundledChapter(book, surah)?.units?.firstOrNull { it.kind == "intro" }
-        return unit?.let { corrected(book, listOf(it)).first() }
+    fun introductionReading(surah: Int): Pair<TafsirBook, TafsirUnit>? {
+        val listed = catalog.find { it.id == "ashur" } ?: return null
+        val revision = packRevision(listed) ?: return null
+        val book = installedEdition(listed, revision) ?: return null
+        if (surah !in book.introSurahs) return null
+        val intro = chapter(book, surah, revision)?.units?.firstOrNull { it.kind == "intro" } ?: return null
+        return book to corrected(book, listOf(intro)).first()
     }
 
-    /** [targetUnit] distinguishes overlapping commentary passages and the offline excerpt behind a reading note. */
+    fun introduction(surah: Int): TafsirUnit? = introductionReading(surah)?.second
+
+    /** [targetUnit] distinguishes overlapping passages and the exact target of a reading note. */
     fun read(bookId: String, verse: QuranVerseReference, targetUnit: String? = null): TafsirReading {
-        val catalogBook = catalog.find { it.id == bookId }
-        if (catalogBook == null || verse.surah !in 1..114 || verse.ayah !in 0..286) {
-            return TafsirReading(catalogBook, verse, unavailable = true)
+        val listed = catalog.find { it.id == bookId }
+        if (listed == null || verse.surah !in 1..114 || verse.ayah !in 0..286) {
+            return TafsirReading(listed, verse, unavailable = true)
         }
-        val revision = packRevision(catalogBook)
-        val book = if (revision == null) catalogBook else installedEdition(catalogBook, revision)
-        val bundledTarget = if (targetUnit != null && catalogBook.pack != null) {
-            bundledChapter(catalogBook, verse.surah)?.units?.firstOrNull {
-                it.id == targetUnit && it.kind == "excerpt" && verse.ayah in it.from..it.to
-            }
-        } else null
-        // A reading note verified against this APK's edition can open even if an older or
-        // damaged full pack is installed, or before the reader has downloaded the pack.
-        if (bundledTarget != null && (revision == null || book == null || book.baseId != catalogBook.baseId)) {
-            return excerptReading(catalogBook, verse, bundledTarget)
+        val revision = packRevision(listed)
+        val book = revision?.let { installedEdition(listed, it) }
+        val chapter = if (book != null) chapter(book, verse.surah, revision) else null
+        val concise = bookId == "muyassar" || bookId == "mukhtasar"
+        if (book == null || (chapter == null && verse.surah in book.surahs)) {
+            val missing = missingChapter(book ?: listed, verse)
+            return if (concise) withGlossary(missing) else missing
         }
-        if (book == null) return missingChapter(catalogBook, verse)
-        val chapter = chapter(book, verse.surah, revision)
-        val fullAvailable = book.pack == null || revision != null
         val candidates = chapter?.passages.orEmpty()
         val intersecting = candidates.filter { verse.ayah in it.from..it.to }
-        val concise = book.id == "muyassar" || book.id == "mukhtasar"
         val requested = targetUnit?.let { id -> intersecting.firstOrNull { it.id == id } }
-        if (requested == null && bundledTarget != null) return excerptReading(catalogBook, verse, bundledTarget)
-        if (!fullAvailable || (chapter == null && verse.surah in book.surahs)) {
-            return missingChapter(book, verse)
-        }
         // A concise book can explain both parts of a joined verse in separate paragraphs.
         val selected = when {
+            targetUnit != null && requested == null -> emptyList()
             requested != null && concise -> intersecting.filter { it.from == requested.from && it.to == requested.to }
             concise || book.id == "gharib" -> intersecting
             requested != null -> listOf(requested)
             else -> intersecting.take(1)
         }
         val visible = corrected(book, selected)
-        val glossary = if (concise) {
-            val dictionary = catalog.find { it.id == "gharib" }
-            if (dictionary == null) emptyList() else {
-                val glosses = bundledChapter(dictionary, verse.surah)?.passages.orEmpty().filter { gloss ->
-                    if (visible.isEmpty()) verse.ayah in gloss.from..gloss.to
-                    else visible.any { it.from <= gloss.to && gloss.from <= it.to }
-                }
-                corrected(dictionary, glosses)
-            }
-        } else emptyList()
         val previous = neighbour(book, verse, candidates, selected, -1, revision)
         val next = neighbour(book, verse, candidates, selected, 1, revision)
-        return TafsirReading(
-            book, verse, units = visible, glossary = glossary,
+        val reading = TafsirReading(
+            book, verse, units = visible,
             notes = chapter?.notes?.get(verse.ayah).orEmpty(),
             previous = previous?.verse, next = next?.verse,
             previousUnit = previous?.id, nextUnit = next?.id,
-            exposed = exposed(verse, visible + glossary),
+            exposed = exposed(verse, visible),
             previousEnd = previous?.end, nextEnd = next?.end,
             passageNotes = visible.flatMap { it.from..it.to }.distinct().sorted()
                 .flatMap { chapter?.notes?.get(it).orEmpty() }.distinct(),
         )
+        return if (concise) withGlossary(reading) else reading
+    }
+
+    /** Glosses are an independent work; the reader can download them before either concise book. */
+    private fun withGlossary(reading: TafsirReading): TafsirReading {
+        val listed = catalog.find { it.id == "gharib" } ?: return reading
+        val revision = packRevision(listed) ?: return reading.copy(glossaryBook = listed)
+        val book = installedEdition(listed, revision) ?: return reading.copy(glossaryBook = listed)
+        val rows = chapter(book, reading.verse.surah, revision)?.passages
+        val available = rows != null || reading.verse.surah !in book.surahs
+        val selected = rows.orEmpty().filter { gloss ->
+            if (reading.units.isEmpty()) reading.verse.ayah in gloss.from..gloss.to
+            else reading.units.any { it.from <= gloss.to && gloss.from <= it.to }
+        }
+        val visible = corrected(book, selected)
+        val exposed = if (visible.isEmpty()) reading.exposed else reading.exposed + exposed(reading.verse, visible)
+        return reading.copy(glossary = visible, glossaryBook = book, glossaryAvailable = available, exposed = exposed)
     }
 
     /** An uninstalled commentary has no passage index. Its download card can still follow Quran verses. */
@@ -231,11 +230,6 @@ class TafsirRepository private constructor(
             else -> null
         }
         return TafsirReading(book, verse, previous = previous, next = next, unavailable = true)
-    }
-
-    private fun excerptReading(book: TafsirBook, verse: QuranVerseReference, excerpt: TafsirUnit): TafsirReading {
-        val visible = corrected(book, listOf(excerpt))
-        return TafsirReading(book, verse, units = visible, exposed = exposed(verse, visible))
     }
 
     private fun exposed(verse: QuranVerseReference, units: List<TafsirUnit>) = buildSet {
@@ -273,38 +267,37 @@ class TafsirRepository private constructor(
     }
 
     private fun packRevision(book: TafsirBook): String? =
-        if (book.pack != null && context != null) decode { TafsirPackData.revision(context) } else null
+        decode { packs.revision(book.id) }
 
     @Synchronized
     private fun installedEdition(book: TafsirBook, revision: String): TafsirBook? {
-        packedEdition?.takeIf { it.first == revision }?.let { return it.second }
-        val app = context ?: return null
-        val meta = decode { TafsirPackData.metadata(app) } ?: return null
+        packedEditions[book.id]?.takeIf { it.first == revision }?.let { return it.second }
+        val meta = decode { packs.metadata(book.id) } ?: return null
         if (packRevision(book) != revision) return null
+        // Older verified Ashur packs may have only the three original metadata fields.
+        if (meta["id"] != null && meta["id"] != book.id) return null
         val base = meta["baseId"]?.takeIf(hash::matches) ?: return null
         val edition = meta["edition"]?.takeIf(String::isNotBlank) ?: return null
         val source = meta["source"]?.takeIf(String::isNotBlank) ?: return null
+        val surahs = meta["surahs"]?.let { decode { JSONArray(it).surahs() } ?: return null } ?: book.surahs
+        val intros = meta["introSurahs"]?.let { decode { JSONArray(it).surahs() } ?: return null }
+            ?: book.introSurahs.intersect(surahs)
+        if (surahs.isEmpty() || !surahs.containsAll(intros)) return null
         val actual = book.copy(
             source = source, edition = edition, baseId = base,
-            shareable = book.shareable && book.baseId == base,
+            surahs = surahs, introSurahs = intros,
+            shareable = book.shareable && (meta["shareable"]?.toBooleanStrictOrNull() ?: (book.baseId == base)),
         )
-        packedEdition = revision to actual
+        packedEditions[book.id] = revision to actual
         return actual
     }
 
     private fun chapter(book: TafsirBook, surah: Int, revision: String?): TafsirChapter? {
-        if (surah !in book.surahs) return null
-        if (book.pack == null) return bundledChapter(book, surah)
-        if (revision == null || context == null) return null
+        if (surah !in book.surahs || revision == null) return null
         return cached(book, surah, revision) {
-            val text = TafsirPackData.read(context, surah)
+            val text = packs.read(book.id, surah)
             text?.takeIf { packRevision(book) == revision }
         }
-    }
-
-    private fun bundledChapter(book: TafsirBook, surah: Int): TafsirChapter? {
-        if (surah !in book.surahs && surah !in book.introSurahs) return null
-        return cached(book, surah, "asset") { assetText("quran/tafsir/${book.id}/$surah.json") }
     }
 
     private fun cached(book: TafsirBook, surah: Int, storage: String, source: () -> String?): TafsirChapter? {
@@ -327,13 +320,7 @@ class TafsirRepository private constructor(
     }
 
     companion object {
-        private val titles = mapOf(
-            "muyassar" to "التفسير الميسّر",
-            "mukhtasar" to "المختصر في تفسير القرآن الكريم",
-            "gharib" to "الميسّر في غريب القرآن الكريم",
-            "juzayy" to "التسهيل لعلوم التنزيل",
-            "ashur" to "التحرير والتنوير",
-        )
+        private val titles get() = QuranPackLayout.tafsirTitles
         private val hash = Regex("[a-f0-9]{64}")
 
         private fun assetReader(context: Context): (String) -> String? = { path ->
@@ -349,8 +336,8 @@ class TafsirRepository private constructor(
             val title = requireNotNull(titles[id])
             val surahs = row.getJSONArray("surahs").surahs()
             val intros = row.optJSONArray("introSurahs")?.surahs().orEmpty()
-            val pack = row.nonempty("pack")
-            require(pack == null || id == "ashur")
+            val pack = row.requiredText("pack")
+            require(pack == "quran_tafsir_" + id)
             require(surahs.isNotEmpty() && surahs.containsAll(intros))
             return TafsirBook(
                 id, title, row.requiredText("source"), row.requiredText("edition"),

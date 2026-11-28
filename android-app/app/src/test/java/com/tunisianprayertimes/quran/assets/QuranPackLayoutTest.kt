@@ -31,19 +31,41 @@ class QuranPackLayoutTest {
         cdn = "https://cdn.example",
     )
 
+    private fun tafsir(id: String, file: String = "quran/tafsir/$id.db", delivery: String = "cdn"): JSONObject {
+        val name = "quran_tafsir_$id"
+        return pack(name, "tafsir", listOf(file), key = "v1/packs/$name-${"a".repeat(12)}.zip", delivery = delivery)
+            .apply { getJSONArray("files").getJSONObject(0).put("sha256", "b".repeat(64)) }
+    }
+
     @Test
-    fun tafsirHasItsOwnPackAndCannotSupplyAnotherAsset() {
-        val database = QuranPackLayout.TAFSIR_ASSET
-        val name = "quran_tafsir_ashur"
-        val valid = pack(name, "tafsir", listOf(database))
-        valid.getJSONArray("files").getJSONObject(0).put("sha256", "a".repeat(64))
-        val parsed = QuranPackLayout.parse(layout(valid))
-        assertEquals(parsed.packOf(database), parsed.tafsir)
-        assertEquals(QuranPack.Kind.Tafsir, parsed.tafsir?.kind)
-        for (item in listOf(pack(name, "tafsir", listOf("quran/pages/1.webp")),
-            pack(name, "pages", listOf(database)), pack("unknown_book", "tafsir", listOf(database)))) {
-            assertThrows(IllegalArgumentException::class.java) { QuranPackLayout.parse(layout(item)) }
+    fun fiveBooksCanHaveBothPlayAndCdnDeliveryAndOlderCdnOnlyLayoutsStillResolve() {
+        val ids = listOf("muyassar", "mukhtasar", "gharib", "juzayy", "ashur")
+        for (delivery in listOf("cdn", "play")) {
+            val parsed = QuranPackLayout.parse(layout(*ids.map { tafsir(it, delivery = delivery) }.toTypedArray()))
+            assertEquals(ids, parsed.tafsirPacks.map { it.tafsirBookId })
+            assertEquals(if (delivery == "play") ids else emptyList(), parsed.playPacks().tafsirPacks.map { it.tafsirBookId })
+            for (id in ids) {
+                val book = requireNotNull(parsed.tafsir(id))
+                assertEquals(book, parsed.packOf(QuranPackLayout.tafsirAsset(id)))
+                assertEquals("https://cdn.example/${book.archive.key}", parsed.archiveUrl(book))
+            }
+            assertNull(parsed.tafsir("qurtubi"))
         }
+        val legacy = QuranPackLayout.parse(layout(tafsir("ashur", delivery = "play")))
+        assertEquals(legacy.tafsir("ashur"), legacy.playPacks().tafsir("ashur"))
+    }
+
+    @Test
+    fun swappedTafsirFilesArchivesAndUnknownWorksAreRejected() {
+        val wrongArchive = tafsir("muyassar").apply {
+            getJSONObject("archive").put("key", "v1/packs/quran_tafsir_juzayy-${"a".repeat(12)}.zip")
+        }
+        val wrongHash = tafsir("mukhtasar").apply { getJSONObject("archive").put("sha256", "0".repeat(64)) }
+        val missingPin = tafsir("gharib").apply { getJSONArray("files").getJSONObject(0).remove("sha256") }
+        val invalid = listOf(tafsir("ashur", file = "quran/tafsir/juzayy.db"), tafsir("other"),
+            pack("quran_tafsir_ashur", "pages", listOf("quran/pages/1.webp")),
+            pack("quran_other", "pages", listOf("quran/tafsir/ashur.db")), wrongArchive, wrongHash, missingPin)
+        for (item in invalid) assertThrows(IllegalArgumentException::class.java) { QuranPackLayout.parse(layout(item)) }
     }
 
     @Test

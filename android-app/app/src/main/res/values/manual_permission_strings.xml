@@ -6,8 +6,8 @@
     <string name="manual_rule_failed_title">تعذّر تغيير وضع الإسكات</string>
     <string name="manual_rule_failed_body">تحقّق من حالة وضع الإسكات اليدوي، ثم أعد المحاولة.</string>
     <string name="manual_rule_settings">إعدادات أوضاع الإسكات</string>
-    <string name="manual_exact_delay_detail">قد يتأخّر رجوع الصوت عن الموعد المحدّد. يمكنك السماح بالمنبّهات الدقيقة لضبط نهاية الإسكات.</string>
-    <string name="manual_exact_open_settings">إعدادات المنبّهات والتذكيرات</string>
+    <string name="manual_exact_delay_detail">بدون إذن المنبّهات الدقيقة، قد يتأخّر رجوع الصوت.</string>
+    <string name="manual_exact_open_settings">السماح بالمنبّهات الدقيقة</string>
     <string name="manual_exact_later">لاحقًا</string>
     <string name="manual_inexact_started">بدأ الإسكات. قد يتأخّر رجوع الصوت عن موعده.</string>
     <string name="manual_approximate_time">موعد رجوع الصوت التقريبي %1$s</string>

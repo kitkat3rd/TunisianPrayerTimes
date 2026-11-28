@@ -16,7 +16,9 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.Prayer
+import com.tunisianprayertimes.R
 import com.tunisianprayertimes.ui.AppFontFamily
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import java.time.LocalDate
@@ -35,6 +37,28 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AdhanPlaybackControlsTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun theSilentWaveShowsTheReasonWithoutTheLargeCloseButton() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        compose.mainClock.autoAdvance = false
+        val alert = AdhanAlert(
+            AdhanScheduler.Occurrence(Prayer.ASR, LocalDate.now(), System.currentTimeMillis()),
+            sounding = false, voice = AdhanVoice.ADHAN_MADINAH_MARWAN_QASSAS,
+            startedAtUptimeMillis = SystemClock.uptimeMillis(), countingDown = false,
+            quietReasonResId = R.string.adhan_quiet_silent_phone, canResume = true,
+        )
+        compose.setContent {
+            TunisianPrayerTimesTheme(fontFamily = AppFontFamily) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    AdhanAlertScreen(alert) { error("The quiet screen has no close button") }
+                }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithText(context.getString(R.string.adhan_quiet_silent_phone)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.adhan_close)).assertDoesNotExist()
+    }
 
     @Test
     fun theArabicScreenRaisesVolumeToTheRightAndKeepsStopBelowTheSlider() {

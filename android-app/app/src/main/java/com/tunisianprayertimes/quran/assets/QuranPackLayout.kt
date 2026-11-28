@@ -26,6 +26,9 @@ data class QuranPack(
     val files: List<QuranPackFile>,
     val cdnPublished: Boolean = true,
 ) {
+    val tafsirBookId: String?
+        get() = if (kind == Kind.Tafsir && name.startsWith(TAFSIR_PREFIX)) name.removePrefix(TAFSIR_PREFIX) else null
+
     /**
      * Pages: the page scans. Book: the mushaf in the print's own type (quran/book: its fonts, plates and page layouts).
      * Either holds the Quran's pages alone, no appendix. Audio: a recitation's chapters.
@@ -33,10 +36,14 @@ data class QuranPack(
     enum class Kind { Pages, Book, Audio, Tafsir }
 
     enum class Delivery {
-        /** A Play Asset Delivery pack in the bundle: the mushaf's pages and the first ten reciters. */
+        /** Available through Play Asset Delivery on Play installs, and through the CDN when published. */
         Play,
         /** Only the quran-cdn Worker serves it, on Play installs too. */
         Cdn,
+    }
+
+    companion object {
+        const val TAFSIR_PREFIX = "quran_tafsir_"
     }
 }
 
@@ -52,7 +59,9 @@ class QuranPackLayout(
 
     val book: QuranPack? = packs.firstOrNull { it.kind == QuranPack.Kind.Book }
 
-    val tafsir: QuranPack? = packs.firstOrNull { it.kind == QuranPack.Kind.Tafsir }
+    val tafsirPacks: List<QuranPack> = packs.filter { it.kind == QuranPack.Kind.Tafsir }
+
+    fun tafsir(bookId: String): QuranPack? = tafsirPacks.firstOrNull { it.tafsirBookId == bookId }
 
     /** The same layout limited to the packs Google Play delivers. */
     fun playPacks(): QuranPackLayout = QuranPackLayout(cdn, packs.filter { it.delivery == QuranPack.Delivery.Play })
@@ -69,7 +78,18 @@ class QuranPackLayout(
 
     companion object {
         const val ASSET = "quran/packs.json"
-        const val TAFSIR_ASSET = "quran/tafsir/ashur.db"
+        val tafsirTitles: Map<String, String> = mapOf(
+            "muyassar" to "التفسير الميسّر",
+            "mukhtasar" to "المختصر في تفسير القرآن الكريم",
+            "gharib" to "الميسّر في غريب القرآن الكريم",
+            "juzayy" to "التسهيل لعلوم التنزيل",
+            "ashur" to "التحرير والتنوير",
+        )
+
+        fun tafsirAsset(bookId: String): String {
+            require(bookId in tafsirTitles) { "Unknown tafsir book $bookId" }
+            return "quran/tafsir/$bookId.db"
+        }
 
         @Volatile private var cached: Result<QuranPackLayout?>? = null
 
@@ -134,11 +154,16 @@ class QuranPackLayout(
                 }
                 if (pack.kind == QuranPack.Kind.Tafsir) {
                     val database = pack.files.singleOrNull()
-                    require(pack.name == "quran_tafsir_ashur" && database?.path == TAFSIR_ASSET &&
-                        database.sha256?.matches(SHA256) == true &&
+                    val id = requireNotNull(pack.tafsirBookId) { "Invalid tafsir pack name ${pack.name}" }
+                    require(database?.path == tafsirAsset(id) && database.sha256?.matches(SHA256) == true &&
+                        database.bytes > 0 && pack.bytes == database.bytes && pack.archive.bytes > 0 &&
+                        pack.archive.sha256.matches(SHA256) &&
+                        pack.archive.key == "v1/packs/${pack.name}-${pack.archive.sha256.take(12)}.zip" &&
                         pack.reciterId == null && pack.surahs == null) { "Invalid tafsir pack ${pack.name}" }
                 } else {
-                    require(pack.files.none { it.path.startsWith("quran/tafsir/") }) { "Tafsir asset in ${pack.name}" }
+                    require(!pack.name.startsWith(QuranPack.TAFSIR_PREFIX) && pack.files.none { it.path.startsWith("quran/tafsir/") }) {
+                        "Tafsir asset or reserved name in ${pack.name}"
+                    }
                 }
             }
             require(packs.map { it.name }.toSet().size == packs.size) { "Duplicate Quran pack names" }

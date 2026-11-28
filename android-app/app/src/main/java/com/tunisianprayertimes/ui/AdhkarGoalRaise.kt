@@ -36,7 +36,7 @@ internal fun DhikrGoalRaiseSheet(current: Int, fridayGoal: Boolean, onRaise: (go
         DhikrSheetHeader("زيادة الهدف", onDismiss)
         Column(Modifier.verticalScroll(rememberScrollState()).imePadding().navigationBarsPadding()
             .padding(horizontal = 24.dp).padding(top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("أتممت هدف اليوم: " + latinNumber(current) + ". ما هدفك الجديد؟",
+            Text("الهدف المكتمل اليوم: " + latinNumber(current),
                 color = p.forest, fontSize = 15.sp, lineHeight = 26.sp)
             GoalStepper(value, { value = it }, minimum = current + 1, "زيادة العدد", "تقليص العدد",
                 "adhkar_raise_goal_input", fieldColors)

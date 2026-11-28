@@ -18,8 +18,9 @@ import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.mosque.presence.MAX_WAKE_CIRCLES
 import com.tunisianprayertimes.mosque.presence.PresenceState
-import kotlin.math.max
+import com.tunisianprayertimes.mosque.presence.mosqueWakeCircles
 
 /** A finite, typed location service. Start authority is checked by its exact-alarm/geofence/UI callers. */
 class MosqueObservationService : Service() {
@@ -58,7 +59,14 @@ class MosqueObservationService : Service() {
         internal fun cancelNative(context: Context) {
             val service = instance
             val expected = service?.token
-            service?.handler?.post { if (service.token == expected) service.cancelProvider() }
+            service?.handler?.post {
+                if (service.token == expected) {
+                    service.geofenceAttempt++
+                    service.geofenceEnd = -1L
+                    service.geofenceRetryAt = 0L
+                    if (expected == null || MosqueSilenceMonitor.plan(context, expected) == null) service.cancelProvider()
+                }
+            }
             removeSavedGeofences(context)
         }
         private fun geofenceIntent(context: Context, token: String): PendingIntent = PendingIntent.getBroadcast(
@@ -85,6 +93,21 @@ class MosqueObservationService : Service() {
         }
         internal fun validGeofenceToken(context: Context, token: String) =
             context.getSharedPreferences("mosque_presence", MODE_PRIVATE).getString("geofence_token", null) == token
+
+        internal fun wakeCirclesLost(context: Context, token: String) {
+            synchronized(SilenceCoordinator.serial) {
+                if (!validGeofenceToken(context, token)) return
+                AdaptiveMosqueMonitor.setWakeCoverage(token, 0L)
+                instance?.takeIf { it.token == token }?.let { service ->
+                    if (service.geofenceRetryAt > SystemClock.elapsedRealtime()) return
+                    service.deferGeofences()
+                    if (service.callback != null && MosqueSilenceMonitor.plan(context, token) != null) return
+                }
+            }
+            // A geofencing event may wake a parked service. Existing fused updates and visit evidence
+            // remain usable when Play Services reports that its circles are unavailable.
+            MosqueSilenceMonitor.reconcile(context, canStart = true)
+        }
     }
 
     internal val handler = Handler(Looper.getMainLooper())
@@ -96,6 +119,8 @@ class MosqueObservationService : Service() {
     private var requestEnd = -1L
     private var requestIntervalMillis = -1L
     private var geofenceEnd = -1L
+    private var geofenceAttempt = 0L
+    private var geofenceRetryAt = 0L
     private val tick = object : Runnable {
         override fun run() {
             val current = token ?: return
@@ -137,7 +162,12 @@ class MosqueObservationService : Service() {
             if (token?.let { MosqueSilenceMonitor.plan(this, it) } == null) stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (token != incoming) { cancelProvider(); geofenceEnd = -1; token = incoming }
+        if (token != incoming) {
+            cancelProvider()
+            geofenceEnd = -1L
+            geofenceRetryAt = 0L
+            token = incoming
+        }
         handler.removeCallbacks(tick)
         tick.run()
         return START_NOT_STICKY
@@ -198,30 +228,33 @@ class MosqueObservationService : Service() {
         callback = null; requestIntervalMillis = -1L; requestEnd = -1
     }
 
+    private fun deferGeofences() {
+        MosqueMetrics.flag(this, "geofence_failed")
+        geofenceAttempt++
+        geofenceEnd = -1L
+        geofenceRetryAt = SystemClock.elapsedRealtime() + 5 * 60_000L
+    }
+
     @SuppressLint("MissingPermission")
     private fun registerGeofences(plan: MosqueObservationPlan) {
         synchronized(SilenceCoordinator.serial) {
-            if (kotlin.math.abs(geofenceEnd - plan.endElapsed) < 1_000) return
+            if (kotlin.math.abs(geofenceEnd - plan.endElapsed) < 1_000 ||
+                SystemClock.elapsedRealtime() < geofenceRetryAt) return
             val checked = MosqueSilenceMonitor.plan(this, plan.token) ?: return
             val remaining = checked.endElapsed - SystemClock.elapsedRealtime()
             if (remaining <= 0) return
-            val circles = checked.areas.flatMap { area -> area.polygons.mapIndexed { index, polygon ->
-                val points = polygon.exterior
-                val lat = points.map { it.latitude }.average()
-                val lon = points.map { it.longitude }.average()
-                val distances = FloatArray(1)
-                val radius = points.maxOf { point ->
-                    android.location.Location.distanceBetween(lat, lon, point.latitude, point.longitude, distances)
-                    distances[0].toDouble()
-                }
-                Geofence.Builder().setRequestId("${area.id}:$index")
-                    .setCircularRegion(lat, lon, max(100.0, radius + 30.0).toFloat())
+            val regions = mosqueWakeCircles(checked.areas)
+            if (regions.size !in 1..MAX_WAKE_CIRCLES) return
+            val circles = regions.mapIndexed { index, region ->
+                Geofence.Builder().setRequestId("${checked.token}:$index")
+                    .setCircularRegion(region.center.latitude, region.center.longitude, region.radius)
                     .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT or Geofence.GEOFENCE_TRANSITION_DWELL)
                     .setLoiteringDelay(60_000).setNotificationResponsiveness(60_000)
                     .setExpirationDuration(remaining).build()
-            } }.take(100)
-            if (circles.isEmpty()) return
+            }
+            val attempt = ++geofenceAttempt
             geofenceEnd = checked.endElapsed
+            AdaptiveMosqueMonitor.setWakeCoverage(checked.token, 0L)
             val request = GeofencingRequest.Builder().setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER).addGeofences(circles).build()
             val state = getSharedPreferences("mosque_presence", MODE_PRIVATE)
             val old = state.getString("geofence_token", null)
@@ -233,12 +266,16 @@ class MosqueObservationService : Service() {
                 LocationServices.getGeofencingClient(this).addGeofences(request, pending).addOnSuccessListener {
                     // Acquisition may have finished while the registration was in flight. Idle circles
                     // are still useful until this same actual window ends.
-                    if (!validGeofenceToken(this, checked.token) || !MosqueSilenceMonitor.canObserve(this) || !MosqueReadiness.ready(this))
-                        LocationServices.getGeofencingClient(this).removeGeofences(pending)
+                    synchronized(SilenceCoordinator.serial) {
+                        if (!validGeofenceToken(this, checked.token) || !MosqueSilenceMonitor.canObserve(this) || !MosqueReadiness.ready(this))
+                            LocationServices.getGeofencingClient(this).removeGeofences(pending)
+                        else if (instance === this && token == checked.token && geofenceAttempt == attempt)
+                            AdaptiveMosqueMonitor.setWakeCoverage(checked.token, checked.endElapsed)
+                    }
                 }.addOnFailureListener {
-                    if (token == checked.token) { geofenceEnd = -1; providerFailed(checked.token); stopSelf() }
+                    if (instance === this && token == checked.token && geofenceAttempt == attempt) deferGeofences()
                 }
-            } catch (_: SecurityException) { providerFailed(checked.token); stopSelf() }
+            } catch (_: SecurityException) { deferGeofences() }
         }
     }
 
@@ -249,6 +286,7 @@ class MosqueObservationService : Service() {
             periods.continuationEnd != null -> MosquePrayerActions.continuationLabel(this, periods.continuationEnd)
             state == PresenceState.SCHEDULE_FALLBACK -> getString(R.string.mosque_adaptive_fallback)
             periods.observation != null && periods.silence == null -> getString(R.string.mosque_adaptive_early)
+            state == PresenceState.ENTERING -> getString(R.string.mosque_status_entering)
             state == PresenceState.VISIT_CONFIRMED -> getString(R.string.mosque_adaptive_hold)
             state == PresenceState.EXITING -> getString(R.string.mosque_status_uncertain)
             else -> getString(R.string.mosque_status_checking)

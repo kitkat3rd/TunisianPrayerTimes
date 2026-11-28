@@ -56,6 +56,15 @@ data class VoluntaryPrayerTimes(
 private const val DUHA_AFTER_SUNRISE_MINUTES = 20L
 private const val DUHA_BEFORE_TRANSIT_MINUTES = 20L
 
+internal fun duhaWindow(date: LocalDate, zone: ZoneId, day: PrayerDay?, noon: Instant?): VoluntaryPrayerWindow? {
+    if (day == null || day.date != date || day.zone != zone || noon == null) return null
+    val sunrise = day[TimeEvent.SUNRISE].takeIf { it.status == EventStatus.COMPUTED }?.at ?: return null
+    if (sunrise.atZone(zone).toLocalDate() != date || noon.atZone(zone).toLocalDate() != date) return null
+    val start = sunrise.plusSeconds(DUHA_AFTER_SUNRISE_MINUTES * 60)
+    val end = noon.minusSeconds(DUHA_BEFORE_TRANSIT_MINUTES * 60)
+    return if (start < end) VoluntaryPrayerWindow(start, end, isEstimated = true) else null
+}
+
 /**
  * The approximate Duha planning period (today's, or tomorrow's once today's has ended) and the current/upcoming night, in the selected place's
  * time zone. Fixed margins are only a planning estimate: the sun's sufficient rise varies by place
@@ -77,20 +86,7 @@ fun voluntaryPrayerTimes(
         dayFor(date)?.takeIf { it.date == date && it.zone == zone }
     }
 
-    fun duhaOn(date: LocalDate): VoluntaryPrayerWindow? = day(date)?.let { prayerDay ->
-        val sunriseEvent = prayerDay[TimeEvent.SUNRISE]
-        val sunrise = sunriseEvent.at
-        val noon = solarNoonFor(date)
-        if (sunriseEvent.status != EventStatus.COMPUTED || sunrise == null || noon == null ||
-            sunrise.atZone(zone).toLocalDate() != date || noon.atZone(zone).toLocalDate() != date
-        ) {
-            null
-        } else {
-            val start = sunrise.plusSeconds(DUHA_AFTER_SUNRISE_MINUTES * 60)
-            val end = noon.minusSeconds(DUHA_BEFORE_TRANSIT_MINUTES * 60)
-            if (start < end) VoluntaryPrayerWindow(start, end, isEstimated = true) else null
-        }
-    }
+    fun duhaOn(date: LocalDate) = day(date)?.let { duhaWindow(date, zone, it, solarNoonFor(date)) }
     // Once today's period is over, the reader plans tomorrow's; today's stays when tomorrow's cannot be computed.
     val todayDuha = duhaOn(today)
     val tomorrowDuha = if (todayDuha != null && now >= todayDuha.end) duhaOn(today.plusDays(1)) else null
@@ -138,7 +134,7 @@ private data class NightCandidate(
     val ended: Boolean,
 )
 
-private fun nightWindow(
+internal fun nightWindow(
     date: LocalDate,
     evening: PrayerDay?,
     morning: PrayerDay?,

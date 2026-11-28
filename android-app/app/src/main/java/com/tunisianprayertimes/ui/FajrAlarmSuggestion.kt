@@ -28,6 +28,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -72,6 +73,7 @@ import com.tunisianprayertimes.WakeMainAlarmMode
 import com.tunisianprayertimes.WakePlaybackOptions
 import com.tunisianprayertimes.WakeUpCheckStep
 import com.tunisianprayertimes.WakeUpCheckType
+import com.tunisianprayertimes.wake.wakeAlarmAccess
 import com.tunisianprayertimes.ui.theme.Gold
 import com.tunisianprayertimes.ui.theme.GoldLight
 import com.tunisianprayertimes.ui.theme.GreenPrimary
@@ -224,6 +226,7 @@ internal fun FajrAlarmStartOption(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(shape)
             .background(GreenPrimary)
             .clickable(role = Role.Button, onClick = onClick)
@@ -244,25 +247,13 @@ internal fun FajrAlarmStartOption(
                 modifier = Modifier.size(20.dp),
             )
         }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.wake_fajr_suggestion_row),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-            )
-            Text(
-                text = stringResource(R.string.wake_fajr_suggestion_start_subtitle),
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                color = Color.White.copy(alpha = 0.85f),
-            )
-        }
+        Text(
+            text = stringResource(R.string.wake_fajr_suggestion_row),
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+        )
         Icon(
             painter = painterResource(R.drawable.ic_add),
             contentDescription = null,
@@ -432,6 +423,7 @@ private fun FajrPersistenceOption(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(shape)
             .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .background(if (selected) GreenPrimary.copy(alpha = 0.10f) else Color.White)
@@ -457,12 +449,14 @@ private fun FajrPersistenceOption(
                 fontWeight = FontWeight.Bold,
                 color = if (selected) GreenPrimaryDark else TextDark,
             )
-            Text(
-                text = body,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                color = if (selected) GreenPrimaryDark.copy(alpha = 0.80f) else TextMuted,
-            )
+            if (selected) {
+                Text(
+                    text = body,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = GreenPrimaryDark,
+                )
+            }
         }
         Box(
             modifier = Modifier
@@ -538,36 +532,31 @@ private fun isSameDay(firstMillis: Long, secondMillis: Long): Boolean {
         first.get(Calendar.DAY_OF_YEAR) == second.get(Calendar.DAY_OF_YEAR)
 }
 
-/** The level's name, «لطيف» to «صارم», for a line that recalls the choice. */
-internal fun FajrAlarmPersistence.title(context: android.content.Context): String = context.getString(titleRes())
-
 /**
- * The suhoor alarm's two questions, as the Fajr alarm asks them: asked once, after which the fasting
- * notification sets the alarm in one tap. [fajrAtMillis] is the night's Fajr for the preview, or null when only
- * the choice is changed. Tonight’s alarm needs exact timing. The saved defaults can be edited at any time.
+ * Confirms a one-off suhoor alarm against the chosen day's Fajr. The next fasting notification can
+ * reuse these choices for its one-tap action.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SuhoorAlarmSetupSheet(
-    fajrAtMillis: Long?,
+    fajrAtMillis: Long,
     initialMinutes: Int,
     initialPersistence: FajrAlarmPersistence,
     buttonLabel: String,
     onSave: (Int, FajrAlarmPersistence) -> Unit,
     onDismiss: () -> Unit,
+    fastDayLabel: String? = null,
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
-    // Tonight, only the minutes whose ring is still ahead; the nearest to the reader's choice is preselected.
+    // Offer only rings still ahead, with the closest available choice to the saved offset.
     val minuteOptions = remember(fajrAtMillis) {
-        val all = com.tunisianprayertimes.fasting.FastingReminder.SUHOOR_MINUTES
-        fajrAtMillis?.let { com.tunisianprayertimes.fasting.FastingReminder.suhoorOptions(java.time.Instant.ofEpochMilli(it)) }
-            ?.takeIf { it.isNotEmpty() } ?: all
+        com.tunisianprayertimes.fasting.FastingReminder.suhoorOptions(java.time.Instant.ofEpochMilli(fajrAtMillis))
     }
     var minutesBefore by rememberSaveable {
-        mutableIntStateOf(if (initialMinutes in minuteOptions) initialMinutes else minuteOptions.last())
+        mutableIntStateOf(if (initialMinutes in minuteOptions) initialMinutes else minuteOptions.lastOrNull() ?: initialMinutes)
     }
     var persistence by rememberSaveable { mutableStateOf(initialPersistence) }
     var saved by remember { mutableStateOf(false) }
@@ -598,14 +587,14 @@ internal fun SuhoorAlarmSetupSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "منبه السحور",
+                text = if (fastDayLabel == null) "منبّه السحور" else "منبّه السحور يوم $fastDayLabel",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = PrayerNameColor,
                 modifier = Modifier.semantics { heading() },
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FajrSuggestionQuestion("كم دقيقة قبل الفجر يرنّ؟")
+                FajrSuggestionQuestion(stringResource(R.string.wake_fajr_suggestion_minutes_title))
                 WakeSegmentedChoice(
                     options = minuteOptions.map { minutes ->
                         stringResource(R.string.wake_editor_minutes_short, minutes)
@@ -629,7 +618,7 @@ internal fun SuhoorAlarmSetupSheet(
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (fajrAtMillis != null) {
+                if (minuteOptions.isNotEmpty()) {
                     Text(
                         text = "يرنّ الساعة ${formatClock(fajrAtMillis - minutesBefore * 60_000L)} • الفجر ${formatClock(fajrAtMillis)}",
                         fontSize = 13.sp,
@@ -637,12 +626,14 @@ internal fun SuhoorAlarmSetupSheet(
                         color = GreenPrimaryDark,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                } else {
+                    Text("فات وقت منبّه السحور.", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                 }
-                if (fajrAtMillis != null && activity != null) {
+                if (activity != null) {
                     WakeAlarmAccessNotice(activity, saved = false, awakeCheckEnabled = persistence != FajrAlarmPersistence.GENTLE)
                 }
                 Button(
-                    enabled = !saved && (fajrAtMillis == null || canRing),
+                    enabled = !saved && canRing && minutesBefore in minuteOptions,
                     onClick = {
                         saved = true
                         onSave(minutesBefore, persistence)

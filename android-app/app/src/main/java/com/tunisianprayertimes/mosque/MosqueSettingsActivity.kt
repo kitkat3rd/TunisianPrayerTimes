@@ -51,6 +51,7 @@ import com.tunisianprayertimes.SilenceStatus
 import com.tunisianprayertimes.SilenceAccessSettings
 import com.tunisianprayertimes.mosque.presence.*
 import com.tunisianprayertimes.ui.AppFontFamily
+import com.tunisianprayertimes.ui.AppInfoButton
 import com.tunisianprayertimes.ui.PrayerPlaceRequiredDialog
 import com.tunisianprayertimes.ui.PrayerSettingsDivider
 import com.tunisianprayertimes.ui.PrayerSettingsGroup
@@ -260,6 +261,7 @@ private fun MosqueSettingsScreen(
                     val saved = PrivateSilenceAreaStore.read(context)
                     val issues = if (repairOwner != null) MosqueReadiness.ownedRuleIssues(context, repairOwner)
                         else MosqueReadiness.forMode(context, currentMode, saved)
+                    if (currentMode == AutomaticSilenceMode.TIME_AND_MOSQUE) MosqueMetrics.readiness(context, issues.isEmpty())
                     val owner = repairOwner ?: if (currentMode == AutomaticSilenceMode.TIME_AND_MOSQUE || pendingCombined)
                         SilenceOwner.MOSQUE else SilenceOwner.PRAYER
                     MosqueSettingsSnapshot(
@@ -419,6 +421,11 @@ private fun MosqueSettingsScreen(
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 color = PrayerSilencePalette.PrimaryText,
             )
+            if (page == MosqueSettingsPage.Areas) {
+                AppInfoButton(stringResource(R.string.mosque_area_privacy_title), stringResource(R.string.mosque_privacy))
+            } else if (page == MosqueSettingsPage.Setup && combined && repairOwner == null) {
+                AppInfoButton(stringResource(R.string.mosque_location_accuracy_title), stringResource(R.string.mosque_provider_note))
+            }
         }
         HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
         pages.SaveableStateProvider(page.name) {
@@ -430,6 +437,7 @@ private fun MosqueSettingsScreen(
                 when (page) {
                     MosqueSettingsPage.Method -> {
                         MosqueMethodChoices(mode, Build.VERSION.SDK_INT >= 29, ::selectMode)
+                        MosqueParticipationSettings()
                         if (mode == null) Text(stringResource(R.string.mosque_invalid_mode), color = MaterialTheme.colorScheme.error)
                         if (masterRequested && !enabled) {
                             PrayerSettingsGroup {
@@ -452,7 +460,6 @@ private fun MosqueSettingsScreen(
                             PrayerSettingsGroup {
                                 PrayerSettingsLink(
                                     title = stringResource(R.string.mosque_enable_auto),
-                                    summary = stringResource(R.string.mosque_master_off),
                                     onClick = {
                                         if (PrefsManager.hasConfirmedPlace(context)) {
                                             mode?.let { context.startActivity(MosqueSettingsActivity.enableIntent(context, it)) }
@@ -471,6 +478,10 @@ private fun MosqueSettingsScreen(
                                 }),
                                 onClick = { resumeSetup = enabled; page = MosqueSettingsPage.Setup },
                             )
+                            if (combined) {
+                                PrayerSettingsDivider()
+                                MosqueBackgroundBatteryLink()
+                            }
                             PrayerSettingsDivider()
                             PrayerSettingsLink(
                                 title = stringResource(R.string.mosque_areas_title),

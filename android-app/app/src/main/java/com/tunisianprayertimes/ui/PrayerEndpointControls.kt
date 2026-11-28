@@ -96,18 +96,6 @@ internal fun EndpointRuleEditor(
                 if (target != mode) onModeSelected(target)
             },
         )
-        Text(
-            text = if (fixed) {
-                stringResource(R.string.prayer_silence_explain_fixed, resolvedClock)
-            } else if (resolvedOffset == 0) {
-                stringResource(R.string.prayer_silence_explain_follows_adhan)
-            } else {
-                endpointRelationText(resolvedOffset)
-            },
-            color = PrayerSilencePalette.SecondaryText,
-            fontSize = 13.sp,
-            lineHeight = 19.sp,
-        )
         if (fixed) {
             EndpointInlineClockInput(
                 hourValue = hourValue,

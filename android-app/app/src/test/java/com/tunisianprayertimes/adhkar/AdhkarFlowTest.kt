@@ -71,6 +71,25 @@ class AdhkarFlowTest {
         assertEquals(id, restored.state.value.lastSessionId)
         assertEquals(3, restored.state.value.sessions.getValue(id).counts["salah_istighfar"])
     }
+    @Test fun jumpingToAnItemSavesItsPositionAndPreservesProgress() {
+        val items = listOf("salah_istighfar", "salah_salam", "ya_hayyu", "salah_istighfar")
+        val id = repo.openSession(items)
+        repo.count(id, 1)
+        repo.move(id, 1)
+        repo.skipItem(id)
+        val before = repo.state.value.sessions.getValue(id)
+
+        repo.jumpToItem(id, items.last(), items.lastIndex)
+        repo.jumpToItem(id, "removed_item", 0)
+
+        DhikrRepository.clearMemoryCache()
+        val restored = DhikrRepository(context).state.value
+        val session = restored.sessions.getValue(id)
+        assertEquals(items.lastIndex, session.index)
+        assertEquals(before.counts, session.counts)
+        assertEquals(before.skippedIds, session.skippedIds)
+        assertEquals(id, restored.lastSessionId)
+    }
     @Test fun independentReadingDoesNotCompleteAnyScheduledGoal() {
         val rule = rule(3); repo.save(rule)
         val occurrence = repo.ensureOccurrence(rule, window(rule))

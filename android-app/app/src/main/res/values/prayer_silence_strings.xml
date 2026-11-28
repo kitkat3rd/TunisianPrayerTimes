@@ -39,9 +39,9 @@
     <string name="prayer_silence_saved">تم تعديل فترة الإسكات</string>
     <string name="prayer_silence_save_failed">تعذّر حفظ الإعداد، ولم يتم تغيير فترة الإسكات.</string>
 
-    <string name="prayer_silence_shared_title">إعداد موحّد لكل الصلوات</string>
-    <string name="prayer_silence_shared_body">طبّق إعدادَي بداية الإسكات ونهايته على الصلوات اليومية التي تختارها. لا يتضمن هذا الإعداد صلاة الجمعة أو صلاة العيد، ولن تتغير حالات التفعيل الفردية.</string>
-    <string name="prayer_silence_shared_select_prayers">الصلوات المتأثرة</string>
+    <string name="prayer_silence_shared_title">ضبط الإسكات لعدة صلوات</string>
+    <string name="prayer_silence_shared_body">تسري الأوقات على الصلوات اليومية التي تختارها. يبقى تشغيل الإسكات أو إيقافه مستقلًا لكل صلاة. للجمعة والعيد إعدادات منفصلة.</string>
+    <string name="prayer_silence_shared_select_prayers">الصلوات اليومية</string>
     <string name="prayer_silence_shared_start">بداية الإسكات من الأذان (دقائق)</string>
     <string name="prayer_silence_shared_end">نهاية الإسكات من الأذان (دقائق)</string>
     <string name="prayer_silence_shared_help">القيمة السالبة قبل الأذان والموجبة بعده. مثال: من -5 إلى +15 يعني إسكاتًا مدته 20 دقيقة.</string>
@@ -83,15 +83,11 @@
     <string name="prayer_silence_end_before_start_error">نهاية الإسكات يجب أن تكون بعد بدايته.</string>
     <string name="prayer_silence_shared_start_rule">بداية الإسكات</string>
     <string name="prayer_silence_shared_end_rule">نهاية الإسكات</string>
-    <string name="prayer_silence_shared_relative_help">الدقائق نسبية من وقت أذان كل صلاة: السالبة قبل الأذان والموجبة بعده.</string>
-    <string name="prayer_silence_shared_fixed_help">سيُطبَّق الوقت الثابت نفسه على الصلوات المختارة.</string>
     <string name="prayer_silence_shared_invalid_prayer">الإعداد غير صالح لصلاة %1$s.</string>
 
     <string name="prayer_editor_at_adhan">مع الأذان</string>
     <string name="prayer_editor_editing_start">تعديل بداية الإسكات · الأذان %1$s</string>
     <string name="prayer_editor_editing_end">تعديل نهاية الإسكات · الأذان %1$s</string>
-    <string name="prayer_silence_explain_follows_adhan">يتبع موعد الأذان</string>
-    <string name="prayer_silence_explain_fixed">يبقى عند %1$s حتى لو تغيّر موعد الأذان</string>
     <string name="prayer_editor_result_label">للتاريخ المعروض</string>
     <string name="prayer_editor_invalid_time">أدخل وقتاً صالحاً: الساعة من 0 إلى 23 والدقيقة من 0 إلى 59.</string>
     <string name="prayer_editor_hour_label">الساعة</string>

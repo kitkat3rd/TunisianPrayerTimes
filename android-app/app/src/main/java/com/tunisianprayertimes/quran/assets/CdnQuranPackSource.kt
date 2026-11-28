@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
-/** Packs downloaded from the quran-cdn Worker, for installs that did not come from Google Play. */
+/** The CDN source on all installs. Requests, progress and retained editions are scoped by pack name. */
 internal class CdnQuranPackSource(
     private val context: Context,
     private val layout: QuranPackLayout,
@@ -32,8 +32,8 @@ internal class CdnQuranPackSource(
     private val workManager = WorkManager.getInstance(context)
     // Bumped when files change outside WorkManager, e.g. after remove().
     private val rescans = MutableStateFlow(0)
-    // Packs whose failed download the reader removed or stopped: missing now, not failed, until fetched again.
-    private val cleared = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // Dismissing one book's failed transfer must survive restarts without pruning another book's work.
+    private val dismissed = context.getSharedPreferences("quran_pack_dismissed_failures", Context.MODE_PRIVATE)
 
     override val states: StateFlow<Map<String, QuranPackState>> =
         combine(listOf(rescans) + layout.packs.map { workManager.getWorkInfosForUniqueWorkFlow(workName(it)) }) { values ->
@@ -45,7 +45,7 @@ internal class CdnQuranPackSource(
                 val state = cdnPackState(current, work, pack.archive.bytes, metered)
                 val visible = when {
                     !current && !pack.cdnPublished -> QuranPackState(QuranPackStatus.Failed, problem = QuranDownloadProblem.Unpublished)
-                    state.status == QuranPackStatus.Failed && pack.name in cleared -> QuranPackState.Missing
+                    state.status == QuranPackStatus.Failed && dismissed.contains(pack.name) -> QuranPackState.Missing
                     else -> state
                 }
                 pack.name to if (!current && pack.kind == QuranPack.Kind.Tafsir && installer.readableDirectory(pack) != null)
@@ -63,7 +63,7 @@ internal class CdnQuranPackSource(
     override fun directory(pack: QuranPack): File? = installer.readableDirectory(pack)
 
     override fun fetch(packs: List<QuranPack>, allowMetered: Boolean) {
-        packs.forEach { cleared.remove(it.name) }
+        dismissed.edit().apply { packs.forEach { remove(it.name) } }.apply()
         packs.forEach { pack ->
             if (!pack.cdnPublished) return@forEach
             val current = states.value[pack.name]
@@ -87,10 +87,8 @@ internal class CdnQuranPackSource(
         fetch(packs.filter { states.value[it.name]?.status == QuranPackStatus.WaitingForWifi }, allowMetered = true)
 
     override fun remove(packs: List<QuranPack>) {
-        packs.forEach { cleared.add(it.name) }
+        dismissed.edit().apply { packs.forEach { putBoolean(it.name, true) } }.apply()
         packs.forEach { workManager.cancelUniqueWork(workName(it)) }
-        // Its failure is forgotten for good, not only until the app restarts.
-        workManager.pruneWork()
         scope.launch(Dispatchers.IO) {
             packs.forEach(installer::remove)
             rescans.value++
@@ -98,9 +96,8 @@ internal class CdnQuranPackSource(
     }
 
     override fun cancel(packs: List<QuranPack>) {
-        packs.forEach { cleared.add(it.name) }
+        dismissed.edit().apply { packs.forEach { putBoolean(it.name, true) } }.apply()
         packs.forEach { workManager.cancelUniqueWork(workName(it)) }
-        workManager.pruneWork()
         rescans.value++
     }
 

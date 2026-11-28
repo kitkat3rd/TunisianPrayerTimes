@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="first_quran_offline_title">القرآن دون إنترنت</string>
+    <string name="first_quran_offline_choice">اختر ما تريد حفظه على جهازك. يمكنك تنزيل المزيد لاحقًا من تبويب القرآن.</string>
+    <string name="first_quran_no_downloads">لا توجد تنزيلات معروضة حاليًا. يمكنك فتح القرآن من تبويبه.</string>
+    <string name="first_quran_pages_title">المصحف</string>
+    <string name="first_quran_pages_description">الصفحات المصوّرة برواية قالون.</string>
+    <string name="first_quran_tafsir_description">شرح موجز لمعاني الآيات.</string>
+    <string name="first_quran_available">متاح دون إنترنت</string>
+    <string name="first_quran_retained">يمكنك قراءة النسخة المحفوظة أثناء التحديث.</string>
+    <string name="first_quran_download_pages">تنزيل المصحف · %1$s</string>
+    <string name="first_quran_download_tafsir">تنزيل التفسير · %1$s</string>
+    <string name="first_quran_retry">إعادة المحاولة · %1$s</string>
+    <string name="first_quran_update">تحديث الكتاب · %1$s</string>
+    <string name="first_quran_metered">قد يستخدم التنزيل بيانات الهاتف.</string>
+    <string name="first_quran_wait_wifi">بانتظار شبكة Wi-Fi</string>
+    <string name="first_quran_wait_confirm">بانتظار تأكيد التنزيل</string>
+    <string name="first_quran_confirm_download">تأكيد التنزيل · %1$s</string>
+    <string name="first_quran_use_mobile">استخدام بيانات الهاتف · %1$s</string>
+    <string name="first_quran_stop_download">إيقاف التنزيل</string>
+    <string name="first_quran_pending">بانتظار بدء التنزيل…</string>
+    <string name="first_quran_preparing">جارٍ تجهيز الملف…</string>
+    <string name="first_quran_download_progress">جارٍ التنزيل · %1$s</string>
+    <string name="first_quran_background">يمكنك متابعة استخدام التطبيق أثناء التنزيل.</string>
+    <string name="first_quran_continue">متابعة إلى مواقيت الصلاة</string>
+</resources>

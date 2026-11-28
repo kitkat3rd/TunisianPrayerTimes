@@ -21,6 +21,6 @@ object MosqueSilenceSettings {
     internal fun saveMode(context: Context, mode: AutomaticSilenceMode, backgroundUseExplained: Boolean = false): Boolean {
         val editor = prefs(context).edit().putString("mode", mode.name)
         if (backgroundUseExplained) editor.putBoolean("background_disclosure", true)
-        return editor.commit()
+        return editor.commit().also { saved -> if (saved) MosqueMetrics.adoption(context, mode == AutomaticSilenceMode.TIME_AND_MOSQUE) }
     }
 }

@@ -663,7 +663,7 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = false) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         QiblaHeroCard(
-            locationText = qiblaLocationText(location = activeLocation, locating = locating),
+            locationText = activeLocation?.let { qiblaLocationText(location = it, locating = locating) },
             selectedMethod = qiblaMethod,
             onMethodClick = { methodSheetOpen = true },
             directionText = displayedDirectionText ?: rawDirectionText,
@@ -712,7 +712,7 @@ fun QiblaCard(placeRevision: Int, askLocation: Boolean = false) {
 
 @Composable
 private fun QiblaHeroCard(
-    locationText: String,
+    locationText: String?,
     selectedMethod: QiblaMethod,
     onMethodClick: () -> Unit,
     directionText: String,
@@ -741,21 +741,23 @@ private fun QiblaHeroCard(
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier.weight(1f),
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_location),
-                    contentDescription = null,
-                    tint = GoldLight,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = locationText,
-                    fontSize = 12.sp,
-                    color = Color.White.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center,
-                    lineHeight = 16.sp,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+                if (locationText != null) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_location),
+                        contentDescription = null,
+                        tint = GoldLight,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = locationText,
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.8f),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
             QiblaSettingsButton(selected = selectedMethod, onClick = onMethodClick)
         }
@@ -1203,20 +1205,20 @@ private fun QiblaMethodSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
         ) {
-            Text(
-                text = stringResource(R.string.qibla_method_sheet_title),
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = GreenPrimaryDark,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = stringResource(R.string.qibla_method_sheet_intro),
-                fontSize = 13.sp,
-                color = TextMuted,
-                lineHeight = 19.sp,
-            )
-            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = stringResource(R.string.qibla_method_sheet_title),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = GreenPrimaryDark,
+                    modifier = Modifier.weight(1f),
+                )
+                AppInfoButton(
+                    title = stringResource(R.string.qibla_method_info_title),
+                    text = stringResource(R.string.qibla_method_info_text),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             QiblaRoutesIllustration(routes = routes, selected = selected)
             Spacer(Modifier.height(16.dp))
             Column(
@@ -1297,18 +1299,6 @@ private fun QiblaMethodChoice(
                     QiblaStandardBadge()
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = stringResource(
-                    when (method) {
-                        QiblaMethod.GreatCircle -> R.string.qibla_method_great_circle_description
-                        QiblaMethod.RhumbLine -> R.string.qibla_method_rhumb_line_description
-                    },
-                ),
-                fontSize = 12.5.sp,
-                color = TextMuted,
-                lineHeight = 18.sp,
-            )
             if (note != null) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -1366,7 +1356,7 @@ private fun QiblaGuidanceBar(message: String, onClick: (() -> Unit)? = null) {
             .clip(shape)
             .background(QiblaNoticeBackground)
             .border(1.dp, Gold.copy(alpha = 0.35f), shape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = onClick) else Modifier)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Icon(
@@ -1384,6 +1374,14 @@ private fun QiblaGuidanceBar(message: String, onClick: (() -> Unit)? = null) {
             lineHeight = 18.sp,
             modifier = Modifier.weight(1f),
         )
+        if (onClick != null) {
+            Icon(
+                painter = painterResource(R.drawable.ic_qibla_chevron),
+                contentDescription = null,
+                tint = QiblaNoticeIcon,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -1493,9 +1491,8 @@ private fun magneticZoneMessage(magneticZone: MagneticFieldZone): QiblaBannerMes
 }
 
 @Composable
-private fun qiblaLocationText(location: QiblaLocationState?, locating: Boolean): String {
+private fun qiblaLocationText(location: QiblaLocationState, locating: Boolean): String {
     return when {
-        location == null -> stringResource(R.string.qibla_location_required)
         location.source == QiblaLocationSource.SelectedDelegation -> {
             val delegationName = location.delegationName.orEmpty()
             if (locating) {

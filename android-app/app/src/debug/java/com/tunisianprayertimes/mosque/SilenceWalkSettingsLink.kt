@@ -14,7 +14,6 @@ internal fun SilenceWalkSettingsLink() {
     PrayerSettingsDivider()
     PrayerSettingsLink(
         title = stringResource(R.string.silence_walk_title),
-        summary = stringResource(R.string.silence_walk_link),
         onClick = { context.startActivity(Intent(context, SilenceWalkActivity::class.java)) },
     )
 }

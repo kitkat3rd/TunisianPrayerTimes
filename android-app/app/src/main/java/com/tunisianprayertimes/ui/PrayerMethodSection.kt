@@ -9,17 +9,21 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -34,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -259,7 +264,6 @@ private fun PrayerMethodSheet(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
     val defaults = remember(place) { placeTimes.defaults(place) }
     val country = defaults.entries.mapNotNull(PrayerMethods::byId)
     // Only the methods followed at the place (owner, 2026-10-18): never Slovenia's in Riyadh or New York.
@@ -267,14 +271,18 @@ private fun PrayerMethodSheet(
     val today = LocalDate.now(place.zone)
     AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding().testTag("prayer_method_list")) {
-            item { SectionTitle("الشائعة في بلدك") }
-            items(country, key = { "c:" + it.id }) { m ->
-                MethodEntry(place, m, today, current.methodId == m.id, placeTimes,
-                    inferred = defaults.inferred && m.id == defaults.fallback, onPick = onPick)
+            if (country.isNotEmpty()) {
+                item { SectionTitle("الشائعة في بلدك") }
+                items(country, key = { "c:" + it.id }) { m ->
+                    MethodEntry(place, m, today, current.methodId == m.id, placeTimes,
+                        inferred = defaults.inferred && m.id == defaults.fallback, onPick = onPick)
+                }
             }
-            item { SectionTitle("طرق أخرى") }
-            items(others, key = { "o:" + it.id }) { m ->
-                MethodEntry(place, m, today, current.methodId == m.id, placeTimes, inferred = false, onPick = onPick)
+            if (others.isNotEmpty()) {
+                item { SectionTitle("طرق أخرى") }
+                items(others, key = { "o:" + it.id }) { m ->
+                    MethodEntry(place, m, today, current.methodId == m.id, placeTimes, inferred = false, onPick = onPick)
+                }
             }
             item { SectionTitle("مخصّصة") }
             item { CustomMethodEntry(place, current, placeTimes, today, onPick) }
@@ -290,13 +298,16 @@ private fun PrayerMethodSheet(
 private fun CustomMethodEntry(place: PrayerPlace.Coordinates, current: PrayerMethodChoice, placeTimes: PlaceTimes, today: LocalDate, onPick: (String) -> Unit) {
     val custom = current.custom?.takeIf { current.methodId == PrayerMethod.CUSTOM_ID }
     val day = remember(custom, today) { custom?.let { runCatching { placeTimes.day(place, current, today) }.getOrNull() } }
-    Column(Modifier.fillMaxWidth().clickable { onPick(PrayerMethod.CUSTOM_ID) }.padding(horizontal = 20.dp, vertical = 10.dp)) {
+    Column(
+        Modifier.fillMaxWidth().clickable { onPick(PrayerMethod.CUSTOM_ID) }.heightIn(min = 48.dp)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
         Text(
             "تعديل الزوايا والدقائق", fontSize = 15.sp, color = if (custom != null) GreenPrimaryDark else TextDark,
             fontWeight = if (custom != null) FontWeight.Bold else FontWeight.Normal,
         )
         if (custom != null) MethodDetails(custom, day)
-        else Text("ضمن الأقوال المعتبرة", fontSize = 12.sp, color = PrayerSilencePalette.SecondaryText)
     }
 }
 
@@ -338,9 +349,11 @@ internal fun MethodEntry(
     val mapped = remember(method.id) { runCatching { placeTimes.mapping(place, choice, today.year) }.getOrNull() }
     val chip = MethodPresentation.chip(method, place, mapped)
     Column(
-        Modifier.fillMaxWidth().clickable { onPick(method.id) }.padding(horizontal = 20.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton, onClick = { onPick(method.id) })
+            .heightIn(min = 48.dp).padding(horizontal = 20.dp, vertical = 10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = GreenPrimary))
             Text(
                 MethodPresentation.name(method.id), fontSize = 15.sp, color = if (selected) GreenPrimaryDark else TextDark,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f),
@@ -348,7 +361,7 @@ internal fun MethodEntry(
             Text(chip.labelAr, fontSize = 11.sp, color = if (chip == MethodChip.OFFICIAL) GreenPrimary else TextMuted)
         }
         MethodDetails(method, day)
-        if (inferred) Text("مقترحة بالقياس على البلد المجاور، ولم نجد بعدُ جدولًا محليًا.", fontSize = 11.sp, color = TextMuted)
+        if (inferred) Text("تقدير بحسب البلد المجاور، لغياب جدول محلي.", fontSize = 11.sp, color = TextMuted)
     }
     HorizontalDivider(color = PrayerSilencePalette.SoftBorder, modifier = Modifier.padding(horizontal = 20.dp))
 }
@@ -420,7 +433,13 @@ private fun CustomMethodSheet(base: PrayerMethod, mainlandFrance: Boolean, onSav
             Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Text("طريقة مخصّصة", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextDark)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("طريقة مخصّصة", modifier = Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                AppInfoButton(
+                    title = stringResource(R.string.prayer_method_angles_title),
+                    text = stringResource(R.string.prayer_method_angles_reference),
+                )
+            }
             Text("الفجر", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextDark, modifier = Modifier.padding(top = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = !fajrByMinutes, onClick = { fajrByMinutes = false }, label = { Text("بالزاوية") })
@@ -428,7 +447,6 @@ private fun CustomMethodSheet(base: PrayerMethod, mainlandFrance: Boolean, onSav
             }
             if (fajrByMinutes) Stepper("الدقائق", fajrMinutes, CustomMethodRanges.FAJR_MINUTES, { fajrMinutes = it })
             else AngleStepper(fajrAngle, fajrAngles) { fajrAngle = it }
-            Text("12° مسلمو فرنسا · 15° الجمعية الإسلامية لأمريكا الشمالية · 18° رابطة العالم الإسلامي ورئاسة الشؤون الدينية والمعهد الوطني للرصد الجوي · 19.5° مصر", fontSize = 11.sp, color = TextMuted)
 
             Text("العشاء", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextDark, modifier = Modifier.padding(top = 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -437,7 +455,6 @@ private fun CustomMethodSheet(base: PrayerMethod, mainlandFrance: Boolean, onSav
             }
             if (ishaByMinutes) Stepper("الدقائق", ishaMinutes, CustomMethodRanges.ISHA_MINUTES, { ishaMinutes = it })
             else AngleStepper(ishaAngle, CustomMethodRanges.ISHA_ANGLES) { ishaAngle = it }
-            Text("الشفق الأحمر من 12° إلى 17°، والشفق الأبيض 18° (قول الحنفية والمعهد الوطني للرصد الجوي)", fontSize = 11.sp, color = TextMuted)
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("العشاء ليس قبل", fontSize = 15.sp, color = TextDark, modifier = Modifier.weight(1f))
                 TextButton(onClick = {

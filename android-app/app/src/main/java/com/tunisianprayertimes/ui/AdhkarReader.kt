@@ -58,7 +58,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -83,7 +82,8 @@ import kotlin.math.sign
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun DhikrReader(
     activity: AppCompatActivity, state: DhikrState, session: DhikrSession, now: Long,
-    onDismiss: () -> Unit, onCount: (Int) -> Unit, onMove: (Int) -> Unit, onAdvance: () -> Unit,
+    onDismiss: () -> Unit, onCount: (Int) -> Unit, onMove: (Int) -> Unit,
+    onJumpToIndex: (Int) -> Unit, onAdvance: () -> Unit,
     onSkip: () -> Unit, onRemove: () -> Unit,
     onFavourite: () -> Unit, onCollections: () -> Unit,
     onEditCustom: () -> Unit, onDeleteCustom: () -> Unit,
@@ -373,7 +373,7 @@ import kotlin.math.sign
                             onActivate = ::activateDhikr,
                             sourceCountDescription = when {
                                 entry.steps.isNotEmpty() -> "تُحسب الصيغ الأربع ذكرًا واحدًا: التسبيح 33، والتحميد 33، والتكبير 33، ثم التهليل مرة واحدة."
-                                entry.custom -> "العدد الافتراضي: " + latinNumber(entry.defaultCount) + ". يمكنك تغييره عند إنشاء تذكير، وتعديل الذكر أو حذفه من قائمة الخيارات هنا."
+                                entry.custom -> "العدد الافتراضي: " + latinNumber(entry.defaultCount)
                                 occurrence != null || (reminder != null && reminder.collection == null) -> "هدف التذكير: " + latinNumber(target) + ". يمكنك تغييره دون تعديل عدد التكرار الافتراضي للذكر."
                                 else -> "عدد التكرار الافتراضي: " + latinNumber(entry.defaultCount) + ". إذا لم يحدد المصدر عددًا، فهذا العدد يساعدك على العدّ ولا يقيّد تكرار الذكر."
                             },
@@ -416,9 +416,9 @@ import kotlin.math.sign
                     // Navigation is free and circular. A single dhikr has
                     // nowhere to go: once its reminder's goal is reached, the same row quietly offers to raise it,
                     // so the counter above never moves under a counting finger.
-                    if (canRaiseGoal) Row(Modifier.fillMaxWidth().padding(top = 14.dp, start = 12.dp, end = 12.dp),
-                        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { raisingGoal = true },
+                    if (!canNavigate) Box(Modifier.fillMaxWidth().padding(top = 14.dp).heightIn(min = 48.dp),
+                        contentAlignment = Alignment.Center) {
+                        if (canRaiseGoal) TextButton(onClick = { raisingGoal = true },
                             modifier = Modifier.heightIn(min = 48.dp).testTag("adhkar_raise_goal")) {
                             DhikrIcon(R.drawable.ic_adhkar_plus, tint = p.primary, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
@@ -426,21 +426,23 @@ import kotlin.math.sign
                         }
                     } else Row(Modifier.fillMaxWidth().padding(top = 14.dp, start = 12.dp, end = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { if (!swipe.moving) onMove(-1) }, enabled = canNavigate,
+                        TextButton(onClick = { if (!swipe.moving) onMove(-1) },
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
-                            DhikrIcon(R.drawable.ic_adhkar_back, tint = if (canNavigate) p.primary else p.muted, modifier = Modifier.size(18.dp))
+                            DhikrIcon(R.drawable.ic_adhkar_back, tint = p.primary, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("السابق", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Box(Modifier.width(1.dp).height(26.dp).background(AdhkarBorder))
-                        TextButton(onClick = { if (!swipe.moving) onMove(1) }, enabled = canNavigate,
+                        TextButton(onClick = { if (!swipe.moving) onMove(1) },
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("adhkar_next_item")) {
                             Text("التالي", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.width(8.dp))
-                            DhikrIcon(R.drawable.ic_adhkar_next, tint = if (canNavigate) p.primary else p.muted, modifier = Modifier.size(18.dp))
+                            DhikrIcon(R.drawable.ic_adhkar_next, tint = p.primary, modifier = Modifier.size(18.dp))
                         }
                     }
-                    DhikrListProgress(finishedItems, currentIndex, positionLabel)
+                    DhikrListProgress(finishedItems, currentIndex, positionLabel) { index ->
+                        if (!swipe.moving) onJumpToIndex(index)
+                    }
                 }
             }
             // This dialog covers the page and its snackbars: messages raised while reading show here.
@@ -478,7 +480,6 @@ import kotlin.math.sign
         if (textSettings) AlertDialog(onDismissRequest = { textSettings = false }, title = { Text("إعدادات القراءة") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("حجم النص", color = AdhkarHeading, fontSize = 14.sp)
-                Text("يبقى تقدّمك محفوظًا عند تغيير حجم النص.", color = p.muted)
                 Slider(value = state.textSize.toFloat(), onValueChange = { onTextSize(it.toInt()) }, valueRange = 24f..40f, steps = 7)
                 MushafPassage(MushafPassages.text("basmala").orEmpty(), "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ", state.textSize.sp,
                     (state.textSize * 1.9f).sp, p.forest)
@@ -490,7 +491,7 @@ import kotlin.math.sign
         if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false },
             title = { Text("إزالة الذكر من القائمة؟") },
             text = { Text(if (session.category != null)
-                "سيُزال «" + entry.title + "» من هذه القراءة ومن مجموعة " + collectionTitle(session.category) + " فقط. سيبقى متاحًا في مكتبة الأذكار، ويمكنك إضافته إلى المجموعة لاحقًا."
+                "سيُزال «" + entry.title + "» من هذه القراءة ومن مجموعة " + collectionTitle(session.category) + "، ويبقى في المكتبة."
                 else "سيُزال «" + entry.title + "» من هذه القراءة فقط.",
                 color = p.muted) },
             confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() },
@@ -752,31 +753,37 @@ private fun ReaderToggleChip(icon: Int, description: String, label: String, tag:
 }
 
 @Composable
-private fun DhikrListProgress(finishedItems: List<Boolean>, currentIndex: Int, positionLabel: String) {
+private fun DhikrListProgress(
+    finishedItems: List<Boolean>, currentIndex: Int, positionLabel: String, onSelect: (Int) -> Unit,
+) {
     val primary = LocalAdhkarPalette.current.primary
     val done = finishedItems.count { it }
     val multiple = finishedItems.size > 1
-    Canvas(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
-        .height(8.dp).testTag("adhkar_list_progress").semantics {
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = if (multiple) 0.dp else 8.dp)
+        .height(if (multiple) 32.dp else 8.dp).testTag("adhkar_list_progress").semantics {
             progressBarRangeInfo = ProgressBarRangeInfo(done.toFloat(), 0f..finishedItems.size.toFloat())
             val completion = "تمّ " + latinNumber(done) + " من " + latinNumber(finishedItems.size)
             stateDescription = if (multiple) "$positionLabel، $completion" else completion
         }) {
-        val slotWidth = size.width / finishedItems.size
-        val gap = if (multiple) minOf(2.dp.toPx(), slotWidth / 4) else 0f
-        val segmentWidth = slotWidth - gap
-        val radius = CornerRadius(minOf(2.dp.toPx(), segmentWidth / 2))
         finishedItems.forEachIndexed { index, finished ->
             val active = multiple && index == currentIndex
-            val height = if (active) size.height else 4.dp.toPx()
-            val slot = if (layoutDirection == LayoutDirection.Rtl) finishedItems.lastIndex - index else index
-            val start = slot * slotWidth + gap / 2
             val color = when {
                 finished -> primary
                 active -> primary.copy(alpha = 0.45f)
                 else -> AdhkarRingTrack
             }
-            drawRoundRect(color, Offset(start, (size.height - height) / 2), Size(segmentWidth, height), radius)
+            val slot = Modifier.weight(1f).fillMaxHeight()
+            Canvas(if (multiple) slot.selectable(selected = active, role = Role.Button, onClick = { onSelect(index) })
+                .semantics {
+                    contentDescription = "الذكر " + latinNumber(index + 1)
+                    if (finished) stateDescription = "تمّ"
+                } else slot) {
+                val gap = if (multiple) minOf(2.dp.toPx(), size.width / 4) else 0f
+                val segmentWidth = size.width - gap
+                val height = if (active) 8.dp.toPx() else 4.dp.toPx()
+                val radius = CornerRadius(minOf(2.dp.toPx(), segmentWidth / 2))
+                drawRoundRect(color, Offset(gap / 2, (size.height - height) / 2), Size(segmentWidth, height), radius)
+            }
         }
     }
 }

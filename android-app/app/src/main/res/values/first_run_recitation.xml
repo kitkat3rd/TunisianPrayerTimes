@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="first_run_audio_title">التلاوة دون إنترنت</string>
+    <string name="first_run_audio_description">سورة واحدة أو تلاوة كاملة.</string>
+    <string name="first_run_audio_choose">اختيار قارئ</string>
+    <string name="first_run_audio_change">تغيير الاختيار</string>
+    <string name="first_run_audio_reciters">اختر القارئ</string>
+    <string name="first_run_audio_full">القرآن كاملًا</string>
+    <string name="first_run_audio_single">سورة واحدة</string>
+    <string name="first_run_audio_search">اسم السورة أو رقمها</string>
+    <string name="first_run_audio_clear">مسح البحث</string>
+    <string name="first_run_audio_empty">لا توجد سورة تطابق بحثك.</string>
+    <string name="first_run_audio_surah">سورة %1$s</string>
+    <string name="first_run_audio_choice">%1$s بصوت %2$s</string>
+    <string name="first_run_audio_companions">تُنزَّل هذه السورة%1$s.</string>
+    <string name="first_run_audio_close">إغلاق</string>
+    <string name="first_run_audio_back">تغيير القارئ</string>
+    <string name="first_run_audio_available">متاحة للاستماع دون إنترنت</string>
+    <string name="first_run_audio_download">تنزيل · %1$s</string>
+    <string name="first_run_audio_retry">إعادة التنزيل (%1$s)</string>
+    <string name="first_run_audio_metered">أنت على شبكة محدودة البيانات. يُفضَّل تنزيل التلاوة الكاملة عبر Wi-Fi.</string>
+    <string name="first_run_audio_progress">جارٍ تنزيل التلاوة · %1$s</string>
+    <string name="first_run_audio_preparing">جارٍ تجهيز التلاوة للاستماع…</string>
+</resources>

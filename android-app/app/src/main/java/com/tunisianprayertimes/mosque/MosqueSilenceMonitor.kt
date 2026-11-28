@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.location.Location
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Settings
 import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.SilenceScheduler
@@ -24,7 +25,7 @@ data class MosqueObservationPlan(val token: String, val endElapsed: Long, val de
     val generation: Long = 0, val providerEnd: Long = endElapsed) {
     internal val intervalMillis: Long get() = when {
         !highAccuracy -> 60_000L
-        state == PresenceState.ACQUIRING -> ARRIVAL_FIX_INTERVAL_MILLIS
+        state == PresenceState.ACQUIRING || state == PresenceState.ENTERING -> ARRIVAL_FIX_INTERVAL_MILLIS
         else -> 5_000L
     }
 }
@@ -32,6 +33,8 @@ data class MosqueObservationPlan(val token: String, val endElapsed: Long, val de
 /** Production authority: actual planner intervals, never the future-prayer/45-minute bridge lookup. */
 object MosqueSilenceMonitor {
     private var recoveryDone = false
+    // Only a successful AlarmManager call in this process can establish this value.
+    private var armedDeadline: Long? = null
     private fun prefs(context: Context) = context.getSharedPreferences("mosque_presence", Context.MODE_PRIVATE)
     private fun boot(context: Context) = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1).toString()
 
@@ -51,6 +54,7 @@ object MosqueSilenceMonitor {
 
     /** Stable prayer/day suppression survives the legacy place-change dismissal pruning. */
     fun recordDismissals(context: Context, occurrences: Collection<String>) = synchronized(SilenceCoordinator.serial) {
+        MosqueMetrics.dismiss(context, occurrences)
         val today = SilenceScheduler.now().atZone(com.tunisianprayertimes.PrayerTimesRepository.place(context).zone).toLocalDate()
         val state = prefs(context)
         val kept = (state.getStringSet("dismissed_occurrences", emptySet()).orEmpty() + occurrences).filter { key ->
@@ -72,6 +76,7 @@ object MosqueSilenceMonitor {
                 AdaptiveMosqueMonitor.reconcile(app, canStart, deliberate, burst, transition)
             }
         }
+        MosqueMetrics.finish(app, SilenceScheduler.now().toEpochMilli())
         if (plan != null && canStart) MosqueObservationService.start(app, plan.token)
         else if (plan == null) MosqueObservationService.stop(app)
     }
@@ -88,11 +93,13 @@ object MosqueSilenceMonitor {
     }
 
     internal fun stopLocked(context: Context, needsRearm: Boolean) {
+        val released = SilenceCoordinator.set(context, SilenceOwner.MOSQUE, false)
         AdaptiveMosqueMonitor.stop(context, needsRearm)
-        prefs(context).edit().remove("deadline_elapsed").commit()
-        deadlineManager(context).cancel(deadlineIntent(context))
+        if (released) {
+            deadlineManager(context).cancel(deadlineIntent(context))
+            armedDeadline = null
+        }
         MosqueObservationService.cancelNative(context)
-        SilenceCoordinator.set(context, SilenceOwner.MOSQUE, false)
         DetectionRecording.stopped(context)
     }
 
@@ -100,6 +107,9 @@ object MosqueSilenceMonitor {
         if (recoveryDone) return
         recoveryDone = true
         val state = prefs(context)
+        // No previous process can still be sampling. An accepted observation without its
+        // clean end is useful to the user, even if its prayer window ended before this launch.
+        MosqueObservationInterruptions.interrupted(context)
         // Older versions journaled a boundary-only visit by its silence start. Its samples
         // cannot be reused, and an interrupted or paused visit still needs an explicit recheck.
         if (state.contains("coverage_start")) {
@@ -122,7 +132,7 @@ object MosqueSilenceMonitor {
 
     fun environmentChanged(context: Context, failed: Boolean = false) {
         synchronized(SilenceCoordinator.serial) {
-            if (failed) AdaptiveMosqueMonitor.failedStart(context)
+            if (failed) AdaptiveMosqueMonitor.failedStart(context, serviceLost = false)
             stopLocked(context, needsRearm = false)
         }
         // No implicit location start after edits/settings changes; the screen offers an explicit recheck.
@@ -144,14 +154,28 @@ object MosqueSilenceMonitor {
     private fun deadlineIntent(context: Context) = PendingIntent.getBroadcast(context, 81_201,
         Intent(context, MosqueControlReceiver::class.java).setAction(MosqueControlReceiver.DEADLINE),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    internal fun armDeadline(context: Context, elapsed: Long) {
-        val state = prefs(context)
-        if (state.getLong("deadline_elapsed", -1) == elapsed) return
+    internal fun deadlineDelivered(context: Context) {
+        synchronized(SilenceCoordinator.serial) { armedDeadline = null }
+        reconcile(context)
+    }
+
+    internal fun armDeadline(context: Context, elapsed: Long): Boolean {
         val manager = deadlineManager(context)
-        if (Build.VERSION.SDK_INT >= 31 && !manager.canScheduleExactAlarms()) return
-        try {
+        return try {
+            if (Build.VERSION.SDK_INT >= 31 && !manager.canScheduleExactAlarms()) {
+                armedDeadline = null
+                return false
+            }
+            // A live earlier wake can reevaluate the visit. Keep it in place while later fixes
+            // extend support, rather than continually pushing the safety alarm into the future.
+            val armed = armedDeadline
+            if (armed != null && armed > SystemClock.elapsedRealtime() && armed <= elapsed) return true
             manager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, elapsed, deadlineIntent(context))
-            state.edit().putLong("deadline_elapsed", elapsed).commit()
-        } catch (_: SecurityException) { /* Readiness will release on the next eligible callback. */ }
+            armedDeadline = elapsed
+            true
+        } catch (_: RuntimeException) {
+            armedDeadline = null
+            false
+        }
     }
 }

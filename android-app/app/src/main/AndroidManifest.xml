@@ -129,6 +129,7 @@
             android:taskAffinity=""
             android:theme="@style/Theme.TunisianPrayerTimes.Card" />
 
+        <activity android:name=".mosque.MosqueFeedbackActivity" android:exported="false" android:label="@string/mr_feedback" />
         <activity
             android:name=".mosque.MosqueSettingsActivity"
             android:exported="true"
@@ -173,6 +174,10 @@
 
         <receiver
             android:name=".fasting.FastingReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".worship.WorshipReminderReceiver"
             android:exported="false" />
 
         <receiver

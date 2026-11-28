@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
-    <application android:name=".DebugTunisianPrayerTimesApplication" tools:replace="android:name">
+    <application android:name=".DebugTunisianPrayerTimesApplication" android:networkSecurityConfig="@xml/dev_network_security" tools:replace="android:name">
         <receiver
             android:name=".mosque.trace.LatestWalkReportReceiver"
             android:exported="true"

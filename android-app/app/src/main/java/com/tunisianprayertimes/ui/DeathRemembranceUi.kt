@@ -66,6 +66,7 @@ import com.tunisianprayertimes.adhkar.DeathRemembranceTexts
 import com.tunisianprayertimes.adhkar.MushafPassages
 import com.tunisianprayertimes.quran.QuranMushafText
 import com.tunisianprayertimes.remembrance.DeathReminder
+import com.tunisianprayertimes.ui.theme.CardBorder
 import com.tunisianprayertimes.ui.theme.Gold
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
@@ -82,12 +83,11 @@ internal object RemembranceRequests {
     var sheet by mutableStateOf(false)
 }
 
-/** What the card says under the day's deed about the reminder: off, how often, or paused until when. */
+/** The enabled reminder's schedule, or the condition currently keeping it from running. */
 private fun reminderStatus(context: android.content.Context): String {
-    if (!DeathReminder.isEnabled(context)) return "نرسل إليك هذا التذكير إن شئت، في ساعة من النهار تختلف كل مرة."
-    if (!PrefsManager.canUsePlaceForAutomation(context)) return "أكّد مدينتك لتحديد ساعات النهار التي يصلك فيها التذكير."
-    DeathReminder.pausedUntil(context)?.let { return "أوقفنا التذكير، ويعود يوم ${it.dayMonth()}." }
-    return "يصلك تذكير ${DeathReminder.frequency(context).label}، في ساعة من النهار تختلف كل مرة."
+    if (!PrefsManager.canUsePlaceForAutomation(context)) return "أكّد مدينتك لتشغيل التذكير."
+    DeathReminder.pausedUntil(context)?.let { return "متوقف حتى ${it.dayMonth()}" }
+    return "${DeathReminder.frequency(context).label} · نهارًا"
 }
 
 /** Turns the reminder on, asking for notifications the first time; off at once. */
@@ -179,7 +179,6 @@ private fun RemembranceDisclosure(label: String, expanded: Boolean, onClick: () 
 @Composable
 private fun RemembranceReading(item: DeathRemembranceTexts.Remembrance) {
     var reflectionExpanded by remember(item.id) { mutableStateOf(false) }
-    Text("اقتراح لليوم", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     Text(item.headline, color = PrayerNameColor, fontSize = 18.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold,
         modifier = Modifier.fillMaxWidth().semantics { heading() })
     Text(item.deed, color = GreenPrimaryDark, fontSize = 15.sp, lineHeight = 23.sp)
@@ -275,19 +274,24 @@ internal fun DeathRemembranceCard(modifier: Modifier = Modifier) {
     val today = remember(revision) { DeathReminder.today(context) }
     val item = DeathReminder.remembranceFor(today)
     val enabled = remember(revision) { DeathReminder.isEnabled(context) }
-    val status = remember(revision) { reminderStatus(context) }
 
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(20.dp)
     Column(
         modifier
             .fillMaxWidth()
             .clip(shape)
             .background(Color.White)
-            .border(BorderStroke(1.dp, Gold.copy(alpha = 0.25f)), shape)
+            .border(BorderStroke(1.dp, CardBorder), shape)
             .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(painterResource(R.drawable.ic_hourglass), null, Modifier.size(18.dp), tint = Color(0xFF846322))
+            Text("ذكر الموت", color = Color(0xFF76581D), fontSize = 14.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.semantics { heading() })
+        }
         RemembranceReading(item)
+        HorizontalDivider(color = CardBorder)
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                 .clickable(role = Role.Button, onClickLabel = "إعدادات التذكير") { sheet = true }
@@ -295,9 +299,9 @@ internal fun DeathRemembranceCard(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                Text("التذكير", color = TextDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                if (!enabled || access.action == ReminderNotificationAction.None) {
-                    Text(status, color = TextMuted, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("إعدادات التذكير", color = GreenPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                if (enabled && access.action == ReminderNotificationAction.None) {
+                    Text(remember(revision) { reminderStatus(context) }, color = TextMuted, fontSize = 12.sp, lineHeight = 18.sp)
                 }
             }
             ReminderSwitchDivider()
@@ -336,6 +340,7 @@ private fun DeathRemembranceSheet(
     val enabled = remember(revision) { DeathReminder.isEnabled(context) }
     val frequency = remember(revision) { DeathReminder.frequency(context) }
     val pausedUntil = remember(revision) { DeathReminder.pausedUntil(context) }
+    var showReason by rememberSaveable { mutableStateOf(false) }
     AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -348,17 +353,17 @@ private fun DeathRemembranceSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text("ذكر الموت", color = PrayerNameColor, fontSize = 20.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.semantics { heading() })
-                    Text("كل يوم آية أو حديث يذكّرك بالآخرة، ومعه اقتراح لخير تقدر عليه.", color = TextMuted, fontSize = 13.sp,
-                        lineHeight = 20.sp)
-                }
+                Text("تذكير ذكر الموت", color = PrayerNameColor, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f).semantics { heading() })
+                AppInfoButton(
+                    title = "موعد التذكير",
+                    text = "يصلك التذكير دون صوت في وقت متغيّر من النهار، بعيدًا عن أوقات الصلاة وقراءتك للقرآن.",
+                )
                 Switch(checked = enabled, onCheckedChange = switch,
                     modifier = Modifier.semantics { contentDescription = "تذكير ذكر الموت" })
             }
             if (enabled) {
-                Text("كم مرة يصلك التذكير؟", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("تكرار التذكير", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DeathReminder.Frequency.entries.forEach { choice ->
                         FilterChip(
@@ -373,15 +378,12 @@ private fun DeathRemembranceSheet(
                     }
                 }
                 if (!PrefsManager.canUsePlaceForAutomation(context)) {
-                    Text("أكّد مدينتك لتحديد ساعات النهار التي يصلك فيها التذكير.", color = TextDark, fontSize = 13.sp)
+                    Text("أكّد مدينتك لتحديد ساعات النهار.", color = TextDark, fontSize = 13.sp)
                     TextButton(onClick = onPlaceRequired) { Text("اختيار المدينة") }
-                } else if (access.action == ReminderNotificationAction.None) {
-                    Text("يصلك في ساعة من النهار تختلف كل مرة، بعيدًا عن أوقات الصلاة وعن قراءتك للقرآن، ودون صوت.",
-                        color = TextMuted, fontSize = 12.sp, lineHeight = 19.sp)
                 }
                 ReminderNotificationsWarning(access, "ذكر الموت")
                 if (pausedUntil != null) {
-                    Text("أوقفنا التذكير، ويعود يوم ${pausedUntil.dayMonth()}.", color = TextDark, fontSize = 14.sp)
+                    Text("متوقف حتى ${pausedUntil.dayMonth()}", color = TextDark, fontSize = 14.sp)
                     TextButton(onClick = { DeathReminder.resume(context); changed() }) {
                         Text("استأنف التذكير", color = GreenPrimary, fontWeight = FontWeight.SemiBold)
                     }
@@ -398,13 +400,14 @@ private fun DeathRemembranceSheet(
                 }
             }
             HorizontalDivider(color = Gold.copy(alpha = 0.18f))
-            Text("لماذا نذكر الموت؟", color = PrayerNameColor, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.semantics { heading() })
-            Text(DeathRemembranceTexts.ANCHOR.text, fontFamily = AdhkarReadingFont, color = TextDark, fontSize = 15.sp,
-                lineHeight = 28.sp)
-            RemembranceSource(DeathRemembranceTexts.ANCHOR)
-            Text("نتذكّر الموت لنراجع ما نقدّمه، ونرجع إلى الله، ونحفظ حقوق الناس، ونحسن العمل فيما بقي من أعمارنا.",
-                color = TextDark, fontSize = 14.sp, lineHeight = 22.sp)
+            RemembranceDisclosure("لماذا نذكر الموت؟", showReason) { showReason = !showReason }
+            if (showReason) {
+                Text(DeathRemembranceTexts.ANCHOR.text, fontFamily = AdhkarReadingFont, color = TextDark, fontSize = 15.sp,
+                    lineHeight = 28.sp)
+                RemembranceSource(DeathRemembranceTexts.ANCHOR)
+                Text("نتذكّر الموت لنراجع ما نقدّمه، ونرجع إلى الله، ونحفظ حقوق الناس، ونحسن العمل فيما بقي من أعمارنا.",
+                    color = TextDark, fontSize = 14.sp, lineHeight = 22.sp)
+            }
         }
     }
 }

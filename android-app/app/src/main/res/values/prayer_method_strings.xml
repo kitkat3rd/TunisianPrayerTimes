@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="prayer_method_angles_title">زوايا الفجر والعشاء</string>
+    <string name="prayer_method_angles_reference">الفجر\n12° لدى مسلمي فرنسا، و15° لدى الجمعية الإسلامية لأمريكا الشمالية، و18° لدى رابطة العالم الإسلامي ورئاسة الشؤون الدينية والمعهد الوطني للرصد الجوي، و19.5° في مصر.\n\nالعشاء\nالشفق الأحمر من 12° إلى 17°، والشفق الأبيض 18° عند الحنفية والمعهد الوطني للرصد الجوي.</string>
     <!-- Prayer tab settings: entry to the prayer-time computation explainer -->
     <string name="prayer_method_entry_title">كيف تُحسب مواقيت الصلاة؟</string>
     <string name="prayer_method_entry_example_title">مثال من مواقيت تونس</string>

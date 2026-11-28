@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import android.util.AtomicFile
+import com.tunisianprayertimes.access.ReminderAccessChanges
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -121,7 +122,7 @@ enum class HifzTimesPreset(val key: String, val label: String, val times: HifzTi
     /** Once a day, after Fajr: the time of hifz and of review. */
     Once("once", "بعد الفجر فقط", HifzTimes(setOf(Prayer.FAJR))),
     /** After Fajr, Dhuhr and Isha: morning, midday and before sleep. */
-    Thrice("thrice", "3${HifzReminder.NB}أوقات في اليوم", HifzTimes(setOf(Prayer.FAJR, Prayer.DHUHR, Prayer.ISHA))),
+    Thrice("thrice", "بعد الفجر والظهر والعشاء", HifzTimes(setOf(Prayer.FAJR, Prayer.DHUHR, Prayer.ISHA))),
     Prayers("prayers", "بعد كل صلاة", HifzTimes(HifzPrayers.toSet()));
 
     companion object {
@@ -930,8 +931,7 @@ object HifzRepository {
             // Commit the reset before exposing it, so a failed write still prevents loading.
             decoded ?: emptyList<HifzPoint>().also { write(context, it) }
         } else emptyList()
-        mutablePoints.value = loadedPoints
-        loaded = true
+        publishPoints(context, loadedPoints)
     }
 
     /**
@@ -1089,8 +1089,18 @@ object HifzRepository {
         val (next, result) = block(mutablePoints.value)
         val sorted = next.sortedBy { it.verse }
         write(context, sorted)
-        mutablePoints.value = sorted
+        publishPoints(context, sorted)
         result
+    }
+
+    private fun publishPoints(context: Context, points: List<HifzPoint>) {
+        val couldChangeAccess = !loaded || mutablePoints.value.isEmpty() != points.isEmpty()
+        val wasActive = couldChangeAccess && HifzReminder.hasConfiguredNotification(context)
+        mutablePoints.value = points
+        loaded = true
+        if (couldChangeAccess && wasActive != HifzReminder.hasConfiguredNotification(context)) {
+            ReminderAccessChanges.changed()
+        }
     }
 
     private fun write(context: Context, points: List<HifzPoint>) {
@@ -1294,6 +1304,7 @@ data class HifzSettings(
         }
 
         fun write(context: Context, settings: HifzSettings) {
+            val wasActive = HifzReminder.hasConfiguredNotification(context)
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putBoolean("reminder", settings.reminder)
                 .putString("times", settings.times.encode())
@@ -1305,6 +1316,7 @@ data class HifzSettings(
                 .putInt("quiet_end_minute", settings.quietEndMinute.coerceIn(0, 1439))
                 .putInt("daily_goal", settings.dailyGoal.coerceIn(1, 50))
                 .apply()
+            if (wasActive != HifzReminder.hasConfiguredNotification(context)) ReminderAccessChanges.changed()
         }
     }
 }

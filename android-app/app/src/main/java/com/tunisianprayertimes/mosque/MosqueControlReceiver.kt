@@ -24,14 +24,14 @@ class MosqueControlReceiver : BroadcastReceiver() {
             }
             MANUAL -> intent.getStringExtra("occurrence")?.let { MosquePrayerActions.manual(context, it) }
             UNDO_MANUAL -> if (intent.getLongExtra("end", -1) == PrefsManager.getManualSilenceEndsAtMillis(context)) MosquePrayerActions.undo(context)
-            DEADLINE -> MosqueSilenceMonitor.reconcile(context)
+            DEADLINE -> MosqueSilenceMonitor.deadlineDelivered(context)
             GEOFENCE -> {
                 val token = intent.data?.lastPathSegment ?: return
                 if (!MosqueObservationService.validGeofenceToken(context, token)) return
                 if (!MosqueSilenceMonitor.canObserve(context)) { MosqueSilenceMonitor.reconcile(context); return }
                 val event = GeofencingEvent.fromIntent(intent) ?: return
                 if (event.hasError()) {
-                    MosqueObservationService.observationFailed(context)
+                    MosqueObservationService.wakeCirclesLost(context, token)
                     return
                 }
                 // ENTER, EXIT and DWELL all request fresh, window-gated evidence. EXIT never clears DND.

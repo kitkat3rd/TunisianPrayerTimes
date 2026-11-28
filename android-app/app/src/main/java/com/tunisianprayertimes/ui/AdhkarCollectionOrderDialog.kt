@@ -200,7 +200,7 @@ internal fun DhikrCollectionOrderDialog(
         title = { Text("ترتيب " + collectionTitle(category), color = AdhkarHeading, fontWeight = FontWeight.Bold) },
         text = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("اضغط مطوّلًا على الذكر، ثم اسحبه إلى الموضع الذي تريده. يُحفظ الترتيب تلقائيًا بعد كل سحب.",
+                Text("اضغط مطوّلًا واسحب لتغيير الترتيب.",
                     color = p.muted, fontSize = 13.sp, lineHeight = 21.sp)
                 LazyColumn(
                     Modifier.fillMaxWidth().heightIn(max = 360.dp)
@@ -286,23 +286,16 @@ internal fun DhikrCollectionOrderDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
-                                        Text(
-                                            text = if (isDragging) "جارٍ ترتيبه" else "الذكر " + latinNumber(index + 1),
-                                            color = if (isDragging) p.primary else p.muted,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isDragging) FontWeight.SemiBold else FontWeight.Normal,
-                                        )
-                                        Text(entry.title, color = AdhkarHeading, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
+                                    Text(latinNumber(index + 1), color = p.muted, fontSize = 12.sp)
+                                    Text(entry.title, Modifier.weight(1f), color = AdhkarHeading, fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Box(
                                         Modifier.size(44.dp)
                                             .semantics { contentDescription = "اسحب لإعادة ترتيب " + entry.title }
                                             .testTag("adhkar_drag_handle_" + entry.id),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        DhikrIcon(R.drawable.ic_adhkar_drag, "اسحب لإعادة الترتيب",
+                                        DhikrIcon(R.drawable.ic_adhkar_drag,
                                             tint = if (isDragging) p.primary else p.muted,
                                             modifier = Modifier.size(if (isDragging) 26.dp else 22.dp))
                                     }

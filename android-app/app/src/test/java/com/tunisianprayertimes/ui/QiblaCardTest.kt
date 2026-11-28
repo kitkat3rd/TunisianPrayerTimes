@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,7 +18,6 @@ import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.QiblaMethod
 import com.tunisianprayertimes.R
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,9 +63,11 @@ class QiblaCardTest {
 
         compose.onNodeWithText(context.getString(R.string.qibla_location_selected, "مدينة تونس")).assertDoesNotExist()
         compose.onNodeWithText(context.getString(R.string.qibla_degrees_value, 113.0)).assertDoesNotExist()
-        val locationRequired = compose.onAllNodesWithText(context.getString(R.string.qibla_location_required))
-            .fetchSemanticsNodes()
-        assertTrue(locationRequired.isNotEmpty())
+        val locationRequired = context.getString(R.string.qibla_location_required)
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText(locationRequired).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(locationRequired).assertExists()
     }
 
     @Test
@@ -92,6 +94,13 @@ class QiblaCardTest {
         compose.onNodeWithTag(TestTags.QIBLA_METHOD_GREAT_CIRCLE).assertIsSelected()
         // In Tunis the two methods part by about 8°, and the sheet says so before the switch.
         compose.onNodeWithText(context.getString(R.string.qibla_method_difference, 8)).assertExists()
+        val details = context.getString(R.string.qibla_method_info_text)
+        val infoLabel = context.getString(R.string.info_about_topic, context.getString(R.string.qibla_method_info_title))
+        compose.onNodeWithText(details).assertDoesNotExist()
+        compose.onNodeWithContentDescription(infoLabel).performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText(details).assertExists()
+        compose.onNodeWithText(context.getString(R.string.prayer_control_close)).performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithTag(TestTags.QIBLA_METHOD_GREAT_CIRCLE).assertIsSelected()
         // The sheet has a window of its own, which Robolectric's injected touches do not reach: the choice is made
         // through its click action, as TalkBack makes it.
         compose.onNodeWithTag(TestTags.QIBLA_METHOD_RHUMB_LINE).performSemanticsAction(SemanticsActions.OnClick)

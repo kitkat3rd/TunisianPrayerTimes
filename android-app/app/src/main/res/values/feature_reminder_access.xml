@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_reminder_app_notifications">اسمح بإشعارات التطبيق حتى يظهر التنبيه.</string>
+    <string name="access_reminder_channel_notifications">فعّل إشعارات هذه الفئة من إعدادات الإشعارات.</string>
+    <string name="access_adhan_warning_exact">يحتاج التنبيه المسبق للأذان إلى إذن التنبيهات الدقيقة.</string>
+    <string name="access_adhkar_vibrating">تذكيرات الأذكار مع اهتزاز</string>
+    <string name="access_adhkar_quiet">تذكيرات الأذكار دون اهتزاز</string>
+    <string name="access_fasting_reminder">تذكير الصيام</string>
+    <string name="access_death_reminder">تذكير بقِصَر الحياة</string>
+    <string name="access_hifz_reminder">تذكير بمراجعة القرآن</string>
+</resources>

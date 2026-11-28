@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -186,6 +187,11 @@ class HifzSheetsRestorationTest {
                 }
             }
         }
+        val policy = compose.onNodeWithText("يشمل الحدّ اليومي كل المواضع", substring = true)
+        policy.assertDoesNotExist()
+        compose.onNodeWithContentDescription("معلومات عن مواعيد تذكير المراجعة").performScrollTo().performClick()
+        policy.assertExists()
+        compose.onNodeWithText("إغلاق").performClick()
         compose.onNodeWithTag("hifz_daily_alert_limit_more").performScrollTo().performClick()
         assertEquals(4, settings.value.dailyAlertLimit)
         compose.onNodeWithTag("hifz_quiet_hours").performScrollTo().performClick()

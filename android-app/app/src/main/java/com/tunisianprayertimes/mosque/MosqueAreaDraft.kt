@@ -16,6 +16,7 @@ internal data class AreaDraft(
     val mode: BoundaryEditMode = BoundaryEditMode.VIEW,
     val fixedPolygons: List<SilencePolygon> = emptyList(),
     val cataloguePin: GeoPoint? = null,
+    val catalogueBase: String? = null,
 ) {
     fun withPolygons(polygons: List<SilencePolygon>): AreaDraft {
         val exterior = polygons.singleOrNull()?.takeIf { it.holes.isEmpty() }?.exterior

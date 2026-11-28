@@ -3,9 +3,11 @@ package com.tunisianprayertimes.remembrance
 import android.Manifest
 import android.app.AlarmManager
 import android.app.Application
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.MainTabNavigation
 import com.tunisianprayertimes.PrefsManager
@@ -91,6 +93,27 @@ class ReminderNotificationDeliveryTest {
         notifications.cancel(posted.id)
         DeathReminder.refresh(app, moment.at.plusSeconds(2))
         assertTrue(notifications.activeNotifications.isEmpty())
+    }
+
+    @Test fun addingSuhoorAheadOfTheEveArmsTheAlarmWithoutPostingTheReminderEarly() {
+        ShadowAlarmManager.setCanScheduleExactAlarms(true)
+        val eve = FastingReminder.eve(app, fastDay)
+        val due = requireNotNull(eve.remindAt)
+        val now = due.minusSeconds(12 * 3600L)
+        SystemClock.setCurrentTimeMillis(now.toEpochMilli())
+        val ring = requireNotNull(eve.fajr).minusSeconds(30 * 60L)
+
+        assertTrue(FastingReminder.setSuhoor(app, eve, now))
+        val alarms = shadowOf(app.getSystemService(AlarmManager::class.java))
+        assertTrue(alarms.scheduledAlarms.any { it.triggerAtTime == ring.toEpochMilli() })
+        assertTrue(notifications.activeNotifications.isEmpty())
+        assertFalse(FastingReminder.setSuhoor(app, FastingReminder.eve(app, fastDay.plusDays(4)), now))
+        assertEquals(ring, FastingReminder.scheduledSuhoor(app, now)?.ringsAt)
+
+        FastingReminder.refresh(app, due)
+        val posted = notifications.activeNotifications.single().notification
+        assertTrue(posted.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("سيرنّ منبه السحور"))
+        assertFalse(posted.actions.orEmpty().any { it.title == "أيقظني للسحور" })
     }
 
     @Test fun restoringAppNotificationsAfterDaylightDoesNotReplayLifeReminder() {

@@ -3,11 +3,11 @@ package com.tunisianprayertimes.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.AnalyticsTracker
@@ -50,10 +51,11 @@ import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.place.PrayerPlace
 import com.tunisianprayertimes.ui.theme.BgCream
+import com.tunisianprayertimes.ui.theme.CardBg
+import com.tunisianprayertimes.ui.theme.CardBorder
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
 import com.tunisianprayertimes.ui.theme.TextDark
-import com.tunisianprayertimes.ui.theme.TextMuted
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -216,93 +218,116 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
         lookup == LocationLookup.Unavailable -> stringResource(R.string.first_run_unavailable_title)
         else -> stringResource(R.string.first_run_place_title)
     }
-    val description = when {
-        matchDetails != null -> matchDetails
-        lookup == LocationLookup.Denied || lookup == LocationLookup.Unavailable -> stringResource(R.string.first_run_manual_help)
-        PrefsManager.isFirstRunSilencePending(context) -> stringResource(R.string.first_run_place_description)
-        else -> stringResource(R.string.first_run_location_only_description)
-    }
-
-    Box(
-        Modifier.fillMaxSize().background(BgCream).safeDrawingPadding()
-            .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 32.dp),
-        contentAlignment = Alignment.Center,
+    val hasLookupResult = currentMatch != null || denied || lookup == LocationLookup.Unavailable
+    BoxWithConstraints(
+        Modifier.fillMaxSize().background(BgCream).safeDrawingPadding(),
+        contentAlignment = Alignment.TopCenter,
     ) {
-        Column(Modifier.widthIn(max = 456.dp).fillMaxWidth(), horizontalAlignment = Alignment.Start) {
-            Box(
-                Modifier.size(60.dp).background(GreenPrimary.copy(alpha = 0.10f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(R.drawable.ic_location), contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(32.dp))
-            }
-            Spacer(Modifier.height(22.dp))
-            Column(Modifier.semantics(mergeDescendants = true) {
-                heading()
-                if (currentMatch != null || lookup == LocationLookup.Denied || lookup == LocationLookup.Unavailable) {
-                    liveRegion = LiveRegionMode.Polite
+        Column(
+            Modifier.widthIn(max = 504.dp).fillMaxWidth().verticalScroll(rememberScrollState())
+                .heightIn(min = maxHeight).padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                if (hasLookupResult) {
+                    Column(
+                        Modifier.fillMaxWidth().semantics(mergeDescendants = true) {
+                            heading()
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            painterResource(if (currentMatch != null) R.drawable.ic_location else R.drawable.ic_my_location),
+                            contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(32.dp),
+                        )
+                        Text(title, fontSize = 28.sp, lineHeight = 39.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark)
+                        if (matchDetails != null) Text(matchDetails, fontSize = 18.sp, lineHeight = 28.sp, color = TextDark)
+                    }
+                } else {
+                    FirstRunHeader(
+                        title = title,
+                        description = stringResource(R.string.first_run_place_description),
+                        art = FirstRunArt.Place,
+                    )
                 }
-            }) {
-                Text(title, fontSize = 28.sp, lineHeight = 37.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark)
-                Spacer(Modifier.height(8.dp))
-                Text(description, fontSize = 17.sp, lineHeight = 26.sp, color = TextDark)
-            }
-            Spacer(Modifier.height(24.dp))
-            val surface = Modifier.fillMaxWidth().heightIn(min = 52.dp)
-            val shape = RoundedCornerShape(16.dp)
-            val primaryLabel = if (currentMatch != null) stringResource(R.string.first_run_show_times, placeName)
-                else stringResource(R.string.onboarding_location_pick)
-            if (!denied) {
-                Button(
-                    onClick = { if (currentMatch != null) select(currentMatch) else openPicker() },
-                    enabled = currentMatch == null || !resolving,
-                    modifier = surface.focusRequester(primaryFocus)
-                        .testTag(if (currentMatch != null) "onboarding_confirm_location" else "onboarding_location_pick"),
-                    shape = shape, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
-                ) { Text(primaryLabel, fontSize = 17.sp, lineHeight = 23.sp) }
-                Spacer(Modifier.height(10.dp))
-            }
-            // Android restores accessibility focus to the control that launched its permission dialog.
-            // Keep that node focusable during the dialog and let it open the manual picker after a refusal.
-            OutlinedButton(
-                onClick = { if (denied || currentMatch != null) openPicker() else locate() },
-                enabled = lookup != LocationLookup.Locating,
-                modifier = surface.focusRequester(secondaryFocus)
-                    .testTag(if (denied || currentMatch != null) "onboarding_location_pick" else "onboarding_location_locate"),
-                shape = shape, border = BorderStroke(1.dp, GreenPrimary),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (denied) GreenPrimary else Color.Transparent,
-                    contentColor = if (denied) Color.White else GreenPrimaryDark,
-                ),
-            ) {
-                val label = when {
-                    denied -> R.string.onboarding_location_pick
-                    currentMatch != null -> R.string.first_run_choose_another
-                    lookup == LocationLookup.Unavailable -> R.string.first_run_retry_location
-                    else -> R.string.first_run_use_location
+                Spacer(Modifier.height(24.dp))
+                val surface = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                val shape = RoundedCornerShape(16.dp)
+                val actionPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)
+                if (!denied) {
+                    Button(
+                        onClick = { if (currentMatch != null) select(currentMatch) else openPicker() },
+                        enabled = currentMatch == null || !resolving,
+                        modifier = surface.focusRequester(primaryFocus)
+                            .testTag(if (currentMatch != null) "onboarding_confirm_location" else "onboarding_location_pick"),
+                        shape = shape,
+                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimaryDark, contentColor = Color.White),
+                        contentPadding = actionPadding,
+                    ) {
+                        PlaceActionContent(
+                            icon = if (currentMatch != null) R.drawable.ic_check else R.drawable.ic_adhkar_search,
+                            label = if (currentMatch != null) stringResource(R.string.first_run_show_times, placeName)
+                                else stringResource(R.string.onboarding_location_pick),
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
                 }
-                Text(stringResource(label), fontSize = 16.sp, lineHeight = 23.sp)
-            }
-            if (currentMatch == null && lookup == LocationLookup.Idle && !resolving) {
-                Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.first_run_location_help), fontSize = 14.sp, lineHeight = 20.sp, color = TextMuted)
-            }
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { select(FirstRunPlace.Browse) }, enabled = selection != FirstRunPlace.Browse || preparationFailed,
-                modifier = surface.onFocusChanged { browseFocused = it.isFocused }.testTag("onboarding_browse")) {
-                Text(stringResource(R.string.first_run_browse), color = GreenPrimaryDark, fontSize = 16.sp)
-            }
-            if (resolving || preparationFailed || lookup == LocationLookup.Locating) {
-                Spacer(Modifier.height(12.dp))
-                val progress = when {
-                    preparationFailed -> stringResource(R.string.first_run_source_error)
-                    searching -> stringResource(R.string.onboarding_location_locating)
-                    else -> preparingName?.let { stringResource(R.string.first_run_preparing_city, it) }
-                        ?: stringResource(R.string.first_run_preparing)
+                // Android restores accessibility focus to the control that launched its permission dialog.
+                // Keep that node focusable during the dialog and let it open the manual picker after a refusal.
+                OutlinedButton(
+                    onClick = { if (denied || currentMatch != null) openPicker() else locate() },
+                    enabled = lookup != LocationLookup.Locating,
+                    modifier = surface.focusRequester(secondaryFocus)
+                        .testTag(if (denied || currentMatch != null) "onboarding_location_pick" else "onboarding_location_locate"),
+                    shape = shape,
+                    border = BorderStroke(1.dp, if (denied) GreenPrimaryDark else GreenPrimary.copy(alpha = 0.65f)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (denied) GreenPrimaryDark else CardBg,
+                        contentColor = if (denied) Color.White else GreenPrimaryDark,
+                    ),
+                    contentPadding = actionPadding,
+                ) {
+                    val label = when {
+                        denied -> R.string.onboarding_location_pick
+                        currentMatch != null -> R.string.first_run_choose_another
+                        lookup == LocationLookup.Unavailable -> R.string.first_run_retry_location
+                        else -> R.string.first_run_use_location
+                    }
+                    PlaceActionContent(
+                        icon = if (denied || currentMatch != null) R.drawable.ic_adhkar_search else R.drawable.ic_my_location,
+                        label = stringResource(label),
+                    )
                 }
-                Text(progress, fontSize = 15.sp, lineHeight = 22.sp, color = TextDark,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                if (preparationFailed) TextButton(onClick = { selection?.let(::select) }) {
-                    Text(stringResource(R.string.first_run_retry), color = GreenPrimaryDark)
+                if (resolving || preparationFailed || lookup == LocationLookup.Locating) {
+                    Spacer(Modifier.height(12.dp))
+                    val progress = when {
+                        preparationFailed -> stringResource(R.string.first_run_source_error)
+                        searching -> stringResource(R.string.onboarding_location_locating)
+                        else -> preparingName?.let { stringResource(R.string.first_run_preparing_city, it) }
+                            ?: stringResource(R.string.first_run_preparing)
+                    }
+                    Text(progress, fontSize = 15.sp, lineHeight = 22.sp, color = TextDark,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    if (preparationFailed) TextButton(onClick = { selection?.let(::select) }) {
+                        Text(stringResource(R.string.first_run_retry), color = GreenPrimaryDark)
+                    }
+                }
+            }
+            Column(Modifier.fillMaxWidth()) {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = CardBorder)
+                TextButton(
+                    onClick = { select(FirstRunPlace.Browse) },
+                    enabled = selection != FirstRunPlace.Browse || preparationFailed,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .onFocusChanged { browseFocused = it.isFocused }.testTag("onboarding_browse"),
+                    colors = ButtonDefaults.textButtonColors(contentColor = GreenPrimaryDark),
+                ) {
+                    Text(
+                        stringResource(R.string.first_run_browse), modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center, fontSize = 16.sp, lineHeight = 24.sp,
+                    )
                 }
             }
         }
@@ -317,6 +342,16 @@ fun OnboardingScreen(pickerRequestId: Int? = null, onFinish: () -> Unit) {
             onCity = { select(FirstRunPlace.City(it.ref.id, PlaceResolution.catalogueLabel(it))) },
         )
     }
+}
+
+@Composable
+private fun RowScope.PlaceActionContent(@DrawableRes icon: Int, label: String) {
+    Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(22.dp))
+    Spacer(Modifier.width(12.dp))
+    Text(
+        label, modifier = Modifier.weight(1f), textAlign = TextAlign.Start,
+        fontSize = 17.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
+    )
 }
 
 @Composable

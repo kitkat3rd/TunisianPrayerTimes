@@ -16,7 +16,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -94,7 +93,6 @@ internal fun PrayerSilenceEditorSheet(
 ) {
     val focusManager = LocalFocusManager.current
     val start = endpoint == SilenceEndpoint.START
-    var showWindowHelp by rememberSaveable { mutableStateOf(false) }
     val initialResolved = remember(anchor, config, endpoint) { silenceEndsAt(anchor, config).instantFor(endpoint) }
     val initialOffset = anchor.offsetAt(initialResolved)
     val initialClock = initialResolved.atZone(anchor.displayZone)
@@ -172,26 +170,24 @@ internal fun PrayerSilenceEditorSheet(
                     .padding(horizontal = 20.dp).padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = stringResource(R.string.prayer_editor_endpoint_title, endpointTitle, prayerName),
-                        color = GreenPrimaryDark,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        stringResource(R.string.prayer_editor_daily_note),
-                        color = TextMuted,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                    )
-                    TextButton(onClick = { showWindowHelp = !showWindowHelp }) {
-                        Text(stringResource(if (showWindowHelp) R.string.prayer_editor_hide_help else R.string.prayer_editor_window_help))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.prayer_editor_endpoint_title, endpointTitle, prayerName),
+                            color = GreenPrimaryDark,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            stringResource(R.string.prayer_editor_daily_note),
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                        )
                     }
-                    if (showWindowHelp) Text(
-                        stringResource(R.string.prayer_editor_window_help_detail),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextMuted,
+                    AppInfoButton(
+                        title = stringResource(R.string.prayer_editor_window_help),
+                        text = stringResource(R.string.prayer_editor_window_help_detail),
                     )
                 }
                 EndpointRuleEditor(

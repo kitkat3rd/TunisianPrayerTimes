@@ -1,6 +1,7 @@
 package com.tunisianprayertimes.adhkar
 
 import com.tunisianprayertimes.PrefsManager
+import com.tunisianprayertimes.access.ReminderAccessChanges
 import android.content.Context
 import android.content.SharedPreferences
 import java.time.Instant
@@ -567,8 +568,14 @@ class DhikrRepository(context: Context) {
         val size = session.itemIds.size
         if (size <= 1 || direction == 0) return@update old
         val index = ((session.index + direction) % size + size) % size
-        val updated = session.copy(index = index, updatedAtMillis = System.currentTimeMillis())
-        old.copy(sessions = old.sessions + (sessionId to updated), lastSessionId = sessionId)
+        old.withReadingPosition(session, index)
+    }
+
+    fun jumpToItem(sessionId: String, itemId: String, position: Int) = update { old ->
+        val session = old.sessions[sessionId] ?: return@update old
+        val index = if (session.itemIds.getOrNull(position) == itemId) position else session.itemIds.indexOf(itemId)
+        if (index < 0 || index == session.index) return@update old
+        old.withReadingPosition(session, index)
     }
 
     /** A tap on a completed dhikr continues with the next unfinished one, wrapping at the end. */
@@ -581,8 +588,12 @@ class DhikrRepository(context: Context) {
             .map { (session.index + it).mod(size) }
             .firstOrNull { !old.isItemFinished(session, session.itemIds[it]) }
             ?: (session.index + 1).mod(size)
+        old.withReadingPosition(session, index)
+    }
+
+    private fun DhikrState.withReadingPosition(session: DhikrSession, index: Int): DhikrState {
         val updated = session.copy(index = index, updatedAtMillis = System.currentTimeMillis())
-        old.copy(sessions = old.sessions + (sessionId to updated), lastSessionId = sessionId)
+        return copy(sessions = sessions + (session.id to updated), lastSessionId = session.id)
     }
 
     /** Marks the current item skipped and advances; skipped items no longer block list completion. */
@@ -666,16 +677,24 @@ class DhikrRepository(context: Context) {
         val state = MutableStateFlow(read())
         fun legacyCount(key: String): Int = runCatching { JSONObject(prefs.getString("progress", "{}") ?: "{}").optInt(key, 0) }.getOrDefault(0)
         fun write(value: DhikrState) {
+            val previous = state.value
             check(prefs.edit().putString("state_v2", value.toJson().toString()).commit()) { "Could not save Adhkar state" }
             state.value = value
+            // Counts and reading progress keep all four settings collections by reference.
+            val configurationChanged = previous.reminders !== value.reminders || previous.customEntries !== value.customEntries ||
+                previous.collectionAdditions !== value.collectionAdditions || previous.collectionRemovals !== value.collectionRemovals
+            if (configurationChanged && previous.enabledReminderVibrations() != value.enabledReminderVibrations()) {
+                ReminderAccessChanges.changed()
+            }
         }
         private fun read(): DhikrState {
             val json = prefs.getString("state_v2", null)
             if (json != null) return dhikrStateFromJson(JSONObject(json))
             val legacyRules = runCatching { JSONArray(prefs.getString("reminders", "[]") ?: "[]") }.getOrDefault(JSONArray())
-            return DhikrState(reminders = legacyRules.objects().mapNotNull {
+            val reminders = legacyRules.objects().mapNotNull {
                 runCatching { dhikrReminderFromJson(it).withDailyTahlilEntry() }.getOrNull()
-            }.filter { DhikrCatalog.find(it.dhikrId) != null })
+            }.filter { DhikrCatalog.find(it.dhikrId) != null }
+            return DhikrState(reminders = reminders.withEveningReminderDelay())
         }
     }
     companion object {
@@ -714,7 +733,25 @@ private fun JSONObject.countMap(key: String): Map<String, Int> = optJSONObject(k
 private fun DhikrReminder.withDailyTahlilEntry(): DhikrReminder =
     if (collection == null && dhikrId == "salah_tahlil" && targetCount >= 100)
         copy(dhikrId = DhikrCatalog.DAILY_TAHLIL_ID) else this
+
+/** Move the old preset's window while preserving its occurrence history and other settings. */
+private fun List<DhikrReminder>.withEveningReminderDelay(): List<DhikrReminder> {
+    val oldWindow = DhikrInterval(DhikrTime(DhikrTimeKind.ASR), DhikrTime(DhikrTimeKind.MAGHRIB)).scheduleIdentity()
+    val newWindow = oldWindow.copy(start = oldWindow.start.copy(offsetMinutes = EVENING_ADHKAR_REMINDER_DELAY_MINUTES))
+    fun DhikrReminder.eveningWindow(): DhikrInterval? {
+        if (collection != DhikrCategory.EVENING || endNextDay == true) return null
+        return intervals().singleOrNull()?.copy(endNextDay = false)?.scheduleIdentity()
+    }
+
+    return map { rule ->
+        if (rule.eveningWindow() == oldWindow && none { it.daysOfWeek == rule.daysOfWeek && it.eveningWindow() == newWindow })
+            rule.copy(start = rule.start.copy(offsetMinutes = EVENING_ADHKAR_REMINDER_DELAY_MINUTES))
+        else rule
+    }
+}
+
 private fun DhikrState.toJson(): JSONObject = JSONObject()
+    .put("eveningReminderDelayApplied", true)
     .put("rules", JSONArray(reminders.map { it.toJson() }))
     .put("custom", JSONArray(customEntries.map { it.toJson() }))
     .put("collectionAdditions", collectionAdditions.toJson())
@@ -740,8 +777,10 @@ private fun dhikrStateFromJson(json: JSONObject): DhikrState {
         runCatching { dhikrReminderFromJson(it) }.getOrNull()
     }
     val migratedDailyRuleIds = savedRules.filter { it.withDailyTahlilEntry() != it }.map { it.id }.toSet()
+    val rulesWithCurrentTiming = if (json.optBoolean("eveningReminderDelayApplied")) savedRules
+        else savedRules.withEveningReminderDelay()
     // A whole-collection rule saved with a personal dhikr as its representative no longer depends on it.
-    val reminders = savedRules.map(DhikrReminder::withDailyTahlilEntry).map { rule ->
+    val reminders = rulesWithCurrentTiming.map(DhikrReminder::withDailyTahlilEntry).map { rule ->
         rule.collection?.takeIf { DhikrCatalog.find(rule.dhikrId) == null }
             ?.let { rule.copy(dhikrId = collectionRepresentative(it)) } ?: rule
     }.filter { it.dhikrId in knownIds }

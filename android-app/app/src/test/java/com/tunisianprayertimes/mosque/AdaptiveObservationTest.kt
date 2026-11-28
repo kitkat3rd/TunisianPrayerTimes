@@ -52,6 +52,7 @@ class AdaptiveObservationTest {
 
     @Test fun validButImpreciseAndFarReadingsDoNotSilenceAtHome() {
         val m = AdaptiveObservation(areas(),0)
+        m.wakeCoverageUntil = 300_000
         m.period(true,0); m.start(0); m.accepted(m.generation,0)
         m.observe(fix(30_000, 2_000.0, 10.0, 160.0),30_000)
         m.tick(240_000); assertFalse(m.desired); assertFalse(m.fallback)
@@ -64,7 +65,9 @@ class AdaptiveObservationTest {
         m.period(true,60_000); assertTrue(m.desired)
         m.locationDisabled(false,61_000); m.accepted(m.generation,61_000)
         m.observe(fix(62_000,1_000.0,0.0,70.0),62_000); assertTrue(m.desired)
-        m.observe(fix(82_000,1_000.0,0.0,70.0),82_000); assertFalse(m.desired)
+        m.observe(fix(105_000,1_000.0,0.0,70.0),105_000); assertTrue(m.desired)
+        m.observe(fix(115_000,1_000.0,0.0,70.0),115_000); assertTrue(m.desired)
+        m.observe(fix(125_000,1_000.0,0.0,70.0),125_000); assertFalse(m.desired)
     }
 
     @Test fun validUncertainRecoveryExpiresAndPreWindowTimeoutMustBeRechecked() {

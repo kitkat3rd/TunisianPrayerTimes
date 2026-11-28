@@ -1,7 +1,10 @@
 import org.gradle.api.GradleException
 import com.android.build.api.artifact.SingleArtifact
-import groovy.json.JsonSlurper
 import java.util.Properties
+import java.net.URI
+import java.security.MessageDigest
+import java.security.DigestInputStream
+import java.io.OutputStream
 
 val unsignedRelease = providers.gradleProperty("unsignedRelease")
     .map { it.toBooleanStrict() }
@@ -31,8 +34,24 @@ plugins {
     id("com.google.gms.google-services")
     // Bundles data/prayer-formula and data/official-islamic-dates as assets.
     id("tunisianprayertimes.bundled-data")
-    // Ships the Quran's recitations and page scans as Play Asset Delivery packs.
+    // Google Play delivers Quran page scans, selected recitations and the five tafsir books on demand.
     id("tunisianprayertimes.quran-assets")
+}
+
+// A release is production unless the Play beta artifact was explicitly requested.
+val mosqueBeta = providers.gradleProperty("mosquePlayBeta").map(String::toBooleanStrict).orElse(false)
+val reportOrigin = providers.gradleProperty("mosqueReportsOrigin").orElse("https://mosque-silencing-reports.pages.dev").get().trimEnd('/')
+val devReportOrigin = if (providers.gradleProperty("mosqueDevLocal").orNull == "true") "http://127.0.0.1:8788" else reportOrigin
+run {
+    val uri = URI.create(reportOrigin)
+    require(uri.scheme == "https" && uri.host != null && uri.rawUserInfo == null &&
+        uri.rawPath.isEmpty() && uri.rawQuery == null && uri.rawFragment == null) { "mosqueReportsOrigin must be an HTTPS origin" }
+}
+val catalogueDigest = MessageDigest.getInstance("SHA-256").let { digest ->
+    project.file("src/main/assets/mosques/tunisia-mosques.geojson").inputStream().use { input ->
+        DigestInputStream(input, digest).use { it.transferTo(OutputStream.nullOutputStream()) }
+    }
+    digest.digest().take(8).joinToString("") { "%02x".format(it) }
 }
 
 android {
@@ -54,6 +73,7 @@ android {
     defaultConfig {
         applicationId = "com.tunisianprayertimes"
         minSdk = 26
+        buildConfigField("String", "MOSQUE_CATALOG_VERSION", "\"" + catalogueDigest + "\"")
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 155
@@ -73,8 +93,12 @@ android {
         debug {
             signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".dev"
+            buildConfigField("String", "MOSQUE_REPORT_CHANNEL", "\"dev\"")
+            buildConfigField("String", "MOSQUE_REPORT_ORIGIN", "\"" + devReportOrigin + "\"")
         }
         release {
+            buildConfigField("String", "MOSQUE_REPORT_CHANNEL", if (mosqueBeta.get()) "\"beta\"" else "\"production\"")
+            buildConfigField("String", "MOSQUE_REPORT_ORIGIN", "\"" + reportOrigin + "\"")
             isMinifyEnabled = true
             isShrinkResources = true
             signingConfig = if (unsignedRelease) null else signingConfigs.getByName("release")
@@ -100,6 +124,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     androidResources {
@@ -136,103 +161,37 @@ abstract class GenerateTafsirAssets : Exec() {
     abstract val assetsDirectory: DirectoryProperty
 }
 
-// Private previews and cleared release books have distinct generated source directories.
-// A checkout without local texts can still build debug or an explicitly text-free APK.
+// Every base contains the same public catalog. Play supplies on-demand asset packs; the APK uses the CDN.
 val tafsirRepo = rootProject.projectDir.parentFile
-val tafsirScripts = tafsirRepo.resolve("scripts/quran_tafsir")
+val tafsirTool = tafsirRepo.resolve("scripts/quran_tafsir/packaging.py")
 val tafsirStage = tafsirRepo.resolve("scripts/quran-data/tafsir-stage.json")
+val tafsirCatalog = tafsirRepo.resolve("scripts/quran-data/tafsir-catalog.json")
+val quranPackCatalog = layout.projectDirectory.file("src/main/assets/quran/packs.json")
 val tafsirPython = providers.gradleProperty("tafsirPython")
     .orElse(if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3")
-val researchDirectory = tafsirRepo.resolve("work/tafsir-research")
-val clearedAssets = providers.gradleProperty("tafsirReleaseAssets").orElse(providers.environmentVariable("TAFSIR_RELEASE_ASSETS"))
-    .orElse(tafsirRepo.resolve("work/tafsir-release/compiled/assets").absolutePath)
-val withoutTafsir = providers.gradleProperty("withoutTafsir").map { it.toBooleanStrict() }.orElse(false)
-val localCatalog = rootProject.file(clearedAssets.get()).resolve("quran/tafsir/catalog.json")
-val tafsirStageMetadata = JsonSlurper().parse(tafsirStage) as Map<*, *>
-val hasTafsirStage = (tafsirStageMetadata["books"] as List<*>).isNotEmpty()
-val hasTafsirPack = (tafsirStageMetadata["files"] as Map<*, *>).containsKey("quran_tafsir_ashur/assets/quran/tafsir/ashur.db")
-val approvedDebug = providers.gradleProperty("tafsirApprovedDebug").map { it.toBooleanStrict() }
-    .orElse(hasTafsirStage && localCatalog.isFile)
-// APKs installed outside Play can read the same approved database without a first network request.
-// Asset delivery bundles carry that database in the on-demand module instead.
-val releaseCommands = gradle.startParameter.taskNames.map { it.substringAfterLast(':').lowercase() }
-val wantsReleaseBundle = releaseCommands.any { it == "bundle" || (it.contains("bundle") && it.contains("release")) }
-val wantsReleaseApk = releaseCommands.any { it in setOf("assemble", "assemblerelease", "installrelease", "packagerelease", "verifyreleasetafsirapk", "build") }
-val requestedStandalone = providers.gradleProperty("tafsirStandalone").map { it.toBooleanStrict() }
-val standaloneTafsir = requestedStandalone.orElse(!wantsReleaseBundle)
-if (hasTafsirPack && !withoutTafsir.get() && wantsReleaseBundle && (standaloneTafsir.get() || (wantsReleaseApk && !requestedStandalone.isPresent))) {
-    throw GradleException("Build the standalone APK with assembleRelease and the on-demand Play bundle with bundleRelease in separate Gradle invocations.")
+
+val prepareTafsirCatalog = tasks.register<GenerateTafsirAssets>("prepareTafsirCatalog") {
+    assetsDirectory.set(layout.buildDirectory.dir("generated/tafsirCatalog/assets"))
+    inputs.files(tafsirTool, tafsirStage, tafsirCatalog, quranPackCatalog)
+    commandLine(tafsirPython.get(), tafsirTool, "--stage", tafsirStage, "prepare",
+        "--catalog", tafsirCatalog, "--packs", quranPackCatalog.asFile, "--output", assetsDirectory.get().asFile)
 }
 
 androidComponents.onVariants { variant ->
-    if (variant.buildType == "debug" && !approvedDebug.get() && researchDirectory.isDirectory) {
-        val preview = tasks.register<GenerateTafsirAssets>("prepareDebugTafsirPreview") {
-            assetsDirectory.set(layout.buildDirectory.dir("generated/tafsirPreview/assets"))
-            workingDir(tafsirRepo)
-            inputs.files(fileTree(tafsirScripts) { include("preview*.py") })
-            inputs.file(tafsirRepo.resolve("scripts/mushaf_text/mushaf_text.py"))
-            inputs.files(fileTree(researchDirectory) {
-                include(
-                    "full/ar-tafsir-muyassar/*.json", "full/ar-tafsir-al-mukhtasar/*.json",
-                    "full/ar-tafseer-tahrir-al-tanwir/*.json", "editions.json", "tafsir_map/out/*.json",
-                    "verify/kufi/*.json", "verify/oi/*.txt", "px/data3.json", "dl_q1/ashur1.json",
-                    "tafsir_samples/ar-tafseer-tahrir-al-tanwir.*.json", "verify/ia_heads/**", "chk_rum/intro/**",
-                    "round2/intro/**", "round2/gharib/dl_ta/almuyassar-ghareeb/*.json",
-                    "round2/gharib/out/*.json", "round3/kfgqpc/*.json", "round2/readings/out/raw_diffs4.json",
-                )
-            })
-            inputs.file(layout.projectDirectory.file("src/main/assets/quran/index.json"))
-            commandLine(tafsirPython.get(), tafsirScripts.resolve("preview.py"), "--output", assetsDirectory.get().asFile)
-        }
-        variant.sources.assets?.addGeneratedSourceDirectory(preview, GenerateTafsirAssets::assetsDirectory)
+    variant.sources.assets?.addGeneratedSourceDirectory(prepareTafsirCatalog, GenerateTafsirAssets::assetsDirectory)
+    val label = variant.name.replaceFirstChar { it.uppercaseChar() }
+    val apk = variant.artifacts.get(SingleArtifact.APK)
+    val bundle = variant.artifacts.get(SingleArtifact.BUNDLE)
+    val checkApk = tasks.register<Exec>("verify${label}TafsirApk") {
+        inputs.files(apk, tafsirTool, tafsirStage, quranPackCatalog)
+        commandLine(tafsirPython.get(), tafsirTool, "--stage", tafsirStage, "verify", "--packs", quranPackCatalog.asFile, apk.get().asFile)
     }
-    val checkedDebug = variant.buildType == "debug" && approvedDebug.get()
-    if (variant.buildType == "release" || checkedDebug) {
-        val label = if (checkedDebug) "Debug" else "Release"
-        val standalone = checkedDebug || standaloneTafsir.get()
-        val empty = !checkedDebug && withoutTafsir.get()
-        val tool = tafsirScripts.resolve("packaging.py")
-        val verifier = listOf(tafsirPython.get(), tool, "--stage", tafsirStage) +
-            (if (empty) listOf("--without-content") else emptyList()) +
-            (if (standalone) listOf("--standalone") else emptyList())
-        val prepare = tasks.register<GenerateTafsirAssets>("prepare${label}TafsirAssets") {
-            if (checkedDebug && !hasTafsirStage) throw GradleException("Approved debug tafsir requires a nonempty committed stage.")
-            assetsDirectory.set(layout.buildDirectory.dir("generated/tafsir${label}/assets"))
-            inputs.files(tool, tafsirStage)
-            inputs.property("standalone", standalone)
-            inputs.property("withoutContent", empty)
-            inputs.property("checkPlayModule", !checkedDebug && wantsReleaseBundle)
-            workingDir(tafsirRepo)
-            commandLine(verifier + listOf("prepare", "--output", assetsDirectory.get().asFile))
-            if (!empty) {
-                val source = rootProject.file(clearedAssets.get())
-                inputs.files(fileTree(source.resolve("quran/tafsir")))
-                if (standalone) inputs.files(fileTree(source.parentFile.resolve("media/tafsir")) { include("ashur.db") })
-                args("--source", source)
-                if (!checkedDebug && wantsReleaseBundle) {
-                    val packAssets = rootProject.file("quran-packs/quran_tafsir_ashur/src/main/assets/quran/tafsir")
-                    inputs.files(fileTree(packAssets) { include("ashur.db") })
-                    args("--play-database", packAssets.resolve("ashur.db"))
-                }
-            }
-        }
-        variant.sources.assets?.addGeneratedSourceDirectory(prepare, GenerateTafsirAssets::assetsDirectory)
-
-        val apk = variant.artifacts.get(SingleArtifact.APK)
-        val checkApk = tasks.register<Exec>("verify${label}TafsirApk") {
-            inputs.files(apk, tool, tafsirStage)
-            commandLine(verifier + listOf("verify", apk.get().asFile))
-        }
-        tasks.matching { it.name == "assemble${label}" || it.name == "package${label}" }.configureEach { finalizedBy(checkApk) }
-        if (!checkedDebug) {
-            val bundle = variant.artifacts.get(SingleArtifact.BUNDLE)
-            val checkBundle = tasks.register<Exec>("verifyReleaseTafsirBundle") {
-                inputs.files(bundle, tool, tafsirStage)
-                commandLine(verifier + listOf("verify", bundle.get().asFile))
-            }
-            tasks.matching { it.name == "bundleRelease" }.configureEach { finalizedBy(checkBundle) }
-        }
+    val checkBundle = tasks.register<Exec>("verify${label}TafsirBundle") {
+        inputs.files(bundle, tafsirTool, tafsirStage, quranPackCatalog)
+        commandLine(tafsirPython.get(), tafsirTool, "--stage", tafsirStage, "verify", "--packs", quranPackCatalog.asFile, bundle.get().asFile)
     }
+    tasks.matching { it.name == "assemble${label}" || it.name == "package${label}" }.configureEach { finalizedBy(checkApk) }
+    tasks.matching { it.name == "bundle${label}" }.configureEach { finalizedBy(checkBundle) }
 }
 
 dependencies {

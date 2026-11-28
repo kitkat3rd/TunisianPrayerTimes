@@ -35,6 +35,7 @@ import com.tunisianprayertimes.mosque.trace.TraceEntry
 import com.tunisianprayertimes.mosque.trace.TraceSession
 import com.tunisianprayertimes.mosque.trace.WalkStepPermission
 import com.tunisianprayertimes.ui.AppFontFamily
+import com.tunisianprayertimes.ui.AppInfoButton
 import com.tunisianprayertimes.ui.PrayerSilencePalette
 import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import kotlinx.coroutines.Dispatchers
@@ -139,8 +140,10 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
             IconButton(onClick = onBack) {
                 Icon(painterResource(R.drawable.ic_adhkar_back), stringResource(R.string.mosque_back))
             }
-            Text(stringResource(R.string.silence_walk_title), Modifier.semantics { heading() },
+            Text(stringResource(R.string.silence_walk_title), Modifier.weight(1f).semantics { heading() },
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = PrayerSilencePalette.PrimaryText)
+            AppInfoButton(title = stringResource(R.string.silence_walk_recording_info),
+                text = stringResource(R.string.mosque_privacy))
         }
         HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
         Column(
@@ -153,13 +156,11 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
                 OutlinedButton(onClick = { revision++ }) { Text(stringResource(R.string.silence_walk_retry)) }
             } else if (view == null) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-            } else if (active == null) {
+            } else if (selected == null) {
                 Text(stringResource(R.string.silence_walk_intro))
-            } else {
+            } else if (active != null) {
                 Text(stringResource(R.string.silence_walk_active_since, startedAt(active)),
                     style = MaterialTheme.typography.titleMedium, color = PrayerSilencePalette.PrimaryText)
-                Text(stringResource(R.string.silence_walk_active_help), style = MaterialTheme.typography.bodyMedium)
-                Text(stringResource(R.string.silence_walk_mark_hint), style = MaterialTheme.typography.bodyMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { mark(active.id, "test_arrived", R.string.silence_walk_arrived_event) }, modifier = Modifier.weight(1f)) {
                         Text(stringResource(R.string.silence_walk_arrived))
@@ -171,9 +172,11 @@ private fun SilenceWalkScreen(onBack: () -> Unit) {
             }
             if (selected != null) {
                 HorizontalDivider(color = PrayerSilencePalette.SoftBorder)
-                Text(stringResource(R.string.silence_walk_recorded_at, startedAt(selected)),
-                    Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium,
-                    color = PrayerSilencePalette.PrimaryText)
+                if (selected.id != active?.id) {
+                    Text(stringResource(R.string.silence_walk_recorded_at, startedAt(selected)),
+                        Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium,
+                        color = PrayerSilencePalette.PrimaryText)
+                }
                 if ((view?.sessions?.size ?: 0) > 1) {
                     TextButton(onClick = { showHistory = true }) { Text(stringResource(R.string.silence_walk_history)) }
                 }

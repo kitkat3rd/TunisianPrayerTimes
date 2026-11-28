@@ -9,6 +9,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,16 +25,21 @@ private const val SeenTafsirBooks = "tafsir_announced_titles"
 @Composable
 internal fun QuranTafsirAnnouncement(books: List<TafsirBook>, prefs: SharedPreferences) {
     val titles = remember(books) { books.map { it.title }.toSet() }
-    var previous by remember(prefs) {
-        mutableStateOf(prefs.getStringSet(SeenTafsirBooks, emptySet()).orEmpty().toSet())
+    var previous by remember(prefs) { mutableStateOf(prefs.getStringSet(SeenTafsirBooks, null)?.toSet()) }
+    val seen = previous
+    if (seen == null) {
+        // The verse menu already offers tafsir. Start tracking changes without interrupting the first reading.
+        LaunchedEffect(prefs, titles) {
+            prefs.edit().putStringSet(SeenTafsirBooks, titles).apply()
+            previous = titles
+        }
+        return
     }
-    if (previous == titles) return
-    val added = titles - previous
-    val removed = previous - titles
+    if (seen == titles) return
+    val added = titles - seen
+    val removed = seen - titles
     val message = buildList {
-        if (previous.isEmpty()) {
-            add("اضغط على أي آية ثم اختر «تفسير» لقراءة شرحها.")
-        } else if (added.isNotEmpty()) {
+        if (added.isNotEmpty()) {
             add("أُضيف إلى كتب التفسير " + added.joinToString(" و") { "«$it»" } + ".")
         }
         if (removed.isNotEmpty()) {

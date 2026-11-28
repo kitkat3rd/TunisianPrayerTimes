@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -24,7 +26,6 @@ import com.tunisianprayertimes.R
 import com.tunisianprayertimes.quran.QuranCatalog
 import com.tunisianprayertimes.quran.QuranVerseReference
 import com.tunisianprayertimes.quran.audio.QuranRepeatRange
-import com.tunisianprayertimes.quran.audio.quranRepeatObject
 import com.tunisianprayertimes.quran.audio.quranTimes
 import com.tunisianprayertimes.ui.theme.BgCream
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
@@ -156,7 +157,7 @@ internal fun QuranRepeatSheet(
                         OutlinedTextField(
                             value = times,
                             onValueChange = { times = it.take(3) },
-                            modifier = Modifier.width(88.dp).testTag("quran_repeat_times"),
+                            modifier = Modifier.width(88.dp).semantics { contentDescription = "عدد مرات التكرار" }.testTag("quran_repeat_times"),
                             singleLine = true,
                             isError = count == null,
                             textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center),
@@ -168,27 +169,18 @@ internal fun QuranRepeatSheet(
                             enabled = count == null || count < QuranRepeatRange.MAX_TIMES,
                             modifier = Modifier.testTag("quran_repeat_more"),
                         ) { Icon(painterResource(R.drawable.ic_add), "زيادة العدد") }
-                        Text(
-                            count?.let(::quranTimes) ?: "من 1 إلى ${QuranRepeatRange.MAX_TIMES}",
-                            Modifier.padding(start = 4.dp), fontSize = 13.sp,
-                            color = if (count == null) MaterialTheme.colorScheme.error else TextMuted,
+                        if (count == null) Text(
+                            "من 1 إلى ${QuranRepeatRange.MAX_TIMES}", Modifier.padding(start = 4.dp),
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.error,
                         )
                     }
                 }
-                // What the verses typed will do, named as they are: one verse, two, several, or the whole surah.
-                val named = (range ?: from?.let { QuranRepeatRange(it, to ?: it) })
-                    ?.let { quranRepeatObject(it, subject = true, { n -> catalog.surahs[n - 1].name }, catalog::verseCount) } ?: "الآيات"
-                Text(
-                    if (endless) "تتكرّر $named إلى أن توقف التكرار."
-                    else count?.let { "تُتلى $named ${quranTimes(it)}، ثم يتوقّف الاستماع." }.orEmpty(),
-                    fontSize = 12.sp, color = TextMuted,
-                )
             }
             Button(
                 onClick = { range?.let(onStart) },
                 enabled = range != null,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("quran_repeat_start"),
-            ) { Text("ابدأ") }
+            ) { Text("ابدأ التكرار") }
           }
           }
         }

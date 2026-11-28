@@ -340,17 +340,14 @@ import org.json.JSONObject
                                 fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (collection == null && selectedEntry != null) DhikrPreview(selectedEntry.id, dhikrPreview(selectedEntry.text),
                                 p.muted, 12.sp, maxLines = 2, lineHeight = 22.sp)
-                            else Text(when {
-                                collection != null -> collectionSubtitle(repoState, collection)
-                                selectedId.isEmpty() -> "اضغط لاختيار الذكر الذي تريد التذكير به."
-                                else -> "الذكر المحفوظ لم يعد موجودًا."
-                            }, color = p.muted, fontSize = 12.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            else if (collection != null || selectedId.isNotEmpty()) {
+                                Text(collection?.let { collectionSubtitle(repoState, it) } ?: "الذكر المحفوظ لم يعد موجودًا.",
+                                    color = p.muted, fontSize = 12.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                         DhikrIcon(R.drawable.ic_adhkar_next, tint = p.muted, modifier = Modifier.size(18.dp))
                     }
                 }
-                Text(if (showTarget) "الهدف وأوقات التذكير" else "أوقات التذكير",
-                    color = AdhkarHeading, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 AdhkarCard(Modifier.fillMaxWidth()) {
                     Column {
                         if (showTarget && steppedEntry != null) {
@@ -363,7 +360,7 @@ import org.json.JSONObject
                             HorizontalDivider(color = AdhkarBorder)
                         } else if (showTarget) {
                             Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("الهدف اليومي", color = p.muted, fontSize = 13.sp)
+                                Text(if (intervals.size > 1) "الهدف اليومي لجميع الفترات" else "الهدف اليومي", color = p.muted, fontSize = 13.sp)
                                 Spacer(Modifier.height(10.dp))
                                 GoalStepper(target, ::setTarget, minimum = 1, "زيادة العدد", "تقليص العدد",
                                     "adhkar_target_input", fieldColors)
@@ -374,8 +371,6 @@ import org.json.JSONObject
                                     GoalStepper(fridayTarget, { fridayTarget = it }, minimum = integer(target) ?: 1,
                                         "زيادة هدف يوم الجمعة", "تقليص هدف يوم الجمعة", "adhkar_friday_target_input", fieldColors)
                                 }
-                                if (intervals.size > 1) Text("تُجمع قراءات جميع الفترات في هدف يومي واحد.",
-                                    color = p.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
                             }
                             HorizontalDivider(color = AdhkarBorder)
                         }
@@ -403,7 +398,7 @@ import org.json.JSONObject
                     }
                 }
                 Column {
-                    FieldTitle("الأيام")
+                    Text("الأيام", color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         // Full accessible weekday names; controls wrap on compact displays.
                         listOf(7, 1, 2, 3, 4, 5, 6).forEach { day ->
@@ -418,15 +413,14 @@ import org.json.JSONObject
                         }
                     }
                 }
-                Text("خيارات التذكير", color = AdhkarHeading, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 AdhkarCard(Modifier.fillMaxWidth()) {
                     Column {
-                        ToggleRow("إشعارات التذكير", "تلقّي الإشعارات خلال الفترات المحددة", enabled) { on ->
+                        ToggleRow("إشعارات التذكير", enabled) { on ->
                             if (on && edited.usesPrayerTimes() && !PrefsManager.hasConfirmedPlace(activity)) placeRequired = true
                             else enabled = on
                         }
                         HorizontalDivider(color = AdhkarBorder)
-                        ToggleRow("الاهتزاز", "اهتزاز عند وصول الإشعار", vibrate) { vibrate = it }
+                        ToggleRow("اهتزاز عند الإشعار", vibrate) { vibrate = it }
                         HorizontalDivider(color = AdhkarBorder)
                         // There is nothing to preview until the reminder has something to announce.
                         TextButton(onClick = { preview = true }, enabled = collection != null || selectedEntry != null,
@@ -456,21 +450,18 @@ import org.json.JSONObject
                         }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TemplateCard("أذكار الصباح", "مجموعة كاملة", R.drawable.ic_adhkar_sun,
+                    TemplateCard("أذكار الصباح", "", R.drawable.ic_adhkar_sun,
                         selected = collection == DhikrCategory.MORNING,
                         modifier = Modifier.weight(1f)) { requestTemplate(morningCollectionPreset()) }
-                    TemplateCard("أذكار المساء", "مجموعة كاملة", R.drawable.ic_adhkar_moon,
+                    TemplateCard("أذكار المساء", "", R.drawable.ic_adhkar_moon,
                         selected = collection == DhikrCategory.EVENING,
                         modifier = Modifier.weight(1f)) { requestTemplate(eveningCollectionPreset()) }
                 }
                 TemplateCard("أذكار الليل بعد المغرب", collectionSubtitle(repoState, DhikrCategory.NIGHT),
                     R.drawable.ic_adhkar_moon, selected = collection == DhikrCategory.NIGHT,
                     modifier = Modifier.fillMaxWidth()) { requestTemplate(nightCollectionPreset()) }
-                if (stopsRunningPeriod) Text("حفظ هذا التعديل يوقف إشعارات الفترة الحالية، وتسري الإعدادات الجديدة ابتداءً من الفترة التالية.",
+                if (stopsRunningPeriod) Text("سيوقف الحفظ إشعارات الفترة الحالية. يسري التعديل من الفترة التالية.",
                     color = p.muted, fontSize = 12.sp, lineHeight = 23.sp)
-                if (problem == null) Surface(color = AdhkarSoftGreen, shape = RoundedCornerShape(14.dp)) {
-                    Text(dhikrRuleSummary(edited), Modifier.padding(16.dp), color = AdhkarHeading, fontSize = 13.sp, lineHeight = 24.sp)
-                }
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (collection != null && repoState.collectionEntries(collection).isEmpty()) {
                         Text("هذه المجموعة فارغة. لن تصلك إشعاراتها حتى تضيف إليها ذكرًا.",
@@ -484,20 +475,20 @@ import org.json.JSONObject
                     val notificationsAvailable = remember(resumeTick, vibrate) {
                         DhikrReminderScheduler.notificationsEnabled(activity, vibrate)
                     }
-                    Text(when {
-                        !enabled -> "إشعارات هذا التذكير متوقفة."
+                    val notificationWarning = when {
+                        !enabled -> null
                         selectedChannel == null || !notificationsAvailable ->
-                            "الإشعارات غير مسموح بها لهذا التطبيق حاليًا، فلن يصلك إشعار حتى تسمح بها. يمكنك حفظ التذكير، وسيُطلب منك السماح بعد الحفظ."
+                            "الإشعارات محظورة. اسمح بها بعد الحفظ لتلقّي التذكير."
                         selectedChannel.importance < NotificationManager.IMPORTANCE_HIGH ->
                             "قد لا يظهر الإشعار منبثقًا لأن أولوية إشعارات الأذكار منخفضة."
                         vibrate && !selectedChannel.shouldVibrate() -> "الاهتزاز معطّل في إعدادات إشعارات الأذكار."
                         !vibrate && selectedChannel.shouldVibrate() -> "الاهتزاز مفعّل في إعدادات إشعارات الأذكار رغم إيقافه هنا."
-                        vibrate -> "إشعار مع اهتزاز دون صوت، وفق إعدادات الهاتف."
-                        else -> "إشعار دون صوت أو اهتزاز، وفق إعدادات الهاتف."
-                    }, color = p.muted, fontSize = 13.sp, lineHeight = 24.sp)
+                        else -> null
+                    }
+                    if (notificationWarning != null) Text(notificationWarning, color = p.muted, fontSize = 13.sp, lineHeight = 24.sp)
                     TextButton(onClick = { openDhikrNotificationSettings(activity, vibrate) }) { Text("إعدادات إشعارات الأذكار") }
                     if (enabled && !exactAlarmsAvailable) {
-                        Text("لم تُفعّل «المنبّهات والتذكيرات». قد يصلك الإشعار متأخرًا، وقد لا يصلك إذا انتهت الفترة قبل وصوله.",
+                        Text("قد تتأخر الإشعارات أو تفوتك دون إذن المنبّهات الدقيقة.",
                             color = MaterialTheme.colorScheme.error, fontSize = 13.sp, lineHeight = 24.sp)
                         TextButton(onClick = { openDhikrExactAlarmSettings(activity) }) { Text("تفعيل المنبّهات والتذكيرات") }
                     }
@@ -711,7 +702,17 @@ import org.json.JSONObject
             Text("تجاهل", color = MaterialTheme.colorScheme.error)
         } },
         dismissButton = { TextButton(onClick = { discardPrompt = false }) { Text("متابعة التعديل") } })
-    if (cadenceDialog) AlertDialog(onDismissRequest = { cadenceDialog = false }, title = { Text("تكرار الإشعارات") },
+    if (cadenceDialog) AlertDialog(onDismissRequest = { cadenceDialog = false }, title = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("تكرار الإشعارات", Modifier.weight(1f))
+            AppInfoButton(
+                title = "توقيت الإشعارات",
+                text = "يصل الإشعار اليومي عند بداية أول فترة. في التكرار الخفيف والمتوازن يصلك إشعار واحد على الأقل لكل فترة " +
+                    (if (collection != null) "حتى تُكمل قراءة المجموعة." else "حتى تُكمل هدفك اليومي.") +
+                    " إذا تعدّدت الفترات فقد يتجاوز العدد 3 أو 5 في اليوم. وعند تكرار الإشعار في فترة واحدة، يصلك آخر إشعار خلال آخر نصف ساعة قبل نهايتها، أو خلال آخر نصف ساعة قبل العشاء لأذكار المساء الممتدة إلى الليل. قد يؤخّر وضع توفير البطارية الإشعارات.",
+            )
+        }
+    },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val customInterval = integer(interval)
             // Typed here and applied only by «تعيين», so closing the dialog cannot leave an invalid interval.
@@ -754,7 +755,7 @@ import org.json.JSONObject
                 ?.let { dhikrNudgeTimes(value, it).size }
                 ?.takeIf { it > 0 }?.let { " · المتوقع في اليوم: " + latinNumber(it) }.orEmpty()
             val options: List<Triple<String, Boolean, () -> Unit>> = listOf(
-                Triple("إشعار واحد يوميًا" + expected(edited.copy(cadence = DhikrCadence.ONCE)),
+                Triple("إشعار واحد يوميًا",
                     cadence == DhikrCadence.ONCE.name) { choose(DhikrCadence.ONCE) },
                 Triple("خفيف · " + regularCadenceLabel(3, intervals.size) + expected(edited.copy(cadence = DhikrCadence.GENTLE)),
                     cadence == DhikrCadence.GENTLE.name) { choose(DhikrCadence.GENTLE) },
@@ -773,10 +774,6 @@ import org.json.JSONObject
                     if (selected) DhikrIcon(R.drawable.ic_adhkar_check, tint = p.primary, modifier = Modifier.size(18.dp))
                 }
             }
-            Text("«إشعار واحد يوميًا» يُرسَل عند بداية أول فترة. في الخيارين «خفيف» و«متوازن» يصلك إشعار واحد على الأقل خلال كل فترة " +
-                (if (collection != null) "ما دامت قراءة المجموعة لم تكتمل" else "ما دام الهدف اليومي لم يكتمل") +
-                "، وقد يزيد العدد عن 3 أو 5 إذا أضفت فترات أكثر. وفي هذين الخيارين، إذا وصلك أكثر من إشعار في الفترة الواحدة فآخرها قبل نهاية الفترة بنصف ساعة على الأكثر، وفي أذكار المساء الممتدة إلى الليل قبل أذان العشاء بنصف ساعة. يمكنك اختيار فاصل من 15 دقيقة إلى 24 ساعة، وقد يؤخّر الهاتف بعض الإشعارات في وضع توفير البطارية.",
-                color = p.muted, fontSize = 11.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 8.dp))
         } }, confirmButton = { TextButton(onClick = { cadenceDialog = false }) { Text("إغلاق") } })
     if (preview) AlertDialog(onDismissRequest = { preview = false }, title = { Text("معاينة الإشعار") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -792,7 +789,7 @@ import org.json.JSONObject
                 DhikrReminderScheduler.COUNT_ACTION_TITLE else DhikrReminderScheduler.CONTINUE_ACTION_TITLE
             val doneActionTitle = activity.getString(R.string.adhkar_notification_done)
             Text("$firstActionTitle     ·     $doneActionTitle", color = p.primary)
-            Text("هذه معاينة فقط، ولن يُرسَل إشعار الآن. «$doneActionTitle» يوقف بقية إشعارات الورد الحالي لهذا التذكير، دون تغيير العدد المسجّل.",
+            Text("«$doneActionTitle» يوقف إشعارات هذا الورد ويُبقي العدد المسجّل.",
                 fontSize = 12.sp, color = p.muted)
         } }, confirmButton = { TextButton(onClick = { preview = false }) { Text("إغلاق") } })
 }
@@ -901,14 +898,10 @@ private fun SettingRow(icon: Int, title: String, value: String, error: Boolean =
 
 /** One control for the screen reader: the whole row toggles and says its title with its state. */
 @Composable
-private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    val p = LocalAdhkarPalette.current
+private fun ToggleRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange)
         .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            Text(subtitle, color = p.muted, fontSize = 12.sp)
-        }
+        Text(title, Modifier.weight(1f), color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
         AdhkarSwitch(checked, onCheckedChange = null)
     }
 }
@@ -1011,14 +1004,6 @@ private fun StepButton(icon: Int, description: String, enabled: Boolean = true, 
         Box(contentAlignment = Alignment.Center) {
             DhikrIcon(icon, description, tint = p.primary.copy(alpha = if (enabled) 1f else .38f), modifier = Modifier.size(22.dp))
         }
-    }
-}
-
-@Composable private fun FieldTitle(title: String, hint: String? = null) {
-    val p = LocalAdhkarPalette.current
-    Column {
-        Text(title, color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-        hint?.let { Text(it, color = p.muted, fontSize = 11.sp) }
     }
 }
 

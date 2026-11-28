@@ -52,7 +52,6 @@ import com.tunisianprayertimes.ui.theme.BannerText
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.GreenPrimaryDark
 import com.tunisianprayertimes.ui.theme.TextDark
-import com.tunisianprayertimes.ui.theme.TextMuted
 import java.time.LocalDate
 
 /** A place abroad whose country asks for a method, or whose country is unknown, while that is not answered (6.4). */
@@ -106,10 +105,11 @@ internal fun MethodChooserSheet(question: MethodQuestion, onAnswered: () -> Unit
     AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(0.9f).navigationBarsPadding().testTag("method_chooser_sheet")) {
             item {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(stringResource(R.string.method_chooser_title), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark)
-                    Text(stringResource(R.string.method_chooser_note), fontSize = 13.sp, color = TextMuted, lineHeight = 19.sp)
-                }
+                Text(
+                    stringResource(R.string.method_chooser_title),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                    fontSize = 20.sp, fontWeight = FontWeight.Bold, color = GreenPrimaryDark,
+                )
             }
             if (askMethods) {
                 items(methods, key = { it.id }) { method ->

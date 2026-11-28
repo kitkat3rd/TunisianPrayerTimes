@@ -152,6 +152,7 @@ class MainActivityPendingIntentsTest {
 
     @Test
     fun silenceAlarmClockInfoUsesSilenceAlarmClockIntent() {
+        PrefsManager.markFirstLaunchDone(context)
         PrefsManager.setEnabled(context, true)
 
         SilenceScheduler.scheduleAll(context)

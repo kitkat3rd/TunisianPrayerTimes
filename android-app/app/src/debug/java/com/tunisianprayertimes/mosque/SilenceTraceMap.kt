@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.drawText
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.presence.GeoPoint
 import com.tunisianprayertimes.mosque.presence.project
 import com.tunisianprayertimes.mosque.trace.TraceEntry
@@ -36,6 +38,7 @@ import com.tunisianprayertimes.mosque.trace.connectsRouteFrom
 import com.tunisianprayertimes.mosque.trace.hasCoordinates
 import com.tunisianprayertimes.mosque.trace.isRouteSample
 import com.tunisianprayertimes.mosque.trace.nearbySilenceAreas
+import com.tunisianprayertimes.ui.AppInfoButton
 import com.tunisianprayertimes.ui.PrayerSilencePalette as Colors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -220,14 +223,16 @@ internal fun SilenceTraceMap(
         Text("ضلع المربّع $gridLabel", Modifier.align(Alignment.BottomEnd).background(Colors.TintedStrip).padding(5.dp),
             color = Colors.PrimaryText, style = MaterialTheme.typography.labelSmall)
     }
-    Text("الأخضر الداكن هو المسار حتى الوقت المحدّد. النقاط الذهبية قراءات أو أحداث لها موقع. ينقطع الخط عند تغيّر المصدر أو بعد دقيقتين بلا قراءة.",
-        color = Colors.SecondaryText, style = MaterialTheme.typography.bodySmall)
-    if (polygons.isNotEmpty()) {
-        Text("المضلّعات الذهبية تبيّن مناطق الإسكات القريبة المفعّلة حاليًا: " + areas.joinToString("، ") { it.name },
-            color = Colors.SecondaryText,
-            style = MaterialTheme.typography.bodySmall)
-    }
-    if (focused != null || magnify) {
-        TextButton(onClick = { magnify = !magnify }) { Text(if (magnify) "عرض المسار الكامل" else "تكبير حول الموضع المحدّد") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (focused != null || magnify) {
+            TextButton(onClick = { magnify = !magnify }) { Text(if (magnify) "عرض المسار الكامل" else "تكبير الموضع") }
+        }
+        val legend = stringResource(R.string.silence_walk_map_legend)
+        val areaNames = areas.joinToString("، ") { it.name }
+        AppInfoButton(
+            title = stringResource(R.string.silence_walk_map_key),
+            text = if (areaNames.isEmpty()) legend else
+                legend + "\n\n" + stringResource(R.string.silence_walk_map_areas, areaNames),
+        )
     }
 }

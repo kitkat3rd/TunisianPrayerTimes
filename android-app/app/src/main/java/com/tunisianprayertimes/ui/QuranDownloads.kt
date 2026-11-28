@@ -27,6 +27,7 @@ import com.tunisianprayertimes.quran.assets.QuranPackLayout
 import com.tunisianprayertimes.quran.assets.QuranPackSource
 import com.tunisianprayertimes.quran.assets.QuranPackState
 import com.tunisianprayertimes.quran.assets.QuranPackStatus
+import com.tunisianprayertimes.quran.tafsir.TafsirBook
 import com.tunisianprayertimes.quran.tafsir.TafsirRepository
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.CardBorder
@@ -45,7 +46,7 @@ internal class QuranMedia(
     private val metered: () -> Boolean = { false },
     /** The build carries the book itself: the pages need no pack (a debug build made with -PquranFonts). */
     private val bookBundled: Boolean = false,
-    private val declaredTafsir: String? = null,
+    tafsirBooks: List<TafsirBook> = emptyList(),
 ) {
     // A new reader must start with the source's current snapshot. Starting empty briefly labelled
     // already downloaded pages as missing on every return to the tab.
@@ -65,8 +66,17 @@ internal class QuranMedia(
      */
     val pages: QuranPack? get() = layout?.book ?: layout?.pages
 
-    /** A release offering the full commentary as a download. A standalone install already bundles it. */
-    val tafsir: QuranPack? get() = layout?.tafsir?.takeIf { it.name == declaredTafsir && it.name !in bundled }
+    private val downloadableBooks = tafsirBooks.associateBy { it.id }
+
+    /** Only offer a download if the released book and its pack layout agree. */
+    fun tafsir(bookId: String): QuranPack? {
+        val declared = downloadableBooks[bookId]?.pack ?: return null
+        return layout?.tafsir(bookId)?.takeIf { it.name == declared && it.name !in bundled }
+    }
+
+    val tafsirPacks = tafsirBooks.mapNotNull { tafsir(it.id) }
+
+    fun tafsirTitle(pack: QuranPack): String? = downloadableBooks[pack.tafsirBookId]?.title
 
     val pagesReady: Boolean get() = bookBundled || (pages?.let { state(it).available } ?: true)
 
@@ -100,7 +110,7 @@ internal fun rememberQuranMedia(): QuranMedia? {
                 val layout = QuranAssets.layout(context)
                 if (layout == null) QuranMedia.Bundled
                 else QuranMedia(layout, QuranAssets.source(context), QuranAssets.bundledPacks(context), { isMeteredNetwork(context) },
-                    QuranAssets.bookBundled(context), layout.tafsir?.let { TafsirRepository(context).declaredPack("ashur") })
+                    QuranAssets.bookBundled(context), TafsirRepository(context).downloadableBooks())
             }.getOrElse { QuranMedia.Bundled }
         }
     }
@@ -248,7 +258,7 @@ internal fun quranDownloadProblemText(problem: QuranDownloadProblem?): String = 
     QuranDownloadProblem.Storage -> "لا توجد مساحة كافية على الجهاز."
     QuranDownloadProblem.Store -> "تعذّر التنزيل من متجر Google Play. حدّثه ثم أعد المحاولة."
     QuranDownloadProblem.Integrity -> "وصل الملف تالفًا. أعد المحاولة."
-    QuranDownloadProblem.Unpublished -> "ملفّ التفسير غير متاح للتنزيل في هذا الإصدار. يمكنك قراءته في نسخة التطبيق المرفقة بالتفسير."
+    QuranDownloadProblem.Unpublished -> "هذا الكتاب غير متاح للتنزيل في هذا الإصدار."
     QuranDownloadProblem.Other, null -> "تعذّر التنزيل. أعد المحاولة."
 }
 
@@ -267,9 +277,12 @@ internal fun quranPackCompanions(pack: QuranPack, surah: Int, surahName: (Int) -
 
 internal fun quranSize(bytes: Long): String {
     // Digits are always 0-9, never the Arabic-Indic ones.
-    val arabic = Locale.ROOT
-    return if (bytes >= 1_000_000_000L) String.format(arabic, "%.1f${com.tunisianprayertimes.quran.hifz.HifzReminder.NB}غيغابايت", bytes / 1e9)
-    else String.format(arabic, "%d${com.tunisianprayertimes.quran.hifz.HifzReminder.NB}ميغابايت", ((bytes + 999_999L) / 1_000_000L).coerceAtLeast(1L))
+    val space = com.tunisianprayertimes.quran.hifz.HifzReminder.NB
+    return when {
+        bytes >= 1_000_000_000L -> String.format(Locale.ROOT, "%.1f${space}غيغابايت", bytes / 1e9)
+        bytes >= 1_000_000L -> "${(bytes + 999_999L) / 1_000_000L}${space}ميغابايت"
+        else -> "${(bytes.coerceAtLeast(0L) + 999L) / 1_000L}${space}كيلوبايت"
+    }
 }
 
 /** Isolated left to right: after Arabic letters, a bare «26%» would read «%26». */
@@ -309,9 +322,9 @@ internal fun QuranPagesDownloadBanner(
         }) {
             when (state.status) {
                 QuranPackStatus.WaitingForWifi -> TextButton(onClick = onUseMobileData, modifier = Modifier.testTag("quran_pages_mobile_data")) {
-                    Text("استخدم بيانات الهاتف")
+                    Text("استخدم بيانات الهاتف (${quranSize(pages.archive.bytes)})")
                 }
-                QuranPackStatus.NeedsConfirmation -> TextButton(onClick = onUseMobileData) { Text("تأكيد التنزيل") }
+                QuranPackStatus.NeedsConfirmation -> TextButton(onClick = onUseMobileData) { Text("تأكيد التنزيل (${quranSize(pages.archive.bytes)})") }
                 QuranPackStatus.Failed -> TextButton(onClick = { onDownload(true) }, modifier = Modifier.testTag("quran_pages_retry")) {
                     Text("أعد المحاولة")
                 }

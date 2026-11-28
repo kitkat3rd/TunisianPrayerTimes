@@ -1,19 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="call_feedback_uses_phone_state">يستخدم التطبيق إذن الهاتف لمعرفة إن وردت مكالمة أثناء الإسكات.</string>
+    <string name="call_feedback_uses_phone_state">يلزم إذن الهاتف لرصد المكالمات.</string>
     <string name="call_feedback_allow_phone_state">السماح بإذن الهاتف</string>
-    <string name="call_feedback_waiting">الاهتزاز بعد المكالمات ينتظر إذن الهاتف. يمكنك منحه من إعدادات التطبيق.</string>
-    <string name="travel_foreground_summary">حدّث مواقيت الصلاة بحسب موقعك عند فتح التطبيق أثناء السفر.</string>
+    <string name="call_feedback_waiting">الاهتزاز متوقّف حتى تمنح الإذن.</string>
     <string name="travel_allow_foreground">السماح بالموقع أثناء الاستخدام</string>
-    <string name="travel_location_waiting">تحديث المدينة ينتظر إذن الموقع. يمكنك منح الموقع التقريبي من إعدادات التطبيق.</string>
+    <string name="travel_location_waiting">يكفي الموقع التقريبي لتحديث المدينة.</string>
     <string name="travel_in_background">تحديث المدينة أثناء إغلاق التطبيق</string>
-    <string name="travel_background_active">يمكن تحديث مواقيت مدينتك أثناء السفر حتى والتطبيق مغلق.</string>
-    <string name="travel_background_disclosure">يستخدم التطبيق موقعك أثناء إغلاقه لتحديث المدينة ومواقيت الصلاة عند السفر. وإذا فعّلت الإسكات حسب موقع المسجد من إعداداته، يُستخدم إذن الموقع أيضًا للتحقّق من وصولك إلى مسجد محفوظ قرب وقت الصلاة. يبقى موقعك على جهازك، ويمكنك إيقاف كل ميزة على حدة.</string>
+    <string name="travel_background_disclosure">يستخدم التطبيق موقعك أثناء إغلاقه لتحديث مدينتك ومواقيت الصلاة عند السفر. وإذا فعّلت الإسكات في المسجد، يُستخدم موقعك أيضًا لرصد وصولك إلى مسجد محفوظ قرب وقت الصلاة. يبقى موقعك على جهازك، ويمكنك إيقاف كل ميزة على حدة.</string>
     <string name="travel_permission_settings_option">من أذونات التطبيق، افتح «الموقع» ثم اختر «%1$s».</string>
     <string name="travel_allow_in_settings">افتح أذونات الموقع في إعدادات التطبيق واختر السماح طوال الوقت.</string>
     <string name="travel_confirm_place">اختر مدينتك أولًا لتفعيل التحديث أثناء السفر.</string>
     <string name="prayer_open_app_settings">فتح إعدادات التطبيق</string>
     <string name="prayer_delivery_troubleshooting">حلّ مشكلات التنبيهات والإسكات</string>
     <string name="prayer_check_battery">مراجعة إعدادات البطارية</string>
-    <string name="prayer_check_battery_summary">إذا تأخّر تنبيه أو إسكات مجدول، افتح إعدادات التطبيق وراجع قيود استخدام البطارية في الخلفية.</string>
+    <string name="prayer_check_battery_summary">قد تؤخّر قيود البطارية التنبيهات والإسكات.</string>
 </resources>

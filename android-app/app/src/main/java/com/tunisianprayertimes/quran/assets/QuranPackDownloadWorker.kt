@@ -22,7 +22,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
-/** Downloads one pack from the quran-cdn Worker, for installs that did not come from Google Play. */
+/** Downloads one pack from the quran-cdn Worker, including CDN-only packs on Play installs. */
 class QuranPackDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val name = inputData.getString(KEY_PACK) ?: return Result.failure()
@@ -111,7 +111,7 @@ class QuranPackDownloadWorker(context: Context, params: WorkerParameters) : Coro
             .setSmallIcon(R.drawable.ic_tab_quran)
             .setContentTitle(when (pack?.kind) {
                 QuranPack.Kind.Audio -> "تنزيل التلاوة"
-                QuranPack.Kind.Tafsir -> "تنزيل تفسير ابن عاشور"
+                QuranPack.Kind.Tafsir -> "تنزيل ${QuranPackLayout.tafsirTitles.getValue(requireNotNull(pack.tafsirBookId))}"
                 else -> "تنزيل صفحات المصحف"
             })
             .setProgress(100, percent, total == 0L)

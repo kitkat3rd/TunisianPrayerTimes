@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
@@ -52,6 +53,8 @@ class MethodExplainerSheetTest {
     fun tallStatusBarAndBottomFlingDoNotMakeTheSheetBobOrClipTheFooter() {
         var dismissed = false
         open(onDismiss = { dismissed = true })
+        // The annual chart loads above the footer on a background thread, outside the Compose clock.
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("twilight_year_strip").fetchSemanticsNodes().isNotEmpty() }
         // Semantics scrolling animates and waits for completion, so it needs the running test clock.
         compose.onNodeWithText(credit).performScrollTo()
         compose.mainClock.autoAdvance = false

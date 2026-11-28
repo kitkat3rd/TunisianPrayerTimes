@@ -16,7 +16,7 @@ internal fun HifzSaveFailureDialog(onRetry: () -> Unit, onDiscard: () -> Unit) {
         onDismissRequest = {},
         title = { Text("لم يُحفظ التغيير") },
         text = {
-            Text("تعذّر حفظ التغيير في دفتر المراجعة. بقيت البيانات المحفوظة كما هي. أعد المحاولة، أو ألغِ التغيير للعودة إلى الدفتر.", Modifier.verticalScroll(rememberScrollState()))
+            Text("ما زالت بياناتك السابقة محفوظة في دفتر المراجعة.", Modifier.verticalScroll(rememberScrollState()))
         },
         confirmButton = { TextButton(onClick = onRetry, modifier = Modifier.testTag("hifz_save_retry")) { Text("إعادة المحاولة") } },
         dismissButton = { TextButton(onClick = onDiscard, modifier = Modifier.testTag("hifz_save_discard")) { Text("إلغاء التغيير") } },

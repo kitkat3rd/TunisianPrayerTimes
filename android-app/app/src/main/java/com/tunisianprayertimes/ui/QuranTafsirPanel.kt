@@ -36,7 +36,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private data class TafsirCatalog(val books: List<TafsirBook>, val installed: Set<String>, val status: TafsirCatalogStatus)
+private data class TafsirCatalog(val books: List<TafsirBook>, val status: TafsirCatalogStatus)
+
+private fun bookRevision(revisions: Any?, bookId: String?): Any? =
+    if (revisions is Map<*, *>) revisions[bookId] else revisions
 
 /** Null while a request is in flight. A new book or verse starts with no old text on screen. */
 @Composable
@@ -76,6 +79,8 @@ internal fun QuranTafsirPanel(
     downloadAction: (@Composable (TafsirBook, () -> Unit, () -> Unit) -> Unit)? = null,
     offPageText: (QuranVerseReference) -> String? = { null },
     onPassageHighlight: (Set<QuranVerseReference>) -> Unit = {},
+    onRequestBook: (TafsirBook) -> Unit = {},
+    bookDownloadSize: (TafsirBook) -> String? = { null },
 ) {
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("quran_tafsir_reader", Context.MODE_PRIVATE) }
@@ -86,7 +91,6 @@ internal fun QuranTafsirPanel(
     var expanded by rememberSaveable { mutableStateOf(false) }
     var fontDialog by rememberSaveable { mutableStateOf(false) }
     var aboutId by rememberSaveable { mutableStateOf<String?>(null) }
-    var requestedBook by rememberSaveable { mutableStateOf<String?>(null) }
     var linkedBook by rememberSaveable { mutableStateOf<String?>(null) }
     var linkedUnit by rememberSaveable { mutableStateOf<String?>(null) }
     var stepBook by rememberSaveable { mutableStateOf<String?>(null) }
@@ -94,9 +98,8 @@ internal fun QuranTafsirPanel(
     var stepSurah by rememberSaveable { mutableIntStateOf(0) }
     var stepAyah by rememberSaveable { mutableIntStateOf(-1) }
     var retry by remember { mutableIntStateOf(0) }
-    val catalogResult = loadTafsir(repository, packRevision, retry) {
-        val books = repository.books()
-        TafsirCatalog(books, books.filter(repository::isInstalled).mapTo(mutableSetOf()) { it.id }, repository.catalogStatus())
+    val catalogResult = loadTafsir(repository, retry) {
+        TafsirCatalog(repository.books(), repository.catalogStatus())
     }
     val catalog = catalogResult?.getOrNull()
     val books = catalog?.books.orEmpty().associateBy { it.id }
@@ -118,29 +121,26 @@ internal fun QuranTafsirPanel(
             }
         }
     }
-    var unreadable by remember(verse, packRevision) { mutableStateOf<String?>(null) }
     val meaningTab = !intro && meaning.isNotEmpty() &&
         (chosenTab == "meaning" || commentaries.isEmpty())
     val choices = if (meaningTab) meaning else commentaries
     val preferred = if (meaningTab) concise else scholar
-    val ordinary = choices.find { it.id == preferred }
-    val preferInstalled = ordinary != null && (ordinary.id !in catalog!!.installed || ordinary.id == unreadable)
     val choice = when {
         intro -> books["ashur"]
         linkedBook != null -> books[linkedBook]
-        requestedBook != null -> choices.find { it.id == requestedBook }
-        preferInstalled -> choices.firstOrNull { it.id != ordinary?.id && it.id in catalog!!.installed } ?: ordinary
-        else -> ordinary ?: choices.firstOrNull()
+        else -> choices.find { it.id == preferred } ?: choices.firstOrNull()
     }
     val openingIntro = intro && linkedBook == null
     val targetUnit = if (linkedBook != null) linkedUnit else stepUnit.takeIf {
         stepSurah == verse.surah && stepAyah == verse.ayah && stepBook == choice?.id
     }
-    val result = if (choice != null && !openingIntro) loadTafsir(repository, choice.id, verse, targetUnit, packRevision, retry) {
+    val revision = bookRevision(packRevision, choice?.id)
+    val glossaryRevision = if (choice?.id in conciseBooks) bookRevision(packRevision, "gharib") else null
+    val result = if (choice != null && !openingIntro) loadTafsir(repository, choice.id, verse, targetUnit, revision, glossaryRevision, retry) {
         repository.read(choice.id, verse, targetUnit)
     } else null
-    val introResult = if (openingIntro && choice != null) loadTafsir(repository, verse.surah, retry) {
-        repository.introduction(verse.surah)
+    val introResult = if (openingIntro && choice != null) loadTafsir(repository, verse.surah, revision, retry) {
+        repository.introductionReading(verse.surah)
     } else null
     val reading = result?.getOrNull()
     LaunchedEffect(reading, openingIntro) {
@@ -150,20 +150,15 @@ internal fun QuranTafsirPanel(
             onVerseChange(QuranVerseReference(1, 1))
         }
     }
-    val edition = reading?.book ?: choice
+    val installedIntro = introResult?.getOrNull()
+    val edition = reading?.book ?: installedIntro?.first ?: choice
     val previous = reading?.previous
     val next = reading?.next
-    LaunchedEffect(choice?.id, reading?.unavailable, requestedBook, linkedBook) {
-        if (requestedBook == null && linkedBook == null && choice != null && reading?.unavailable == true &&
-            choice.id == preferred && choices.any { it.id != preferred && it.id in catalog!!.installed }) {
-            unreadable = choice.id
-        }
-    }
-    val introduction = introResult?.getOrNull()
+    val introduction = installedIntro?.second
     val units = if (openingIntro) listOfNotNull(introduction) else reading?.units.orEmpty()
     val exposed = when {
         openingIntro && introduction != null -> introduction.quotedVerses
-        reading != null && !reading.unavailable -> reading.exposed + verse
+        reading != null && (!reading.unavailable || reading.glossary.isNotEmpty()) -> reading.exposed + verse
         else -> emptySet()
     }
     val guarded = if (openingIntro && introduction != null) exposed + verse else exposed
@@ -195,7 +190,7 @@ internal fun QuranTafsirPanel(
     LaunchedEffect(preferredHeight) { tallest = maxOf(tallest, preferredHeight) }
     val isFull = forceFull || expanded || screenHeight - chromeHeight < 4 * fontSize * 1.85f * textScale
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val mainScroll = key(verse, requestedBook ?: preferred, stepUnit, openingIntro) { rememberLazyListState() }
+    val mainScroll = key(verse, preferred, stepUnit, openingIntro) { rememberLazyListState() }
     val linkedScroll = key(linkedBook, linkedUnit) { rememberLazyListState() }
     val scroll = if (linkedBook != null) linkedScroll else mainScroll
     LaunchedEffect(scroll.isScrollInProgress) { if (scroll.isScrollInProgress) touch() }
@@ -208,19 +203,11 @@ internal fun QuranTafsirPanel(
         }
     }
     fun selectBook(id: String) {
-        requestedBook = id
         stepUnit = null
-        if (id in catalog?.installed.orEmpty()) {
-            if (meaningTab) concise = id else scholar = id
-            prefs.edit().putString(if (meaningTab) "meaning" else "books", id).apply()
-        }
+        if (meaningTab) concise = id else scholar = id
+        prefs.edit().putString(if (meaningTab) "meaning" else "books", id).apply()
+        books[id]?.takeIf { it.pack != null }?.let(onRequestBook)
         touch()
-    }
-    LaunchedEffect(requestedBook, catalog?.installed) {
-        requestedBook?.takeIf { it in catalog?.installed.orEmpty() }?.let { id ->
-            if (id in conciseBooks) concise = id else scholar = id
-            prefs.edit().putString(if (id in conciseBooks) "meaning" else "books", id).apply()
-        }
     }
     fun step(forward: Boolean) {
         val target = if (forward) next else previous
@@ -232,7 +219,8 @@ internal fun QuranTafsirPanel(
         onVerseChange(target)
         touch()
     }
-    val selectedAbout = edition?.takeIf { it.id == aboutId } ?: books[aboutId]
+    val glossaryBook = if (choice?.id in conciseBooks) reading?.glossaryBook ?: books["gharib"] else null
+    val selectedAbout = edition?.takeIf { it.id == aboutId } ?: glossaryBook?.takeIf { it.id == aboutId } ?: books[aboutId]
     val panel: @Composable ColumnScope.() -> Unit = {
         val loadFailed = catalog?.status == TafsirCatalogStatus.INVALID || catalogResult?.isFailure == true ||
             result?.isFailure == true || introResult?.isFailure == true
@@ -256,12 +244,11 @@ internal fun QuranTafsirPanel(
             TafsirTabs(meaningTab) { wantMeaning ->
                 chosenTab = if (wantMeaning) "meaning" else "books"
                 prefs.edit().putString("tab", chosenTab).apply()
-                requestedBook = null
                 stepUnit = null
                 touch()
             }
         }
-        if (showControls && choices.size > 1) TafsirBookChoices(choices, choice?.id, ::selectBook)
+        if (showControls && choices.size > 1) TafsirBookChoices(choices, choice?.id, reading?.unavailable == true, bookDownloadSize, ::selectBook)
         when {
             blocked -> Column(Modifier.weight(1f).fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.Center) {
                 Text("لهذه الآيات سؤال ينتظرك. هل تراجعه قبل قراءة التفسير؟")
@@ -281,7 +268,9 @@ internal fun QuranTafsirPanel(
                         if (kotlin.math.abs(dx) >= 55.dp.toPx()) step((dx > 0) == rtl)
                     }) { change, delta -> dx += delta; change.consume() }
                 } else Modifier), scroll = scroll, book = edition ?: choice, units = units,
-                notes = reading?.notes.orEmpty(), glossary = reading?.glossary.orEmpty(), glossaryBook = books["gharib"],
+                notes = reading?.notes.orEmpty(), glossary = reading?.glossary.orEmpty(), glossaryBook = glossaryBook,
+                glossaryMissing = glossaryBook?.pack != null && reading?.glossaryAvailable == false,
+                noteDownloadSize = { id -> books[id]?.let(bookDownloadSize) },
                 verse = verse, verseText = verseText, offPageText = offPageText, showVerse = isFull && !openingIntro, fontSize = fontSize, intro = openingIntro,
                 onBodySpaceNeeded = { missingPx ->
                     if (!isFull && missingPx > 0) {
@@ -289,23 +278,13 @@ internal fun QuranTafsirPanel(
                         tallest = (maxOf(preferredHeight, tallest) + extra).coerceAtMost(heightLimit)
                     }
                 },
-                fallback = ordinary?.title?.takeIf { preferInstalled && requestedBook == null && showControls && choice.id != ordinary.id },
-                unavailable = reading?.unavailable == true, downloadAction = downloadAction?.let { download -> { book ->
-                    download(book, {
-                        val previous = if (scholar == book.id) "juzayy" else scholar
-                        scholar = book.id
-                        prefs.edit().putString("before_download", previous).putString("books", book.id).apply()
-                        touch()
-                    }, {
-                        scholar = prefs.getString("before_download", "juzayy") ?: "juzayy"
-                        prefs.edit().putString("books", scholar).remove("before_download").apply()
-                        requestedBook = null
-                        touch()
-                    })
-                } },
+                unavailable = if (openingIntro) choice.pack != null && introduction == null && verse.surah in choice.introSurahs
+                    else reading?.unavailable == true,
+                downloadAction = downloadAction?.let { download -> { book -> download(book, touch, touch) } },
                 onAbout = { aboutId = it }, onNote = { note ->
                     linkedBook = note.targetBook
                     linkedUnit = note.targetUnit
+                    books[note.targetBook]?.takeIf { it.pack != null }?.let(onRequestBook)
                     touch()
                 },
             )

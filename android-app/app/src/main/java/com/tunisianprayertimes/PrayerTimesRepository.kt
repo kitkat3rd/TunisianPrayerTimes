@@ -4,6 +4,7 @@ import android.content.Context
 import com.tunisianprayertimes.engine.InmPrayerDays
 import com.tunisianprayertimes.engine.PrayerClock
 import com.tunisianprayertimes.engine.PrayerDay
+import com.tunisianprayertimes.engine.SolarEvents
 import com.tunisianprayertimes.engine.TimeEvent
 import com.tunisianprayertimes.method.PrayerMethodChoice
 import com.tunisianprayertimes.place.PlaceTimes
@@ -85,6 +86,14 @@ object PrayerTimesRepository {
 
     /** The saved place (6.8). */
     fun place(context: Context): PrayerPlace = PrefsManager.getPlace(context)
+
+    internal fun solarNoon(context: Context, date: LocalDate, place: PrayerPlace): Instant? {
+        val longitude = when (place) {
+            is PrayerPlace.Inm -> source(context).location(place.delegationId)?.longitude
+            is PrayerPlace.Coordinates -> place.point.longitude
+        } ?: return null
+        return SolarEvents.transit(date, place.zone, longitude)
+    }
 
     /**
      * A place's method choice: its country's saved one where its method is offered at the place, else the country's

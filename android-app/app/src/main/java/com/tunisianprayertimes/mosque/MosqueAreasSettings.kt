@@ -111,6 +111,7 @@ internal fun MosqueAreasSettings(
                             onCheckedChange = { onStrictChange(area, it) },
                         )
                     }
+                    CatalogueUpdateAction(area)
                     PrayerSettingsDivider()
                     Row(
                         modifier = Modifier.padding(horizontal = 6.dp),
@@ -141,11 +142,5 @@ internal fun MosqueAreasSettings(
                 PrayerSettingsLink(title = stringResource(R.string.mosque_export), onClick = onExport)
             }
         }
-        Text(
-            stringResource(R.string.mosque_privacy),
-            style = MaterialTheme.typography.bodySmall,
-            color = PrayerSilencePalette.SecondaryText,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
     }
 }

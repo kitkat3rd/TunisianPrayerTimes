@@ -140,18 +140,17 @@ internal fun SharedSilenceSettingsSheet(
                     .padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = stringResource(R.string.prayer_silence_shared_title),
+                        modifier = Modifier.weight(1f),
                         color = PrayerSilencePalette.PrimaryText,
                         fontSize = 21.sp,
                         fontWeight = FontWeight.Bold,
                     )
-                    Text(
+                    AppInfoButton(
+                        title = stringResource(R.string.prayer_silence_shared_title),
                         text = stringResource(R.string.prayer_silence_shared_body),
-                        color = PrayerSilencePalette.PrimaryText.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
                     )
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -219,22 +218,6 @@ internal fun SharedSilenceSettingsSheet(
                     onClockClick = { clockTarget = SharedClockTarget.END },
                     offsets = SharedEndOffsets,
                 )
-                if (startAdhan || endAdhan) {
-                    Text(
-                        text = stringResource(R.string.prayer_silence_shared_relative_help),
-                        color = PrayerSilencePalette.PrimaryText.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
-                    )
-                }
-                if (!startAdhan || !endAdhan) {
-                    Text(
-                        text = stringResource(R.string.prayer_silence_shared_fixed_help),
-                        color = PrayerSilencePalette.PrimaryText.copy(alpha = 0.7f),
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
-                    )
-                }
                 if (!offsetsValid) {
                     Text(
                         text = stringResource(R.string.prayer_editor_invalid_number),

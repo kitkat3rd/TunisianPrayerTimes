@@ -142,14 +142,6 @@ internal fun AdhkarHeroCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    if (morning) "ابدأ يومك بذكر الله" else "اختم يومك بذكر الله",
-                    color = ink.copy(alpha = if (morning) .86f else .9f),
-                    fontSize = 10.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
                 Spacer(Modifier.height(5.dp))
                 Row(
                     modifier = Modifier

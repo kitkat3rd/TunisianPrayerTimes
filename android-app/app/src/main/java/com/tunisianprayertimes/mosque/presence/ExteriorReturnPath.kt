@@ -129,7 +129,7 @@ internal class ExteriorReturnPath(private val polygons: List<SilencePolygon>) {
             return false
         }
         val previous = last
-        if (previous != null && (at - previous.fix.elapsedRealtimeMillis > 15_000 ||
+        if (previous != null && (at - previous.fix.elapsedRealtimeMillis > MAX_DEPARTURE_GAP_MILLIS ||
                 !reachable(previous.fix, fix) || !exteriorChord(previous.fix.point, fix.point) ||
                 along + accuracy / 2 < previous.along)) clearMatch()
         val match = Match(fix, along)
@@ -147,7 +147,7 @@ internal class ExteriorReturnPath(private val polygons: List<SilencePolygon>) {
         return along - start.along > progress && separation(start.fix.point, fix.point) > progress
     }
 
-    private fun clearMatch() {
+    fun clearMatch() {
         first = null
         last = null
         samples = 0

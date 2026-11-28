@@ -70,6 +70,7 @@ class BootReceiver : BroadcastReceiver() {
             .onFailure { Log.w("BootReceiver", "Failed to refresh the hifz reminder", it) }
         runCatching { com.tunisianprayertimes.fasting.FastingReminder.refresh(context) }
             .onFailure { Log.w("BootReceiver", "Failed to refresh the fasting reminder", it) }
+        com.tunisianprayertimes.worship.WorshipReminder.refreshAll(context)
         runCatching { com.tunisianprayertimes.remembrance.DeathReminder.refresh(context) }
             .onFailure { Log.w("BootReceiver", "Failed to refresh the remembrance reminder", it) }
         runCatching { com.tunisianprayertimes.adhan.AdhanScheduler.refresh(context) }

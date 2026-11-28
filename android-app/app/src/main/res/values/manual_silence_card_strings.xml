@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Prayer tab: manual silencing card -->
-    <string name="manual_silence_subtitle_idle">أسكت الهاتف الآن، واختر متى ينتهي الإسكات اليدوي.</string>
     <string name="manual_silence_active_title">الهاتف صامت</string>
     <string name="manual_silence_active_until_time">ينتهي الإسكات اليدوي عند %1$s</string>
     <string name="manual_silence_active_until_prayer">ينتهي الإسكات اليدوي عند صلاة %1$s</string>

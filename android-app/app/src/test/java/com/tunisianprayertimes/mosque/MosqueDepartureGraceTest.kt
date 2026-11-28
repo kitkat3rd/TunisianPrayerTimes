@@ -20,6 +20,7 @@ import com.tunisianprayertimes.SilenceScheduler
 import com.tunisianprayertimes.SilenceVerifyWorker
 import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
 import com.tunisianprayertimes.mosque.presence.GeoPoint
+import com.tunisianprayertimes.mosque.presence.PresenceState
 import com.tunisianprayertimes.mosque.presence.SilencePolygon
 import com.tunisianprayertimes.platform.SharedAndroid
 import com.tunisianprayertimes.silence.SilenceWindow
@@ -103,7 +104,10 @@ abstract class MosqueGraceFixture {
     protected fun plan() = MosqueSilenceMonitor.plan(context, token)
     protected fun requested() = SilenceCoordinator.requested(context, SilenceOwner.MOSQUE)
 
-    protected fun fix(offsetSeconds: Long, inside: Boolean = true) {
+    protected fun fix(offsetSeconds: Long, inside: Boolean = true) =
+        fixAtLongitude(offsetSeconds, if (inside) 0.0005 else 0.0016)
+
+    protected fun fixAtLongitude(offsetSeconds: Long, longitudeDegrees: Double) {
         at(offsetSeconds)
         val plan = requireNotNull(plan())
         if (acceptedGeneration != plan.generation) {
@@ -112,7 +116,7 @@ abstract class MosqueGraceFixture {
         }
         val location = Location(LocationManager.GPS_PROVIDER).apply {
             latitude = 0.0005
-            longitude = if (inside) 0.0005 else 0.0016
+            longitude = longitudeDegrees
             accuracy = 4f
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
             time = wall.toEpochMilli()
@@ -140,6 +144,41 @@ abstract class MosqueGraceFixture {
 @Config(sdk = [30], application = Application::class, shadows = [AvailablePlayServices::class],
     instrumentedPackages = ["com.google.android.gms.common"])
 class MosqueDepartureGraceTest : MosqueGraceFixture() {
+    @Test fun crossingWithoutFurtherLocationUpdatesReleasesAtTheDeadlineAlarm() {
+        begin(secondsBeforeEnd = 180)
+        fix(-180, inside = false)
+        fix(-145)
+        assertEquals(PresenceState.ENTERING, requireNotNull(plan()).state)
+        assertTrue(requested())
+
+        at(-101)
+        assertEquals(PresenceState.ENTERING, requireNotNull(plan()).state)
+        assertTrue(requested())
+        at(-100)
+        MosqueControlReceiver().onReceive(context, Intent(MosqueControlReceiver.DEADLINE))
+        assertFalse(requested())
+        assertEquals(PresenceState.ACQUIRING, requireNotNull(plan()).state)
+    }
+
+    @Test fun oneCrossingRequestsTheMosqueRuleUntilAnOutsideReadingReversesIt() {
+        begin(secondsBeforeEnd = 180)
+        fix(-180, inside = false)
+        assertFalse(requested())
+
+        fix(-145)
+        val entering = requireNotNull(plan())
+        assertTrue(requested())
+        assertEquals(PresenceState.ENTERING, entering.state)
+        assertEquals(SystemClock.elapsedRealtime() + 45_000L, entering.deadlineElapsed)
+
+        fix(-112, inside = false)
+        assertFalse(requested())
+        assertEquals(PresenceState.ACQUIRING, requireNotNull(plan()).state)
+        endAlarm()
+        assertNull(AdaptiveMosqueMonitor.periods(context).continuationEnd)
+        assertFalse(requested())
+    }
+
     @Test fun confirmedVisitSurvivesEndAlarmThenReleasesOnMeasuredDeparture() {
         begin()
         confirm()
@@ -161,6 +200,7 @@ class MosqueDepartureGraceTest : MosqueGraceFixture() {
         assertEquals(window.end.plusSeconds(900).toEpochMilli(), MosqueSilenceMonitor.endWall(context))
         fix(40)
         fix(80, inside = false)
+        fix(90, inside = false)
         fix(99, inside = false)
         assertTrue(requested())
         fix(100, inside = false)

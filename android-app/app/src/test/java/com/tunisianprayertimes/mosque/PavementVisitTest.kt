@@ -94,6 +94,8 @@ class PavementVisitTest {
         val passer = Walk(listOf(narrow))
         approach(passer)
         passer.fix(5, 0, 7.0)
+        passer.fix(-2, 0, 7.0)
+        assertTrue("one ambiguous exterior centre cannot undo the recent crossing", passer.observation.desired)
         repeat(12) {
             passer.fix(-2, 0, 7.0)
             assertFalse("one stray point inside cannot authorize a stop outside", passer.observation.desired)
@@ -234,7 +236,9 @@ class PavementVisitTest {
         }
         walk.fix(-25, 70, 6.0, seconds = 15)
         assertTrue("one ordinary outside fix after an ambiguous path", walk.observation.desired)
-        walk.fix(-25, 70, 6.0, seconds = 20)
+        walk.fix(-25, 70, 6.0, seconds = 10)
+        assertTrue(walk.observation.desired)
+        walk.fix(-25, 70, 6.0, seconds = 10)
         assertFalse(walk.observation.desired)
     }
 
@@ -248,7 +252,9 @@ class PavementVisitTest {
         }
         walk.fix(-25, -40, 6.0, seconds = 15)
         assertTrue(walk.observation.desired)
-        walk.fix(-25, -40, 6.0, seconds = 20)
+        walk.fix(-25, -40, 6.0, seconds = 10)
+        assertTrue(walk.observation.desired)
+        walk.fix(-25, -40, 6.0, seconds = 10)
         assertFalse(walk.observation.desired)
     }
 

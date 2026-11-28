@@ -1,5 +1,6 @@
 package com.tunisianprayertimes.ui
 
+import android.Manifest
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
@@ -21,6 +22,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -44,6 +46,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.PrefsManager
+import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import com.tunisianprayertimes.worship.NightPrayerWindow
 import com.tunisianprayertimes.worship.VoluntaryPrayerTimes
 import com.tunisianprayertimes.worship.VoluntaryPrayerWindow
@@ -59,6 +63,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -108,9 +113,59 @@ class VoluntaryPrayerUiTest {
     }
 
     @Test
+    fun duhaReminderCanBeSetAndTurnedOffFromTheRowAtDoubleTextSize() {
+        PrefsManager.markFirstLaunchDone(context)
+        shadowOf(context.applicationContext as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        RuntimeEnvironment.setFontScale(2f)
+        compose.setContent { TunisianPrayerTimesTheme(fontFamily = AppFontFamily) { CardsScreen(fontScale = 2f) } }
+        val button = compose.onNodeWithTag("duha_reminder_action")
+        button.performScrollTo().performClick()
+        savePreview("duha-reminder-choices-font-200", "duha_reminder_choices")
+        compose.onNodeWithText(text(R.string.duha_reminder_middle)).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(text(R.string.duha_reminder_daily)).fetchSemanticsNodes().isNotEmpty() }
+        button.performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.worship_reminder_off)).performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(text(R.string.duha_reminder_daily)).fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("duha_reminder_choices").assertDoesNotExist()
+    }
+
+    @Test
+    fun qiyamHasItsOwnCardAndReminderChoices() {
+        PrefsManager.markFirstLaunchDone(context)
+        shadowOf(context.applicationContext as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        compose.setContent { TunisianPrayerTimesTheme(fontFamily = AppFontFamily) { CardsScreen() } }
+        val duha = compose.onNodeWithTag("worship_duha_card").getUnclippedBoundsInRoot()
+        val qiyam = compose.onNodeWithTag("worship_night_card").getUnclippedBoundsInRoot()
+        assertTrue("The cards have space between them", qiyam.top - duha.bottom >= 12.dp)
+        val action = compose.onNodeWithTag("qiyam_reminder_action")
+        action.performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.qiyam_reminder_after_isha)).assertIsDisplayed()
+        savePreview("qiyam-reminder-choices", "qiyam_reminder_choices")
+        compose.onNodeWithText(text(R.string.qiyam_reminder_last_third)).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(text(R.string.qiyam_reminder_enabled)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(text(R.string.duha_reminder_daily)).assertDoesNotExist()
+        action.performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.worship_reminder_off)).performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(text(R.string.qiyam_reminder_enabled)).fetchSemanticsNodes().isEmpty() }
+    }
+
+    @Test
+    fun qiyamPickerFitsAtDoubleTextSize() {
+        RuntimeEnvironment.setFontScale(2f)
+        compose.setContent { TunisianPrayerTimesTheme(fontFamily = AppFontFamily) { CardsScreen(fontScale = 2f) } }
+        compose.onNodeWithTag("qiyam_reminder_action").performScrollTo().performClick()
+        for (label in listOf(R.string.qiyam_reminder_after_isha, R.string.qiyam_reminder_last_third, R.string.worship_reminder_off)) {
+            compose.onNodeWithText(text(label)).performScrollTo().assertIsDisplayed()
+        }
+        savePreview("qiyam-reminder-choices-font-200", "qiyam_reminder_choices")
+        compose.onNodeWithText(text(R.string.worship_times_close)).assertIsDisplayed().performClick()
+    }
+
+    @Test
     fun duhaDetailsExplainEstimatedSolarBoundariesAndCanBeDismissed() {
         compose.setContent { CardsScreen() }
-        compose.onNodeWithText(text(R.string.worship_duha_subtitle)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.worship_period_estimate, text(R.string.worship_today))).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.worship_duha_calculation)).assertDoesNotExist()
         savePreview("duha-normal", "voluntary_prayer_screen")
         openDetails("worship_duha_details")
         compose.onNodeWithText(text(R.string.worship_duha_explanation)).performScrollTo().assertIsDisplayed()
@@ -122,14 +177,13 @@ class VoluntaryPrayerUiTest {
     }
 
     @Test
-    fun nightDetailsExposeBothSources() {
+    fun nightDetailsExplainTheLastThirdAndCanBeDismissed() {
         compose.setContent { CardsScreen() }
         openDetails("worship_night_details")
         compose.onNodeWithText(text(R.string.worship_night_explanation)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.worship_night_calculation)).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText(text(R.string.worship_source_thirds)).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText(text(R.string.worship_source_prayer_times)).performScrollTo().assertIsDisplayed()
-        savePreview("night-sources", "worship_time_explanation")
+        compose.onNodeWithText("المصدر:", substring = true).assertDoesNotExist()
+        savePreview("night-explanation", "worship_time_explanation")
         closeDetails()
     }
 
@@ -155,15 +209,15 @@ class VoluntaryPrayerUiTest {
         val times = mutableStateOf(schedule)
         compose.setContent { CardsScreen(times = times.value, now = now.value) }
         compose.onNodeWithText(text(R.string.worship_duha_in, "أقل من دقيقة")).assertExists()
-        compose.onNodeWithText(text(R.string.worship_today)).assertExists()
+        compose.onNodeWithText(text(R.string.worship_period_estimate, text(R.string.worship_today))).assertExists()
         compose.runOnIdle { now.value = duha.start }
         compose.onNodeWithText(text(R.string.worship_duha_active, "4 ساعات و20 دقيقة")).assertExists()
         compose.runOnIdle { now.value = duha.end }
         compose.onNodeWithText(text(R.string.worship_duha_ended)).assertExists()
         // Once the engine gives tomorrow's period, the card says so instead of counting down.
         compose.runOnIdle { times.value = schedule.copy(duhaDate = date.plusDays(1)) }
-        compose.onNodeWithText(text(R.string.worship_tomorrow)).assertExists()
-        compose.onNodeWithText(text(R.string.worship_duha_tomorrow)).assertExists()
+        compose.onNodeWithText(text(R.string.worship_period_estimate, text(R.string.worship_tomorrow))).assertExists()
+        compose.onNodeWithText(text(R.string.worship_duha_ended)).assertDoesNotExist()
         compose.runOnIdle { times.value = schedule }
 
         compose.runOnIdle { now.value = night.isha.minusSeconds(60) }
@@ -227,7 +281,10 @@ class VoluntaryPrayerUiTest {
         listOf("worship_duha_details", "worship_night_details").forEach { tag ->
             val button = compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed().assertIsEnabled()
             savePreview("$tag-font-$suffix", "voluntary_prayer_screen")
-            assertCompleteControl(button, viewport.left.value, viewport.right.value)
+            assertControlBounds(button, viewport.left.value, viewport.right.value)
+            val descriptions = button.fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
+            val title = text(if (tag == "worship_duha_details") R.string.worship_duha_title else R.string.worship_night_title)
+            assertTrue("The icon announces its own calculation", descriptions.any { it.contains(title) })
             button.performClick()
             compose.onNodeWithTag("worship_time_explanation").assertIsDisplayed()
             val explanationId = if (tag == "worship_duha_details") R.string.worship_duha_explanation else R.string.worship_night_explanation
@@ -237,9 +294,11 @@ class VoluntaryPrayerUiTest {
             explanationLayouts.forEach {
                 assertEquals("The separate modal window uses the requested font scale", fontScale, it.layoutInput.density.fontScale, 0f)
             }
-            val source = compose.onNodeWithText(text(R.string.worship_source_prayer_times)).performScrollTo().assertIsDisplayed()
-            savePreview("$tag-source-font-$suffix", "worship_time_explanation")
-            assertCompleteControl(source, viewport.left.value, viewport.right.value)
+            if (tag == "worship_duha_details") {
+                val source = compose.onNodeWithText(text(R.string.worship_source_prayer_times)).performScrollTo().assertIsDisplayed()
+                savePreview("$tag-source-font-$suffix", "worship_time_explanation")
+                assertCompleteControl(source, viewport.left.value, viewport.right.value)
+            }
             val close = compose.onNodeWithTag("worship_time_close").performScrollTo().assertIsDisplayed()
             assertCompleteControl(close, viewport.left.value, viewport.right.value)
             savePreview("$tag-sheet-font-$suffix", "worship_time_explanation")
@@ -248,7 +307,7 @@ class VoluntaryPrayerUiTest {
         }
     }
 
-    private fun assertCompleteControl(node: SemanticsNodeInteraction, left: Float, right: Float) {
+    private fun assertControlBounds(node: SemanticsNodeInteraction, left: Float, right: Float) {
         val bounds = node.getUnclippedBoundsInRoot()
         assertTrue("Control stays inside the left edge", bounds.left.value >= left - 1f)
         assertTrue("Control stays inside the right edge", bounds.right.value <= right + 1f)
@@ -258,6 +317,12 @@ class VoluntaryPrayerUiTest {
         val visible = node.fetchSemanticsNode().boundsInRoot
         assertTrue("No ancestor clips the control horizontally", visible.width + 1f >= (bounds.right - bounds.left).value)
         assertTrue("No ancestor clips the control vertically", visible.height + 1f >= (bounds.bottom - bounds.top).value)
+    }
+
+    private fun assertCompleteControl(node: SemanticsNodeInteraction, left: Float, right: Float) {
+        assertControlBounds(node, left, right)
+        val bounds = node.getUnclippedBoundsInRoot()
+        val visible = node.fetchSemanticsNode().boundsInRoot
         val layouts = mutableListOf<TextLayoutResult>()
         node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertTrue("Control text has a layout", layouts.isNotEmpty())

@@ -102,6 +102,64 @@ class AdhanAlertDeliveryTest {
     }
 
     @Test
+    fun raisingRingVolumeStartsAtTheCurrentWaveformPosition() {
+        audio.setStreamVolume(AdhanPlaybackService.ADHAN_STREAM, 0, 0)
+        deliver(occurrence())
+        awaitDecision()
+        val quiet = AdhanPlaybackService.alert.value!!
+
+        // An in-progress waveform can resume even beyond the late-delivery cutoff.
+        val elapsed = AdhanDecision.LATE_SOUND_MILLIS + 5_000
+        shadowOf(Looper.getMainLooper()).idleFor(elapsed, TimeUnit.MILLISECONDS)
+        audio.setStreamVolume(AdhanPlaybackService.ADHAN_STREAM, 4, 0)
+        context.contentResolver.notifyChange(Settings.System.CONTENT_URI, null)
+        awaitDecision(sounding = true)
+
+        val player = players.single()
+        assertTrue(player.isPlaying)
+        assertEquals(elapsed, player.currentPosition.toLong())
+        val audible = AdhanPlaybackService.alert.value!!
+        assertEquals(quiet.voice, audible.voice)
+        assertEquals(quiet.startedAtUptimeMillis, audible.startedAtUptimeMillis)
+        assertNull(audible.quietReasonResId)
+        assertNull(notification().fullScreenIntent)
+    }
+
+    @Test
+    fun thePhoneMustLeaveVibrateModeBeforeTheAdhanBecomesAudible() {
+        audio.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+        deliver(occurrence())
+        awaitDecision()
+        assertSilentWave(R.string.adhan_quiet_silent_phone)
+
+        audio.setStreamVolume(AdhanPlaybackService.ADHAN_STREAM, 6, 0)
+        context.contentResolver.notifyChange(Settings.System.CONTENT_URI, null)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertSilentWave(R.string.adhan_quiet_silent_phone)
+
+        audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        context.sendBroadcast(Intent(AudioManager.RINGER_MODE_CHANGED_ACTION).setPackage(context.packageName))
+        awaitDecision(sounding = true)
+        assertTrue(players.single().isPlaying)
+    }
+
+    @Test
+    fun anAdhanThatStartedUnderAppSilenceStaysQuietWhenTheRingerReturns() {
+        PrefsManager.markManualSilenceActive(context, AudioManager.RINGER_MODE_NORMAL, NotificationManager.INTERRUPTION_FILTER_ALL)
+        audio.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+        deliver(occurrence())
+        awaitDecision()
+        assertSilentWave(R.string.adhan_quiet_silent_phone)
+        assertFalse(AdhanPlaybackService.alert.value!!.canResume)
+
+        PrefsManager.clearManualSilenceState(context)
+        audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        context.sendBroadcast(Intent(AudioManager.RINGER_MODE_CHANGED_ACTION).setPackage(context.packageName))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertSilentWave(R.string.adhan_quiet_silent_phone)
+    }
+
+    @Test
     fun aQuietCountdownReachesTheQuietPrayerPageInsteadOfClosing() {
         audio.ringerMode = AudioManager.RINGER_MODE_SILENT
         val occurrence = occurrence(15_000L)
@@ -203,7 +261,7 @@ class AdhanAlertDeliveryTest {
     }
 
     @Test
-    fun aDuplicateDeliveryKeepsTheQuietReasonAndCloseButton() {
+    fun aDuplicateDeliveryKeepsTheQuietNotification() {
         audio.ringerMode = AudioManager.RINGER_MODE_SILENT
         val occurrence = occurrence()
         deliver(occurrence)
@@ -329,12 +387,14 @@ class AdhanAlertDeliveryTest {
         )
     }
 
-    private fun awaitDecision(expected: AdhanScheduler.Occurrence? = null) {
+    private fun awaitDecision(expected: AdhanScheduler.Occurrence? = null, sounding: Boolean? = null) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (System.nanoTime() < deadline) {
             shadowOf(Looper.getMainLooper()).idle()
             val alert = AdhanPlaybackService.alert.value
-            if (alert?.countingDown == false && (expected == null || alert.occurrence == expected)) return
+            if (alert?.countingDown == false && (expected == null || alert.occurrence == expected) &&
+                (sounding == null || alert.sounding == sounding)
+            ) return
             if (shadowOf(controller.get()).isStoppedBySelf) return
             Thread.sleep(5)
         }

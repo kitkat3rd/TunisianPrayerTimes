@@ -11,6 +11,7 @@ import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -78,10 +79,10 @@ class FirstRunSilenceScreenTest {
 
     @Test fun choosingAModeIsOnlyAPreviewAndCanBeSkippedAfterRotation() {
         val restoration = show()
-        compose.onNodeWithTag("onboarding_silence_time").assertIsSelected()
-        compose.onNodeWithTag("onboarding_silence_mosque").performScrollTo().performClick()
+        compose.onNodeWithTag("silence_method_time").assertIsSelected()
+        compose.onNodeWithTag("silence_method_mosque").performScrollTo().performClick()
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("onboarding_silence_mosque").assertIsSelected()
+        compose.onNodeWithTag("silence_method_mosque").assertIsSelected()
         compose.onNodeWithText(app.getString(R.string.first_silence_decline)).performClick()
         assertEquals(1, finishes)
         assertTrue(launches.isEmpty())
@@ -93,7 +94,7 @@ class FirstRunSilenceScreenTest {
 
     @Test fun cancelFromMosqueSetupReturnsToTheChosenModeWithoutEnabling() {
         show()
-        compose.onNodeWithTag("onboarding_silence_mosque").performScrollTo().performClick()
+        compose.onNodeWithTag("silence_method_mosque").performScrollTo().performClick()
         compose.onNodeWithTag("onboarding_silence_setup").performClick()
         val expected = MosqueSettingsActivity.onboardingIntent(app, AutomaticSilenceMode.TIME_AND_MOSQUE)
         assertEquals(expected.component, launches.single().component)
@@ -103,7 +104,7 @@ class FirstRunSilenceScreenTest {
         }
         compose.runOnIdle { registry.dispatchResult(pendingCode, ActivityResult(Activity.RESULT_CANCELED, null)) }
         compose.onNodeWithText(app.getString(R.string.first_silence_off)).assertExists()
-        compose.onNodeWithTag("onboarding_silence_mosque").assertIsSelected()
+        compose.onNodeWithTag("silence_method_mosque").assertIsSelected()
         assertFalse(PrefsManager.isAutomaticSilenceRequested(app))
         assertEquals(0, finishes)
     }
@@ -130,11 +131,22 @@ class FirstRunSilenceScreenTest {
         show()
         compose.waitUntil(5_000) { compose.onAllNodesWithText(dnd, substring = true).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(app.getString(R.string.first_silence_resume)).assertExists()
+        compose.onNodeWithText(app.getString(R.string.first_silence_turn_off)).assertIsDisplayed()
         compose.onNodeWithTag("onboarding_silence_continue").performClick()
         assertEquals(1, finishes)
         assertFalse(PrefsManager.isAutomaticSilenceRequested(app))
         assertFalse(PrefsManager.isFirstRunSilencePending(app))
         assertTrue(launches.isEmpty())
+    }
+
+    @Test @Config(qualifiers = "ar-rTN-w640dp-h320dp-land-mdpi")
+    fun shallowWindowCanScrollFromTheMethodChoicesToBothActions() {
+        show()
+        compose.onNodeWithTag("silence_method_mosque").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithTag("onboarding_silence_setup").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("onboarding_silence_continue").performScrollTo().assertIsDisplayed().performClick()
+        assertTrue(launches.isEmpty())
+        assertEquals(1, finishes)
     }
 
     @Test fun provisionalCityCanDeferWithoutEnablingOrConfirmingIt() {
@@ -151,8 +163,8 @@ class FirstRunSilenceScreenTest {
 
     @Test @Config(sdk = [28]) fun androidNineExplainsThatMosqueSilenceIsUnavailable() {
         show()
-        compose.onNodeWithTag("onboarding_silence_mosque").assertIsNotSelected().assertIsNotEnabled()
-        compose.onNodeWithTag("onboarding_silence_time").assertIsSelected()
+        compose.onNodeWithTag("silence_method_mosque").assertIsNotSelected().assertIsNotEnabled()
+        compose.onNodeWithTag("silence_method_time").assertIsSelected()
         assertTrue(launches.isEmpty())
     }
 }

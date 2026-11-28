@@ -86,7 +86,7 @@ import kotlinx.coroutines.withContext
 /**
  * The full-screen countdown of the warning (owner's idea, 2026-11-15): the prayer, the seconds left and one large
  * «إلغاء هذا الأذان», over the lock screen. At prayer time the waveform follows the recording, with a silence
- * reason and «إغلاق» when the phone is silenced. A volume key cancels the countdown or dismisses a brief reminder.
+ * reason when the phone is silenced. A volume key cancels the countdown or dismisses a brief reminder.
  * While audio is available, volume down mutes it, the first volume up brings it back, and then volume up raises
  * the ring volume as usual. The on-screen slider adjusts the current recording's gain.
  * Android opens the page only on a locked or dark phone; a phone in use shows the notification's banner.
@@ -172,6 +172,7 @@ class AdhanAlertActivity : ComponentActivity() {
         // A held key the page already used keeps doing nothing, even once the page has no adhan.
         if (event.repeatCount > 0 && keyCode in swallowedKeys) return true
         val shown = AdhanPlaybackService.alert.value ?: return super.onKeyDown(keyCode, event)
+        if (shown.canResume) return super.onKeyDown(keyCode, event)
         if (shown.sounding) {
             when {
                 // Volume up on a heard adhan takes the default way, on [volumeControlStream].
@@ -305,10 +306,11 @@ private fun AdhanAlertContent(alert: AdhanAlert, seconds: Long, share: Float, on
                 textAlign = TextAlign.Center,
             )
         }
-        Spacer(Modifier.height(if (voice != null) 12.dp else 36.dp))
         if (alert.onVolumeChange != null) {
+            Spacer(Modifier.height(12.dp))
             AdhanPlaybackControls(alert.volume, alert.onVolumeChange, onStop = onCancel)
-        } else {
+        } else if (alert.countingDown) {
+            Spacer(Modifier.height(36.dp))
             Button(
                 onClick = onCancel,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
@@ -317,7 +319,7 @@ private fun AdhanAlertContent(alert: AdhanAlert, seconds: Long, share: Float, on
                 colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Paper),
             ) {
                 Text(
-                    text = stringResource(if (alert.countingDown) R.string.adhan_soon_cancel else R.string.adhan_close),
+                    text = stringResource(R.string.adhan_soon_cancel),
                     fontSize = 19.sp,
                     fontWeight = FontWeight.SemiBold,
                 )

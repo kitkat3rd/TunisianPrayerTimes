@@ -179,7 +179,10 @@ class WakeAlarmLayoutTest {
                 onAdd = { added = it }, onDismiss = {})
         }
         compose.onNodeWithText(activity.getString(R.string.wake_editor_minutes_short, 45)).performScrollTo().performClick()
+        val gentleDetail = compose.onNodeWithText(activity.getString(R.string.wake_fajr_suggestion_gentle_body))
+        gentleDetail.assertDoesNotExist()
         compose.onNodeWithText(activity.getString(R.string.wake_fajr_suggestion_gentle_title)).performScrollTo().performClick()
+        gentleDetail.assertExists()
         val add = compose.onNodeWithText(activity.getString(R.string.wake_fajr_suggestion_add))
         add.performScrollTo().performClick()
         compose.onNodeWithTag("feature_cancel_place").performClick()

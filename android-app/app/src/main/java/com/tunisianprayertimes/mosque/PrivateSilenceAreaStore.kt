@@ -10,7 +10,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-data class SavedSilenceArea(val name: String, val geometry: SilenceArea)
+data class SavedSilenceArea(val name: String, val geometry: SilenceArea, val catalogueBase: String? = null)
 data class SilenceAreaRead(val areas: List<SavedSilenceArea>, val available: Boolean, val rejected: Int = 0)
 
 /** Private areas and unfinished drafts never enter cloud backup or device transfer. No raw GPS fixes. */
@@ -42,7 +42,7 @@ object PrivateSilenceAreaStore {
                     val name = item.getString("name").trim()
                     require(name.isNotEmpty() && name.length <= 100)
                     SavedSilenceArea(name, SilenceArea(id, item.getLong("revision"), shapes, item.optBoolean("enabled", false),
-                        item.optBoolean("requireStrongerEvidence", false)))
+                        item.optBoolean("requireStrongerEvidence", false)), item.optString("catalogueBase").takeIf { it.isNotBlank() })
                 }.getOrElse { rejected++; null }
             }
             SilenceAreaRead(areas, true, rejected)
@@ -70,11 +70,25 @@ object PrivateSilenceAreaStore {
             }
             require(previous != null || current.areas.size < MAX_AREAS)
             val area = SavedSilenceArea(draft.name.trim(), SilenceArea(id,
-                (previous?.geometry?.revision ?: 0) + 1, polygons, draft.enabled, previous?.geometry?.requireStrongerEvidence ?: false))
+                (previous?.geometry?.revision ?: 0) + 1, polygons, draft.enabled, previous?.geometry?.requireStrongerEvidence ?: false),
+                draft.catalogueBase ?: previous?.catalogueBase)
             write(context, current.areas.filterNot { it.geometry.id == area.geometry.id } + area)
             clearDraft(context, draft.key)
         }
         MosqueSilenceMonitor.environmentChanged(context)
+    }
+
+    internal fun applyCatalogueUpdate(context: Context, saved: SavedSilenceArea, publicRecord: Mosque) {
+        require(saved.geometry.id == "catalogue:" + publicRecord.id)
+        val approved = publicRecord.approvedPolygons()
+        require(approved.isNotEmpty())
+        mutate(context) { areas ->
+            check(areas.any { it.geometry.id == saved.geometry.id && it.geometry.revision == saved.geometry.revision })
+            areas.map { area -> if (area.geometry.id != saved.geometry.id) area else area.copy(
+                geometry = area.geometry.copy(polygons = approved, revision = area.geometry.revision + 1),
+                catalogueBase = com.tunisianprayertimes.BuildConfig.MOSQUE_CATALOG_VERSION)
+            }
+        }
     }
 
     fun setStricter(context: Context, id: String, stricter: Boolean) {
@@ -98,7 +112,7 @@ object PrivateSilenceAreaStore {
             areas.forEach { saved -> put(JSONObject().put("id", saved.geometry.id).put("name", saved.name)
                 .put("revision", saved.geometry.revision).put("enabled", saved.geometry.enabled)
                 .put("requireStrongerEvidence", saved.geometry.requireStrongerEvidence)
-                .put("polygons", polygonsJson(saved.geometry.polygons))) }
+                .put("catalogueBase", saved.catalogueBase).put("polygons", polygonsJson(saved.geometry.polygons))) }
         })
         atomicWrite(file(context), json.toString())
     }
@@ -110,7 +124,7 @@ object PrivateSilenceAreaStore {
             check(current == null || current.key == value.key) { "DRAFT_ALREADY_EXISTS" }
             val json = JSONObject().put("name", value.name.take(100)).put("coordinates", value.coordinates)
                 .put("id", value.id ?: JSONObject.NULL).put("enabled", value.enabled)
-                .put("key", value.key).put("mode", value.mode.name)
+                .put("key", value.key).put("mode", value.mode.name).put("catalogueBase", value.catalogueBase)
             if (value.fixedPolygons.isNotEmpty()) json.put("polygons", polygonsJson(value.fixedPolygons))
             value.cataloguePin?.let { json.put("pin", JSONArray().put(it.longitude).put(it.latitude)) }
             atomicWrite(draft(context), json.toString())
@@ -129,6 +143,7 @@ object PrivateSilenceAreaStore {
             AreaDraft(
                 id, json.getString("name"), json.getString("coordinates"), enabled,
                 key = json.optString("key", "legacy-draft"),
+                catalogueBase = json.optString("catalogueBase").takeIf { it.isNotBlank() },
                 mode = BoundaryEditMode.entries.firstOrNull { it.name == json.optString("mode") } ?: BoundaryEditMode.VIEW,
                 fixedPolygons = json.optJSONArray("polygons")?.let(::parsePolygons).orEmpty(),
                 cataloguePin = json.optJSONArray("pin")?.let { GeoPoint(it.getDouble(1), it.getDouble(0)) },

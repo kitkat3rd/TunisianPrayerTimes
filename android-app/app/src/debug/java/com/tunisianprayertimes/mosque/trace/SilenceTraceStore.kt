@@ -85,7 +85,18 @@ object SilenceTraceStore {
         val db = database ?: return false
         val expected = sessionId ?: db.active?.id ?: return false
         return try {
-            db.append(expected, db.timelineTime(at, elapsedMillis), kind, detail, latitude, longitude, accuracyMeters)
+            val time = db.timelineTime(at, elapsedMillis)
+            val saved = db.append(expected, time, kind, detail, latitude, longitude, accuracyMeters)
+            if (saved) {
+                val sharing = com.tunisianprayertimes.mosque.MosqueWalkSharing
+                when (kind) {
+                    "route" -> if (latitude != null && longitude != null) sharing.route(context,time,longitude,latitude,accuracyMeters)
+                    "route_provider","recorder_error","recording_interrupted" -> sharing.event(context,time,"route_gap")
+                    "test_arrived" -> sharing.event(context,time,"manual_arrival")
+                    "test_left" -> sharing.event(context,time,"manual_departure")
+                }
+            }
+            saved
         } catch (_: SQLiteException) {
             // A full disk or broken diagnostics database must not change the actual DND decision.
             Log.w("SilenceTrace", "Could not persist a test event")

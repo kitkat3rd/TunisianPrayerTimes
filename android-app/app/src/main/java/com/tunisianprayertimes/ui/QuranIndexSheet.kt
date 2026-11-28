@@ -26,6 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -295,10 +296,7 @@ private fun ColumnScope.RecentList(
     val state = rememberLazyListState()
     LazyColumn(Modifier.weight(1f).nestedScroll(rememberSheetScrollGuard(state)).nestedScroll(collapse).padding(horizontal = 8.dp), state = state, contentPadding = PaddingValues(bottom = 24.dp)) {
         if (recent.isEmpty()) item {
-            Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("لا توجد صفحات فتحتها مؤخرًا", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
-                Text("ستظهر هنا آخر عشر صفحات تفتحها.", fontSize = 13.sp, color = TextMuted)
-            }
+            Text("لم تفتح صفحات مؤخرًا", Modifier.fillMaxWidth().padding(32.dp), textAlign = TextAlign.Center, color = TextMuted)
         } else item {
             @OptIn(ExperimentalLayoutApi::class)
             FlowRow(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

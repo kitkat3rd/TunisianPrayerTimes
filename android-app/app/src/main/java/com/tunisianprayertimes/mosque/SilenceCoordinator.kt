@@ -130,6 +130,7 @@ object SilenceCoordinator {
         // Keep observation and expiry running, but do not silence an escalating awake check.
         if (desired && (owner == SilenceOwner.PRAYER || owner == SilenceOwner.MOSQUE) &&
             SilenceModeController.isAutoSilencePausedForAwakeCheck) {
+            if (owner == SilenceOwner.MOSQUE) MosqueMetrics.flag(context, "pause_awake_check")
             observeSilenceSound(context) { rulePaused(context, owner, AutomaticSilencePause.AWAKE_CHECK) }
             return@synchronized true
         }
@@ -138,6 +139,7 @@ object SilenceCoordinator {
         // Keep the presence observation alive so it can revalidate after projection ends.
         if (desired && !old && (owner == SilenceOwner.PRAYER || owner == SilenceOwner.MOSQUE) &&
             AndroidAutoConnection.isProjected(context)) {
+            if (owner == SilenceOwner.MOSQUE) MosqueMetrics.flag(context, "pause_android_auto")
             observeSilenceSound(context) { rulePaused(context, owner, AutomaticSilencePause.ANDROID_AUTO) }
             return@synchronized true
         }
@@ -176,6 +178,7 @@ object SilenceCoordinator {
                 ruleWritten(context, owner, desired)
             }
             state.edit().putBoolean(key(owner, "release_pending"), false).commit()
+            if (owner == SilenceOwner.MOSQUE) MosqueMetrics.rule(context, desired, true, System.currentTimeMillis(), cleanup = pending)
             // A stopped silence-until-alarm must not come back merely because another pending alarm
             // resumes it. Other owners end their own episode naturally at FALSE.
             if (!desired && owner != SilenceOwner.WAKE) state.edit().putBoolean(key(owner, "blocked"), false).commit()
@@ -185,6 +188,7 @@ object SilenceCoordinator {
             // rather than reporting a confirmed app contribution that was never established.
             state.edit().putBoolean(key(owner, "desired"), false)
                 .putBoolean(key(owner, "release_pending"), true).putBoolean(key(owner, "blocked"), true).commit()
+            if (owner == SilenceOwner.MOSQUE) MosqueMetrics.rule(context, desired, false, System.currentTimeMillis())
             observeSilenceSound(context) { ruleWriteFailed(context, owner, desired, failure) }
             false
         }
@@ -236,6 +240,7 @@ object SilenceCoordinator {
         val state = prefs(context)
         val owner = SilenceOwner.entries.firstOrNull { state.getString(key(it, "id"), null) == id } ?: return@synchronized
         val requested = state.getBoolean(key(owner, "desired"), false)
+        if (owner == SilenceOwner.MOSQUE && status in 1..5) MosqueMetrics.flag(context, "android_status_$status")
         observeSilenceSound(context) { ruleStatus(context, owner, status) }
         // API 30 status values: enabled=1, disabled=2, removed=3; API 35 adds activated=4,
         // deactivated=5. Never turn a callback into an artificial FALSE/TRUE reset.

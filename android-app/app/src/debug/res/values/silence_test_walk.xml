@@ -1,21 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="silence_walk_title">اختبار الإسكات أثناء التنقّل</string>
-    <string name="mosque_privacy">في نسخة التطوير، يبدأ تسجيل المسار وأحداث الإسكات عند بدء التحقّق من وصولك إلى المسجد. تُضاف خطواتك إلى التقرير إذا أتاحها الهاتف ومنحت إذن النشاط البدني عند طلبه. ينتهي التسجيل عند تأكيد المغادرة أو انتهاء المراقبة. يُحفَظ التقرير تلقائيًا على هاتفك، ويمكنك حذفه أو تصديره من شاشة اختبار الإسكات. تُستبعد التسجيلات والمساحات والمسودات وحالة الإسكات من النسخ الاحتياطي ونقل بيانات الهاتف. ولا نرسل موقعك أو المساحات إلى التحليلات.</string>
-    <string name="silence_walk_link">اعرض مسارك على الخريطة وتتبّع أوقات الوصول والإسكات والمغادرة.</string>
-    <string name="silence_walk_intro">يبدأ التسجيل تلقائيًا عندما يبدأ التطبيق التحقّق من وصولك إلى المسجد.</string>
-    <string name="silence_walk_active_help">يُحفَظ المسار على هاتفك حتى عند إطفاء الشاشة. ينتهي التسجيل عند تأكيد مغادرتك المسجد أو انتهاء المراقبة.</string>
+    <string name="mosque_areas_private">تسجّل نسخة التطوير مسارك على هذا الهاتف أثناء التحقّق من وصولك.</string>
+    <string name="silence_walk_title">سجلّ اختبار الإسكات</string>
+    <string name="silence_walk_recording_info">تسجيل المسار</string>
+    <string name="silence_walk_map_key">رموز خريطة المسار</string>
+    <string name="silence_walk_map_legend">يظهر المسار بالأخضر حتى الوقت المحدّد. ينقطع الخط عند تغيّر مصدر الموقع أو مرور دقيقتين بلا قراءة. النقاط الذهبية أحداث أو قراءات لها موقع. إذا لم يُسجّل موقع الحدث، تبيّن الدائرة الفارغة آخر نقطة قريبة منه زمنيًا.</string>
+    <string name="silence_walk_map_areas">تظهر مناطق الإسكات القريبة والمفعّلة حاليًا باللون الذهبي: %1$s.</string>
+    <string name="mosque_privacy">تسجّل نسخة التطوير مسارك وأحداث الإسكات على هاتفك عند بدء التحقّق من وصولك إلى المسجد، حتى والشاشة مطفأة. ينتهي التسجيل عند تأكيد مغادرتك أو انتهاء المراقبة. تُضاف خطواتك إذا أتاحها الهاتف ومنحت إذن النشاط البدني.\n\nيمكنك حذف المسار أو تصديره من سجلّ اختبار الإسكات. تُستبعد التسجيلات والمساحات والمسودات وحالة الإسكات من النسخ الاحتياطي ونقل بيانات الهاتف. إذا فعّلت مشاركة مسارات المسجد، يتلقّى فريق المراجعة مسارك وتوقيته وحدود المسجد.</string>
+    <string name="silence_walk_intro">لا توجد مسارات مسجّلة بعد.</string>
     <string name="silence_walk_active_since">جارٍ التسجيل منذ %1$s</string>
-    <string name="silence_walk_mark_hint">أضف وقت وصولك أو مغادرتك لمقارنته بما رصده التطبيق.</string>
-    <string name="silence_walk_arrived">وصلت إلى المسجد</string>
-    <string name="silence_walk_left">غادرت المسجد</string>
+    <string name="silence_walk_arrived">سجّل وصولي</string>
+    <string name="silence_walk_left">سجّل مغادرتي</string>
     <string name="silence_walk_arrived_event">سجّلتَ وصولك إلى المسجد</string>
     <string name="silence_walk_left_event">سجّلتَ مغادرتك المسجد</string>
     <string name="silence_walk_marked">أُضيفت العلامة إلى الخط الزمني</string>
     <string name="silence_walk_history">التسجيلات المحفوظة</string>
     <string name="silence_walk_recorded_at">مسار %1$s</string>
-    <string name="silence_walk_save">حفظ الخريطة والخط الزمني</string>
-    <string name="silence_walk_export_info">يتضمّن ملف HTML إحداثيات مسارك وأوقات الأحداث وأسماء مناطق الإسكات القريبة وحدودها عند التصدير. يمكنك فتحه في المتصفّح دون اتصال.</string>
+    <string name="silence_walk_save">تصدير المسار (HTML)</string>
+    <string name="silence_walk_export_info">يشمل التصدير إحداثيات المسار وأوقات الأحداث وأسماء مناطق الإسكات القريبة وحدودها.</string>
     <string name="silence_walk_saved">حُفظ ملف الخريطة والخط الزمني</string>
     <string name="silence_walk_delete">حذف المسار</string>
     <string name="silence_walk_delete_text">هل تريد حذف مسار %1$s وكلّ أحداثه من هذا الهاتف؟</string>

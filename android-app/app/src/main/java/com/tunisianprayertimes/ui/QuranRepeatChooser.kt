@@ -79,33 +79,24 @@ internal fun QuranRepeatChooser(
         ) {
             Text("ماذا تريد أن تكرّر؟", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
             Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                RepeatChoice("سورة $surahName كلها", "من أولها إلى آخرها", scope == QuranRepeatScope.Surah, "quran_repeat_surah") {
+                RepeatChoice("سورة $surahName كلها", scope == QuranRepeatScope.Surah, "quran_repeat_surah") {
                     onScope(QuranRepeatScope.Surah)
                 }
-                RepeatChoice("كل آية", "تتكرّر الآية قبل أن تنتقل إلى التي بعدها", scope == QuranRepeatScope.Verse, "quran_repeat_verse") {
+                RepeatChoice("كل آية", scope == QuranRepeatScope.Verse, "quran_repeat_verse") {
                     onScope(QuranRepeatScope.Verse)
                 }
                 RepeatChoice(
                     "آيات تختارها",
-                    passage ?: verse?.let { "من ${quranAyah(it)} إلى آية تضغط عليها" } ?: "من أول الصفحة إلى آية تضغط عليها",
                     scope == QuranRepeatScope.Passage, "quran_repeat_passage",
+                    detail = passage ?: verse?.let { "من ${quranAyah(it)}" } ?: "من أول الصفحة",
                 ) { onScope(QuranRepeatScope.Passage) }
-                RepeatChoice("لا شيء", "تُتلى السورة مرة واحدة", scope == QuranRepeatScope.None, "quran_repeat_none") {
+                RepeatChoice("بلا تكرار", scope == QuranRepeatScope.None, "quran_repeat_none") {
                     onScope(QuranRepeatScope.None)
                 }
             }
             if (scope == QuranRepeatScope.Surah || scope == QuranRepeatScope.Verse) {
                 Text("كم مرة؟", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                 QuranCountChips(count, onCount = onCount, onOther = { asking = true }, minimum = 2)
-                Text(
-                    when {
-                        scope == QuranRepeatScope.Surah -> quranSurahRepeatLine(surahName, count)
-                        count == 0 ->"تتكرّر الآية، وتنقلك «الآية التالية» أو «الآية السابقة» إلى غيرها."
-                        else -> "تُتلى كل آية ${quranTimes(count)} قبل التي بعدها."
-                    },
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(AdhkarSoftGreen).padding(horizontal = 12.dp, vertical = 8.dp),
-                    fontSize = 14.sp, color = GreenPrimary,
-                )
             }
             // What comes at the end of the surah, when it is not recited again.
             if ((scope == QuranRepeatScope.None || scope == QuranRepeatScope.Verse) && nextSurahName != null) {
@@ -147,29 +138,26 @@ internal fun QuranRepeatChooser(
     if (asking) QuranCountDialog(initial = count.takeIf { it >= 2 }, minimum = 2, onCount = { asking = false; onCount(it) }, onDismiss = { asking = false })
 }
 
-/** What «سورة … كلها» does [count] times (0 without end), said the same here and on a surah's card. */
-internal fun quranSurahRepeatLine(surahName: String, count: Int): String =
-    if (count == 0) "تتكرّر سورة $surahName إلى أن توقفها." else "تُتلى سورة $surahName ${quranTimes(count)}، ثم يتوقّف الاستماع."
-
 @Composable
-private fun RepeatChoice(label: String, detail: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+private fun RepeatChoice(label: String, selected: Boolean, tag: String, detail: String? = null, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
             .border(BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) GreenPrimary else CardBorder), RoundedCornerShape(14.dp))
             .background(if (selected) AdhkarSoftGreen else Color.White)
             .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .heightIn(min = 48.dp)
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .testTag(tag),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
-            Modifier.padding(top = 2.dp).size(22.dp).border(2.dp, if (selected) GreenPrimary else Color(0xFF9E9E9E), CircleShape),
+            Modifier.size(22.dp).border(2.dp, if (selected) GreenPrimary else Color(0xFF9E9E9E), CircleShape),
             contentAlignment = Alignment.Center,
         ) { if (selected) Box(Modifier.size(11.dp).clip(CircleShape).background(GreenPrimary)) }
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
-            Text(detail, fontSize = 13.sp, color = TextMuted)
+            if (detail != null) Text(detail, fontSize = 13.sp, color = TextMuted)
         }
     }
 }

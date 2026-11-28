@@ -49,15 +49,16 @@ internal object NotificationAccess {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
 
     fun settingsIntent(context: Context, channelId: String?): Intent {
-        val issue = issue(context, channelId)
-        val specificChannel = channelId != null && issue != Issue.APP_BLOCKED && issue != Issue.GROUP_BLOCKED &&
-            context.getSystemService(NotificationManager::class.java).getNotificationChannel(channelId) != null
-        return if (specificChannel) {
+        val channel = repairChannel(channelId, issue(context, channelId))
+        return if (channel != null && context.getSystemService(NotificationManager::class.java).getNotificationChannel(channel) != null) {
             Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                 .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                .putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, channel)
         } else {
             Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         }
     }
+
+    fun repairChannel(channelId: String?, issue: Issue?): String? =
+        if (issue == Issue.APP_BLOCKED || issue == Issue.GROUP_BLOCKED) null else channelId
 }

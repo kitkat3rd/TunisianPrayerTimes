@@ -34,10 +34,10 @@ data class SilencePolygon(val exterior: List<GeoPoint>, val holes: List<List<Geo
     internal fun inHole(point: GeoPoint): Boolean = holes.any { pointInRing(point, openRing(it)) }
 
     /** Two exterior samples can straddle a building or cut across a concave corner. */
-    internal fun crossesExterior(from: GeoPoint, to: GeoPoint): Boolean {
-        val ring = openRing(exterior)
-        return ring.indices.any { i -> segmentsIntersect(from, to, ring[i], ring[(i + 1) % ring.size]) }
-    }
+    internal fun crossesExterior(from: GeoPoint, to: GeoPoint): Boolean = crossesRing(from, to, exterior)
+
+    internal fun crossesBoundary(from: GeoPoint, to: GeoPoint): Boolean =
+        crossesExterior(from, to) || holes.any { crossesRing(from, to, it) }
 
     internal fun boundaryDistance(point: GeoPoint): Double = (listOf(exterior) + holes).minOf { ring ->
         val vertices = openRing(ring)
@@ -74,8 +74,37 @@ data class PresenceFix(
     val isMock: Boolean = false,
 )
 
+internal data class ExteriorCrossing(val point: GeoPoint, val segmentIndex: Int)
+
+/** A single crossing through the interior of an exterior edge, with both observations off the wall. */
+internal fun SilencePolygon.singleExteriorCrossing(from: GeoPoint, to: GeoPoint): ExteriorCrossing? {
+    if (!from.isValid() || !to.isValid() || holes.any { crossesRing(from, to, it) }) return null
+    val ring = openRing(exterior)
+    var crossing: ExteriorCrossing? = null
+    for (index in ring.indices) {
+        val a = ring[index]
+        val b = ring[(index + 1) % ring.size]
+        if (!segmentsIntersect(from, to, a, b)) continue
+        // At a vertex both adjacent edges are touched. Concave outlines can be crossed several times.
+        if (crossing != null) return null
+        val fromSide = signedArea2(a, b, from)
+        val toSide = signedArea2(a, b, to)
+        if (kotlin.math.abs(fromSide) <= 1e-14 || kotlin.math.abs(toSide) <= 1e-14 || fromSide * toSide >= 0) return null
+        val fraction = fromSide / (fromSide - toSide)
+        val point = GeoPoint(from.latitude + fraction * (to.latitude - from.latitude),
+            from.longitude + fraction * (to.longitude - from.longitude))
+        crossing = ExteriorCrossing(point, index)
+    }
+    return crossing
+}
+
 private fun openRing(ring: List<GeoPoint>): List<GeoPoint> =
     if (ring.size > 1 && ring.first() == ring.last()) ring.dropLast(1) else ring
+
+private fun crossesRing(from: GeoPoint, to: GeoPoint, vertices: List<GeoPoint>): Boolean {
+    val ring = openRing(vertices)
+    return ring.indices.any { i -> segmentsIntersect(from, to, ring[i], ring[(i + 1) % ring.size]) }
+}
 
 private fun validRing(input: List<GeoPoint>): Boolean {
     val ring = openRing(input)
@@ -108,18 +137,19 @@ private fun ringsIntersect(a: List<GeoPoint>, b: List<GeoPoint>): Boolean = a.in
     b.indices.any { j -> segmentsIntersect(a[i], a[(i + 1) % a.size], b[j], b[(j + 1) % b.size]) }
 }
 
+private fun signedArea2(p: GeoPoint, q: GeoPoint, r: GeoPoint) =
+    (q.longitude - p.longitude) * (r.latitude - p.latitude) -
+        (q.latitude - p.latitude) * (r.longitude - p.longitude)
+
 private fun segmentsIntersect(a: GeoPoint, b: GeoPoint, c: GeoPoint, d: GeoPoint): Boolean {
-    fun cross(p: GeoPoint, q: GeoPoint, r: GeoPoint) =
-        (q.longitude - p.longitude) * (r.latitude - p.latitude) -
-            (q.latitude - p.latitude) * (r.longitude - p.longitude)
     fun on(p: GeoPoint, q: GeoPoint, r: GeoPoint): Boolean =
-        kotlin.math.abs(cross(p, q, r)) <= 1e-14 &&
+        kotlin.math.abs(signedArea2(p, q, r)) <= 1e-14 &&
             r.latitude >= minOf(p.latitude, q.latitude) - 1e-12 &&
             r.latitude <= maxOf(p.latitude, q.latitude) + 1e-12 &&
             r.longitude >= minOf(p.longitude, q.longitude) - 1e-12 &&
             r.longitude <= maxOf(p.longitude, q.longitude) + 1e-12
-    val abC = cross(a, b, c); val abD = cross(a, b, d)
-    val cdA = cross(c, d, a); val cdB = cross(c, d, b)
+    val abC = signedArea2(a, b, c); val abD = signedArea2(a, b, d)
+    val cdA = signedArea2(c, d, a); val cdB = signedArea2(c, d, b)
     return (abC * abD < 0 && cdA * cdB < 0) || on(a, b, c) || on(a, b, d) || on(c, d, a) || on(c, d, b)
 }
 
@@ -147,10 +177,13 @@ internal fun project(point: GeoPoint, origin: GeoPoint): Pair<Double, Double> {
 internal fun walkingDistanceAllowance(elapsedMillis: Long, combinedAccuracyMeters: Double): Double =
     combinedAccuracyMeters + 4.0 * elapsedMillis / 1_000.0
 
-internal fun GeoPoint.reachableOnFootFrom(previous: GeoPoint, elapsedMillis: Long, combinedAccuracyMeters: Double): Boolean {
-    val (east, north) = project(this, previous)
-    return hypot(east, north) <= walkingDistanceAllowance(elapsedMillis, combinedAccuracyMeters)
+internal fun GeoPoint.distanceFrom(other: GeoPoint): Double {
+    val (east, north) = project(this, other)
+    return hypot(east, north)
 }
+
+internal fun GeoPoint.reachableOnFootFrom(previous: GeoPoint, elapsedMillis: Long, combinedAccuracyMeters: Double) =
+    distanceFrom(previous) <= walkingDistanceAllowance(elapsedMillis, combinedAccuracyMeters)
 
 private fun distanceToSegment(ax: Double, ay: Double, bx: Double, by: Double): Double {
     val dx = bx - ax; val dy = by - ay

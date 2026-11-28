@@ -177,7 +177,8 @@ class HijriCalendarUiTest {
         val zone = "وسط المدينة"
         show { TimetableSourceDetails(method, officialSource = false, zoneName = zone) }
         compose.onNodeWithTag("today_calculation_method").assertDoesNotExist()
-        compose.onNodeWithTag("times_source_details").performClick()
+        val label = text(R.string.info_about_topic, text(R.string.prayer_timetable_source))
+        compose.onNodeWithContentDescription(label).assertIsDisplayed().performClick()
         compose.onNodeWithText(text(R.string.today_calculation_method, method)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.list_zone_line, zone)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.prayer_control_close)).performClick()

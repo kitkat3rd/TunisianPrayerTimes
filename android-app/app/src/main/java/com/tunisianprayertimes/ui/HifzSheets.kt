@@ -82,6 +82,7 @@ import com.tunisianprayertimes.quran.hifz.HifzPrayers
 import com.tunisianprayertimes.quran.hifz.HifzMaxClockTimes
 import com.tunisianprayertimes.quran.hifz.HifzReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminder.NB
+import com.tunisianprayertimes.quran.hifz.HifzCatchUpMs
 import com.tunisianprayertimes.quran.hifz.HifzTimes
 import com.tunisianprayertimes.quran.hifz.HifzTimesPreset
 import com.tunisianprayertimes.quran.hifz.HifzWords
@@ -172,10 +173,6 @@ internal fun hifzRecallsLabel(count: Int): String = when {
     else -> "$count${NB}يومًا"
 }
 
-/** A configurable suggestion, not a validated threshold for memorizing a Quran verse. */
-internal fun hifzAutoReason(auto: Int): String =
-    "اقتراح قابل للتغيير: ${hifzRecallsLabel(auto)}، بحسب سجلّ مراجعتك الأخير."
-
 /** No prayer-time estimate: the actual first available slot depends on that date and the current reminder policy. */
 internal fun hifzLaterReminders(settings: HifzSettings): String {
     val gaps = hifzReviewGapsPhrase()
@@ -244,7 +241,7 @@ internal fun HifzPlanDialog(
             if (scroll.canScrollBackward) HorizontalDivider(color = CardBorder)
             Column(Modifier.weight(1f, fill = false).verticalScroll(scroll).testTag("hifz_plan_chooser"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (settings.reminder) {
-                    Text("متى نذكّرك؟", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                    Text("أوقات التثبيت بعد الخطأ", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         FilterChip(
                             selected = chosenTimes == null, onClick = { chosenPlan = chosenPlan.copy(times = null) },
@@ -261,14 +258,14 @@ internal fun HifzPlanDialog(
                         HifzTimesChoice(shown, open = false, customState = customTimes) { chosen ->
                             chosenPlan = chosenPlan.copy(times = chosen)
                         }
-                        Text("هذه الأوقات خاصة بمرحلة التثبيت بعد الخطأ. تتبع المراجعات المتباعدة أوقات الإعدادات.",
-                            fontSize = 13.sp, color = TextMuted, modifier = Modifier.testTag("hifz_plan_times"))
-                    } else Text("تتغيّر أوقات هذه الآية مع أوقات الإعدادات: ${HifzReminder.slipTimesPhrase(shown)}.",
+                    } else Text(HifzReminder.slipTimesPhrase(shown),
                         fontSize = 13.sp, color = TextMuted, modifier = Modifier.testTag("hifz_plan_times"))
                 } else Text("التذكير متوقّف في الإعدادات: تجد أسئلتها في «مراجعة اليوم».", fontSize = 13.sp, color = TextMuted)
                 // No once-a-day switch: the plan counts days, one right answer a day (16 November).
-                Text("إلى متى؟", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, modifier = Modifier.padding(top = 6.dp))
-                Text("إلى أن تتذكّرها دون مساعدة في أيام مختلفة:", fontSize = 13.sp, color = TextDark)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("أيام التذكّر دون مساعدة", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                    AppInfoButton("خطة المراجعة", "نحتسب إجابة صحيحة واحدة في اليوم. يعتمد العدد المقترح على مراجعاتك الأخيرة.\n\n${hifzLaterReminders(settings)}")
+                }
                 // Different counts only: the suggestion may already be the most.
                 val options = buildList {
                     add(HifzPace.Light to 1)
@@ -276,25 +273,22 @@ internal fun HifzPlanDialog(
                     if (auto < HifzMaxRecalls) add(HifzPace.Intense to HifzMaxRecalls)
                 }
                 val selected = if (chosenPace == HifzPace.Intense && auto >= HifzMaxRecalls) HifzPace.Auto else chosenPace
-                // The suggestion is said once, with its reason, under the chips: the three then share one row.
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     options.forEach { (option, n) ->
                         FilterChip(
                             selected = selected == option, onClick = { chosenPlan = chosenPlan.copy(pace = option) },
-                            label = { Text(hifzRecallsLabel(n)) },
+                            label = { Text(if (option == HifzPace.Auto) "${hifzRecallsLabel(n)} (مقترح)" else hifzRecallsLabel(n)) },
                             colors = hifzChoiceColors(),
                             modifier = Modifier.testTag("hifz_plan_${option.key}"),
                         )
                     }
                 }
-                Text(hifzAutoReason(auto), fontSize = 13.sp, color = TextMuted)
                 // What is already done counts; enough of it ends the reminders that follow one another, said before «تم».
                 if (done > 0) Text(
                     "تذكّرتها دون مساعدة في ${HifzReminder.daysPhrase(done)} منذ سجّلت الخطأ، " +
                         if (count <= done) "وهذا يكفي لما اخترت." else "وهذا محسوب لك.",
                     fontSize = 13.sp, color = if (count <= done) GreenPrimaryDark else TextMuted, modifier = Modifier.testTag("hifz_plan_done_count"),
                 )
-                Text(hifzLaterReminders(settings), fontSize = 13.sp, color = TextMuted)
             }
             if (scroll.canScrollForward) HorizontalDivider(color = CardBorder)
           }
@@ -468,15 +462,15 @@ internal fun HifzLadder(point: HifzPoint) {
  * first word forgotten; an ending said wrong is a look-alike's, told apart by the verse chosen. Each saved as a [HifzKind]:
  * see [HifzRecordSheet]; a point of an older kind shows as the choice it now belongs to.
  */
-internal enum class HifzSlipChoice(val key: String, val label: String, val hint: String) {
-    Word("word", "نسيت كلمة أو أخطأت فيها", "كلمة أو حركة، ولو كانت أول الآية"),
-    LookAlike("lookalike", "انتقلت إلى آية شبيهة بالخطأ", "في أولها أو وسطها أو خاتمتها"),
-    Skip("skip", "تخطيتها", "انتقلت إلى غيرها دون أن تقرأها"),
+internal enum class HifzSlipChoice(val key: String, val label: String) {
+    Word("word", "نسيت كلمة أو أخطأت في نطقها"),
+    LookAlike("lookalike", "انتقلت إلى آية شبيهة بالخطأ"),
+    Skip("skip", "تخطّيت الآية"),
     /**
      * The verse and others after it would not come: the passage's last verse is then tapped on the mushaf, and the
      * passage saved as one point (owner, 12 November). Last: a single verse is the common case.
      */
-    Passage("passage", "نسيتها مع آيات بعدها", "آيات متتالية لم تتذكّرها");
+    Passage("passage", "نسيتها مع آيات بعدها");
 
     companion object {
         fun of(key: String): HifzSlipChoice? = entries.firstOrNull { it.key == key }
@@ -755,7 +749,6 @@ internal fun HifzRecordSheet(
                         if (selected) Text("✓ ", Modifier.clearAndSetSemantics {}, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                         Column(Modifier.weight(1f)) {
                             Text(option.label, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, color = GreenPrimaryDark)
-                            Text(option.hint, fontSize = 12.sp, color = TextMuted)
                             // Already told of this verse: the line above says how many times the verse went wrong.
                             if (told) Text("سجّلته من قبل", fontSize = 12.sp, color = QuranHifzViolet)
                         }
@@ -763,15 +756,14 @@ internal fun HifzRecordSheet(
                 } }
                 when (choice) {
                     HifzSlipChoice.Word -> if (words != null) {
-                        Text("أي كلمة؟", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, modifier = Modifier.padding(top = 6.dp))
-                        Text("اختر كلمة أو أكثر.", fontSize = 12.sp, color = TextMuted)
+                        Text("اختر كلمة أو أكثر", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark, modifier = Modifier.padding(top = 6.dp))
                         HifzWordPicker(words, wrongWords.toSet(), suggested = null, multi = true) { i ->
                             wrongWords = if (i in wrongWords) wrongWords - i else wrongWords + i
                             touched = true
                         }
                         // Its opening forgotten, the verse is practised from the end of the one before.
                         if (0 in wrongWords && verse.ayah > 1) Text(
-                            "اخترت الكلمة الأولى؛ ندرّبك على الانتقال من ${quranAyah(verse.ayah - 1)} إلى هذه الآية.", fontSize = 12.sp, color = TextMuted,
+                            "يبدأ التدريب من ${quranAyah(verse.ayah - 1)}.", fontSize = 12.sp, color = TextMuted,
                             modifier = Modifier.testTag("hifz_forgot_explanation"),
                         )
                     }
@@ -1837,17 +1829,21 @@ internal fun hifzListDetail(point: HifzPoint, today: Long, due: Boolean, next: S
 internal fun HifzReminderSettingsControls(settings: HifzSettings, onChange: (HifzSettings) -> Unit) {
     var quietClock by rememberSaveable { mutableStateOf<String?>(null) }
     if (settings.reminder || !PrefsManager.hasConfirmedPlace(LocalContext.current)) {
-        Text("أوقاتك المفضّلة", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("أوقات التذكير", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+            if (settings.reminder) AppInfoButton(
+                "مواعيد تذكير المراجعة",
+                "تتبع المراجعات المتباعدة هذه الأوقات. ويمكن تخصيص أوقات التثبيت لكل آية.\n\n" +
+                    "يشمل الحدّ اليومي كل المواضع. تُجمع المواعيد المتقاربة وتبقى الأسئلة متاحة في التطبيق خلال أوقات الهدوء وبعد بلوغ الحدّ.\n\n" +
+                    "إذا تأخّر الإشعار أكثر من ${HifzCatchUpMs / 60_000L} دقيقة، ينتظر الموعد المختار التالي.",
+            )
+        }
         HifzTimesChoice(settings.times) { onChange(settings.copy(times = it)) }
     }
     if (settings.reminder) {
-        Text("المواعيد المختارة: ${HifzReminder.timesPhrase(settings.times)}. نتبعها للمواضع التي تتبع الإعدادات وللمراجعات المتباعدة.",
-            fontSize = 12.sp, color = TextMuted)
         HifzPolicyCount(
             "الحدّ اليومي للإشعارات", settings.dailyAlertLimit, 1..10, "hifz_daily_alert_limit",
         ) { onChange(settings.copy(dailyAlertLimit = it)) }
-        Text("حدّ مشترك لكل المواضع، بما فيها الأوقات الخاصة. ندمج المواعيد المتقاربة، وتبقى الأسئلة متاحة في التطبيق بعد بلوغ الحدّ.",
-            fontSize = 12.sp, color = TextMuted)
         HifzPolicySwitch("أوقات الهدوء", settings.quietHours, "hifz_quiet_hours") { onChange(settings.copy(quietHours = it)) }
         if (settings.quietHours) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1858,14 +1854,10 @@ internal fun HifzReminderSettingsControls(settings: HifzSettings, onChange: (Hif
                     Text("إلى ${HifzReminder.clock(settings.quietEndMinute)}")
                 }
             }
-            Text("تُحجب الإشعارات في هذه الفترة، وتبقى المراجعة متاحة. يعود الإشعار في موعد مختار لاحق.", fontSize = 12.sp, color = TextMuted)
         }
-        Text("إذا تأخّر الإشعار أكثر من 90 دقيقة، ينتظر موعدًا مختارًا لاحقًا. لا تُلغى المراجعة المستحقة.",
-            fontSize = 12.sp, color = TextMuted, modifier = Modifier.testTag("hifz_catch_up_policy"))
-    } else Text("التذكير متوقّف: تجد أسئلتك في «مراجعة اليوم».", fontSize = 12.sp, color = TextMuted)
+    }
     HorizontalDivider(Modifier.padding(vertical = 6.dp), color = CardBorder)
     HifzPolicyCount("هدفك اليومي من الأسئلة", settings.dailyGoal, 1..50, "hifz_daily_goal") { onChange(settings.copy(dailyGoal = it)) }
-    Text("هدف للاستمرارية، وليس حدًا يمنع المراجعة. يمكنك متابعة الأسئلة بعد بلوغه.", fontSize = 12.sp, color = TextMuted)
     quietClock?.let { field ->
         val start = field == "start"
         HifzTimeDialog(
@@ -1956,6 +1948,7 @@ internal fun HifzTimesChoice(
         )
     }
     if (custom) HifzTimesEditor(shown) { change(it) }
+    else if (HifzTimesPreset.of(shown) == null) Text(HifzReminder.timesPhrase(shown), fontSize = 13.sp, color = TextMuted)
     if (placeRequired) PrayerPlaceRequiredDialog { placeRequired = false }
 }
 
@@ -2207,6 +2200,7 @@ internal fun HifzHowItWorksDialog(onDismiss: () -> Unit) {
                     "يظهر «يحتاج عناية» على الآية التي تكرّرت صعوبتها حديثًا، ويزول حين تتذكّرها دون مساعدة في يومين مختلفين بعد آخر خطأ.",
                 )
                 part("وضع المراجعة", "زر العين في أعلى المصحف يغطي الآيات، فتقرؤها من حفظك وتكشفها بإصبعك للتأكد.")
+                part("الاستماع إلى المواضع", "تُتلى المواضع بترتيب المصحف حتى والشاشة مطفأة. ينتقل زرّا التالي والسابق في السماعة أو السيارة بين المواضع.")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("فهمت") } },

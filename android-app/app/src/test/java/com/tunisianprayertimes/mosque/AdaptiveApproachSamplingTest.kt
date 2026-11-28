@@ -7,6 +7,7 @@ import com.tunisianprayertimes.mosque.presence.SilenceArea
 import com.tunisianprayertimes.mosque.presence.SilencePolygon
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -44,8 +45,9 @@ class AdaptiveApproachSamplingTest {
         val m = duringMovementCooldown()
         m.fix(152_000, -3.0, 7.0)
         assertEquals(AdaptiveObservation.Sampling.PRECISE, m.sampling)
-        assertEquals(182_000L, m.requestEnd)
-        assertFalse(m.desired)
+        assertEquals(197_000L, m.requestEnd)
+        assertTrue("crossing the boundary starts temporary silence while collecting fresh fixes", m.desired)
+        assertNull(m.detector.arrival)
         m.fix(155_000, -6.0, 5.0)
         m.fix(158_000, -10.0, 5.0)
         m.fix(163_000, -13.0, 5.0)
@@ -53,6 +55,20 @@ class AdaptiveApproachSamplingTest {
         m.fix(174_000, -13.0, 5.0)
         assertTrue(m.desired)
         assertEquals(AdaptiveObservation.Sampling.BALANCED, m.sampling)
+    }
+
+    @Test fun aBorderlineDoorwayFixGetsOneShortCheckDuringTheMovementCooldown() {
+        val m = duringMovementCooldown()
+        m.fix(152_000, -3.0, 11.0)
+        assertFalse(m.desired)
+        assertEquals(AdaptiveObservation.Sampling.PRECISE, m.sampling)
+        assertEquals(182_000L, m.requestEnd)
+        m.fix(154_000, 1.0, 10.5) // The uncertainty circle still straddles the doorway.
+        assertFalse(m.desired)
+        assertEquals(182_000L, m.requestEnd)
+        m.fix(157_000, -4.7, 8.7)
+        assertTrue(m.desired)
+        assertEquals(202_000L, m.detector.tentativeUntil)
     }
 
     @Test fun ordinaryInsideDwellCanConfirmAStationaryVisitWithNoFreshOutsideFix() {
@@ -78,8 +94,15 @@ class AdaptiveApproachSamplingTest {
         assertFalse(m.desired)
         m.tick(190_000)
         m.fix(195_000, 25.0, 6.0)
-        m.fix(225_000, -2.0, 6.0) // Another crossing during this short burst's own cooldown.
+        m.fix(201_000, 25.0, 6.0) // Corroborate the return outside after the strong indoor fix.
+        m.fix(225_000, -2.0, 6.0) // A fresh crossing qualifies for temporary silence during the entry-check cooldown.
+        assertTrue(m.desired)
+        assertEquals(270_000L, m.requestEnd)
         m.fix(255_000, -12.0, 7.0)
+        assertEquals(270_000L, m.requestEnd)
+        assertNull(m.detector.arrival)
+        m.tick(270_000)
+        assertFalse(m.desired)
         assertEquals(AdaptiveObservation.Sampling.BALANCED, m.sampling)
 
         val stationary = duringMovementCooldown()

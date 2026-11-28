@@ -3,9 +3,9 @@ package com.tunisianprayertimes.ui
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,16 +71,18 @@ internal fun QuranReciterSheet(
                 val forSurah = surah?.takeIf { reciter.id != selected && media != null }?.let { s ->
                     val packs = media!!.recitationPacks(reciter.id, s..s)
                     val absent = media.missing(packs)
-                    if (absent.isEmpty()) "تلاوته لسورة ${surahName(s)} على الجهاز"
-                    else if (reciter.id == switchingTo) "تتابع الاستماع بصوته بعد اكتمال تنزيل تلاوته لسورة ${surahName(s)}."
-                    else "لم تُنزَّل تلاوته لسورة ${surahName(s)} بعد. عند اختياره، نُنزّلها${absent.firstOrNull()?.let { quranPackCompanions(it, s, surahName) }.orEmpty()} " +
-                        "(${quranSize(absent.sumOf { it.archive.bytes })})، ثم تتابع الاستماع بصوته."
+                    if (absent.isEmpty()) "سورة ${surahName(s)} محمّلة"
+                    else if (reciter.id == switchingTo) "يتغيّر القارئ بعد تنزيل سورة ${surahName(s)}"
+                    else "يتطلّب تنزيل سورة ${surahName(s)}${quranPackCompanions(absent.first(), s, surahName)} · " +
+                        quranSize(absent.sumOf { it.archive.bytes })
                 }
                 Row(
-                    Modifier.fillMaxWidth().clickable { onSelect(reciter.id) }.padding(vertical = 10.dp).testTag("quran_reciter_${reciter.id}"),
+                    Modifier.fillMaxWidth().selectable(selected = reciter.id == selected, role = Role.RadioButton) { onSelect(reciter.id) }
+                        .heightIn(min = 48.dp).padding(vertical = 10.dp).testTag("quran_reciter_${reciter.id}"),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(selected = reciter.id == selected, onClick = { onSelect(reciter.id) }, colors = RadioButtonDefaults.colors(selectedColor = GreenPrimary))
+                    RadioButton(selected = reciter.id == selected, onClick = null, modifier = Modifier.padding(horizontal = 10.dp),
+                        colors = RadioButtonDefaults.colors(selectedColor = GreenPrimary))
                     // With large text the button goes under the name, which would otherwise be a word wide.
                     BesideOrBelow(Modifier.weight(1f), minLeadingEms = 8f, leading = {
                         Column {
@@ -121,27 +124,20 @@ internal fun QuranDownloadsSheet(
                 media.pages?.let { pages ->
                     DownloadCard("صفحات المصحف") {
                         val state = media.state(pages)
-                        Text(
-                            if (state.available) "${quranSize(pages.archive.bytes)} · محمّلة"
-                            else "${quranSize(pages.archive.bytes)} · ${when {
-                                state.status == QuranPackStatus.NeedsConfirmation -> "بانتظار تأكيد التنزيل"
-                                state.status == QuranPackStatus.WaitingForWifi -> "بانتظار شبكة Wi-Fi"
-                                state.active -> "جارٍ التنزيل…"
-                                else -> "غير محمّلة"
-                            }}",
-                            fontSize = 12.sp, color = TextMuted,
-                        )
-                        if (!state.available) QuranPagesDownloadBanner(
+                        if (state.available) Text("${quranSize(pages.archive.bytes)} · محمّلة", fontSize = 12.sp, color = TextMuted)
+                        else QuranPagesDownloadBanner(
                             media = media,
                             onDownload = { allowMetered -> media.fetch(listOf(pages), allowMetered) },
                             onUseMobileData = { media.source?.confirmMobileData(listOf(pages), mobileData) },
                         )
                     }
                 }
-                media.tafsir?.let { pack ->
-                    QuranTafsirDownloadCard(media, pack, {
-                        media.source?.confirmMobileData(listOf(pack), mobileData)
-                    }, allowRemoval = true)
+                media.tafsirPacks.forEach { pack ->
+                    key(pack.name) {
+                        QuranTafsirDownloadCard(media, pack, {
+                            media.source?.confirmMobileData(listOf(pack), mobileData)
+                        }, allowRemoval = true)
+                    }
                 }
                 QuranAudioController.reciters.forEach { reciter ->
                     DownloadCard(reciter.name) {
@@ -158,15 +154,14 @@ internal fun QuranDownloadsSheet(
                         )
                     }
                 }
-                Text("ننزّل الصفحات والتلاوات عبر شبكة Wi-Fi، ونستأذنك قبل استخدام بيانات الهاتف.", fontSize = 12.sp, color = TextMuted)
             }
         }
     }
 }
 
 @Composable
-private fun DownloadCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, CardBorder)) {
+internal fun DownloadCard(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, CardBorder)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
             content()
@@ -183,19 +178,22 @@ internal fun QuranTafsirDownloadCard(
     onDownloadStarted: () -> Unit = {},
     onDownloadCancelled: () -> Unit = {},
 ) {
+    val title = media.tafsirTitle(pack) ?: return
     val state = media.state(pack)
     val size = quranSize(pack.archive.bytes)
     val packs = listOf(pack)
     val source = media.source
-    DownloadCard("التحرير والتنوير · ابن عاشور") {
+    var confirmDelete by remember(pack.name) { mutableStateOf(false) }
+    DownloadCard(title, Modifier.testTag("quran_tafsir_card_${pack.tafsirBookId}")) {
         if (state.previousVersion) Text("يمكنك قراءة النسخة المحفوظة حتى يكتمل التحديث.", color = TextMuted)
         when (state.status) {
-            QuranPackStatus.Available -> Text("محمّل على هذا الجهاز", color = TextMuted)
+            QuranPackStatus.Available -> Text("محمّل على هذا الجهاز · $size", color = TextMuted)
             QuranPackStatus.Missing, QuranPackStatus.Failed -> {
-                if (state.status == QuranPackStatus.Failed) Text(quranDownloadProblemText(state.problem), color = TextMuted)
+                if (state.status == QuranPackStatus.Failed) Text(quranDownloadProblemText(state.problem), color = MaterialTheme.colorScheme.error)
                 if (state.problem != QuranDownloadProblem.Unpublished) Button(
                     onClick = {
                         if (source != null) {
+                            // A single book explicitly requested, like a requested recitation.
                             source.fetch(packs, allowMetered = true)
                             onDownloadStarted()
                         }
@@ -204,31 +202,49 @@ internal fun QuranTafsirDownloadCard(
                 ) {
                     Text(when {
                         state.status == QuranPackStatus.Failed -> "أعد المحاولة ($size)"
-                        state.previousVersion -> "حدّث التفسير ($size)"
-                        else -> "نزّل التفسير ($size)"
+                        state.previousVersion -> "حدّث الكتاب ($size)"
+                        else -> "نزّل الكتاب ($size)"
                     })
                 }
             }
             QuranPackStatus.WaitingForWifi, QuranPackStatus.NeedsConfirmation -> {
-                TextButton(onClick = onUseMobileData) {
-                    Text(if (state.status == QuranPackStatus.NeedsConfirmation) "تأكيد التنزيل" else "نزّل عبر بيانات الهاتف ($size)")
+                val needsConfirmation = state.status == QuranPackStatus.NeedsConfirmation
+                Text(if (needsConfirmation) "بانتظار تأكيد التنزيل" else "بانتظار شبكة ${ltr("Wi-Fi")}", color = TextMuted)
+                TextButton(onClick = onUseMobileData, modifier = Modifier.testTag("quran_tafsir_mobile_data")) {
+                    Text(if (needsConfirmation) "تأكيد التنزيل ($size)" else "استخدم بيانات الهاتف ($size)")
                 }
             }
-            QuranPackStatus.Pending -> Text("بانتظار بدء التنزيل", color = TextMuted)
+            QuranPackStatus.Pending -> Text("بانتظار بدء التنزيل · $size", color = TextMuted)
             QuranPackStatus.Downloading, QuranPackStatus.Transferring -> {
-                val progress = if (state.totalBytes > 0) (state.downloadedBytes.toFloat() / state.totalBytes).coerceIn(0f, 1f) else 0f
-                Text(if (state.status == QuranPackStatus.Transferring) "جارٍ تجهيز التفسير…" else "جارٍ التنزيل · ${quranPercent(progress)}")
-                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                val total = state.totalBytes.takeIf { it > 0 } ?: pack.archive.bytes.coerceAtLeast(1L)
+                val progress = if (state.status == QuranPackStatus.Transferring) 1f else (state.downloadedBytes.toFloat() / total).coerceIn(0f, 1f)
+                Text(if (state.status == QuranPackStatus.Transferring) "جارٍ تجهيز الكتاب…" else "جارٍ التنزيل · ${quranPercent(progress)} من $size")
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().testTag("quran_tafsir_progress"),
+                    color = GreenPrimary, trackColor = CardBorder)
             }
         }
         if (state.active) TextButton(onClick = {
             source?.cancel(packs)
             onDownloadCancelled()
-        }) { Text("أوقف التنزيل") }
-        if (allowRemoval && media.downloaded(pack)) {
-            TextButton(onClick = { source?.remove(packs) }) { Text("احذف التفسير") }
+        }, modifier = Modifier.testTag("quran_tafsir_cancel")) { Text("أوقف التنزيل") }
+        if (allowRemoval && (media.downloaded(pack) || state.downloadedBytes > 0)) {
+            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag("quran_tafsir_delete")) {
+                Text(if (media.downloaded(pack)) "احذف الكتاب" else "احذف ما حُمّل")
+            }
         }
     }
+    if (confirmDelete) AlertDialog(
+        onDismissRequest = { confirmDelete = false },
+        title = { Text("حذف «$title» من الجهاز؟") },
+        text = { Text("يمكنك تنزيل الكتاب مرة أخرى متى شئت.") },
+        confirmButton = {
+            TextButton(onClick = {
+                confirmDelete = false
+                source?.remove(packs)
+            }, modifier = Modifier.testTag("quran_tafsir_delete_confirm")) { Text("احذف") }
+        },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("إلغاء") } },
+    )
 }
 
 /** The pages are not on the device: their size and one button, in the page's own place. */

@@ -4354,22 +4354,98 @@
    }
   },
   {
+   "name": "quran_tafsir_muyassar",
+   "kind": "tafsir",
+   "delivery": "play",
+   "cdnPublished": true,
+   "bytes": 2367488,
+   "files": [
+    {
+     "path": "quran/tafsir/muyassar.db",
+     "bytes": 2367488,
+     "sha256": "2ca750d06ed4580c2119a5cd6188a8e322f5da28920ac423c2b98df75f52a3e9"
+    }
+   ],
+   "archive": {
+    "key": "v1/packs/quran_tafsir_muyassar-f72cdd56783d.zip",
+    "bytes": 625793,
+    "sha256": "f72cdd56783d5e2da670e09f7224ad3f0b35eddbeee6992807e8923855ea2a13"
+   }
+  },
+  {
+   "name": "quran_tafsir_mukhtasar",
+   "kind": "tafsir",
+   "delivery": "play",
+   "cdnPublished": true,
+   "bytes": 2375680,
+   "files": [
+    {
+     "path": "quran/tafsir/mukhtasar.db",
+     "bytes": 2375680,
+     "sha256": "a9b4259fdf27d2efd963c819256453d18f4b82d4c01d1863110194d2b9e8390c"
+    }
+   ],
+   "archive": {
+    "key": "v1/packs/quran_tafsir_mukhtasar-412d65353984.zip",
+    "bytes": 606751,
+    "sha256": "412d65353984d0f2b24e41424533d5d97f9249fcf08d0adf17c63b48f506163f"
+   }
+  },
+  {
+   "name": "quran_tafsir_gharib",
+   "kind": "tafsir",
+   "delivery": "play",
+   "cdnPublished": true,
+   "bytes": 2056192,
+   "files": [
+    {
+     "path": "quran/tafsir/gharib.db",
+     "bytes": 2056192,
+     "sha256": "cbfea0a21b2b094de8ce9689df70baf0c7febc2f3d7d4ebe827391c150967329"
+    }
+   ],
+   "archive": {
+    "key": "v1/packs/quran_tafsir_gharib-2bc34dc0b618.zip",
+    "bytes": 460878,
+    "sha256": "2bc34dc0b61802d24016a20c99bd09bcd417fc8b78e3ebf43cb33fb0796ae829"
+   }
+  },
+  {
+   "name": "quran_tafsir_juzayy",
+   "kind": "tafsir",
+   "delivery": "play",
+   "cdnPublished": true,
+   "bytes": 3436544,
+   "files": [
+    {
+     "path": "quran/tafsir/juzayy.db",
+     "bytes": 3436544,
+     "sha256": "4e0f88627d19f0af71bd2af88797a8b7b3c2434000dc4b92d2a3e488237ab67a"
+    }
+   ],
+   "archive": {
+    "key": "v1/packs/quran_tafsir_juzayy-c85e953b7450.zip",
+    "bytes": 942420,
+    "sha256": "c85e953b7450bc10a6638bb05eda2cf706c27aa6ff12e115aa60695047fe3745"
+   }
+  },
+  {
    "name": "quran_tafsir_ashur",
    "kind": "tafsir",
    "delivery": "play",
-   "cdnPublished": false,
+   "cdnPublished": true,
    "bytes": 28008448,
    "files": [
     {
      "path": "quran/tafsir/ashur.db",
      "bytes": 28008448,
-     "sha256": "ff6946d4f31e3920b935076a5fa64da414140a7c6a4831e403fccf9e30363e1c"
+     "sha256": "2edba76962cb80fe3156652bd6ec5783f86432a8a80e8bbff5eab6efed2a0095"
     }
    ],
    "archive": {
-    "key": "v1/packs/quran_tafsir_ashur-43c9580ed5ac.zip",
-    "bytes": 7647106,
-    "sha256": "43c9580ed5acbfe32dcbdd19751caf8faf1cba6712650c0fd2bb65bb5eb6207a"
+    "key": "v1/packs/quran_tafsir_ashur-45b97f8fd34b.zip",
+    "bytes": 7648071,
+    "sha256": "45b97f8fd34b6353b86479fb76216df4e3e0e7ac083a03dfa0f06e9626a8f944"
    }
   }
  ]

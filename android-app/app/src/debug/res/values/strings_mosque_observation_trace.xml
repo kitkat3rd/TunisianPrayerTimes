@@ -16,6 +16,8 @@
     <string name="trace_mosque_arrival">تأكّد الوصول إلى %1$s (%2$s).</string>
     <string name="trace_mosque_exiting">رصد التحقق موقعًا خارج حدود المسجد ويترقب تأكيد الخروج.</string>
     <string name="trace_mosque_departed">تأكّدت مغادرة %1$s بعد قراءات متتالية بعيدًا عن المسجد.</string>
+    <string name="trace_mosque_stayed_outside">تأكّدت مغادرة %1$s بعد أن ظلّ الموقع ونطاق دقّته خارج حدود المسجد في قراءات متتالية.</string>
+    <string name="trace_mosque_left_by_entrance">بعد مكوثك في %1$s وعودتك إلى المدخل نفسه، أكّدت قراءتان متتاليتان أنك خارج المسجد.</string>
     <string name="trace_mosque_returned_to_path">أظهرت قراءات الموقع أنك غادرت %1$s وعدت إلى المسار الذي سلكته خارج المسجد قبل الدخول.</string>
     <string name="trace_mosque_lost_evidence">لم تعد قراءات الموقع تؤكّد وجودك في %1$s.</string>
     <string name="trace_mosque_stopped">التحقق من الوصول إلى المسجد متوقف.</string>

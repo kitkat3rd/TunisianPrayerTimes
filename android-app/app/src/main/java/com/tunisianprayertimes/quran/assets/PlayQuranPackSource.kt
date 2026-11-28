@@ -26,6 +26,8 @@ internal class PlayQuranPackSource(
     private val scope: CoroutineScope,
     /** Play cannot serve this install at all; the caller switches to the quran-cdn Worker. */
     private val onUnavailable: () -> Unit,
+    /** Play cannot deliver these specific packs. Other requests can stay on Play. */
+    private val onPacksUnavailable: (Set<String>) -> Unit = {},
 ) : QuranPackSource {
     private val mutableStates = MutableStateFlow<Map<String, QuranPackState>>(emptyMap())
     override val states: StateFlow<Map<String, QuranPackState>> = mutableStates.asStateFlow()
@@ -70,9 +72,28 @@ internal class PlayQuranPackSource(
         if (names.isEmpty()) return
         // Play decides about mobile data itself: above 200 MB it waits for Wi-Fi or for consent.
         mutableStates.update { states -> states + names.associateWith { QuranPackState(QuranPackStatus.Pending) } }
+        // A failed fetch task supplies a single error code for its whole batch. Request each
+        // book by itself so PACK_UNAVAILABLE can hand over just the affected commentary.
+        val bookNames = packs.filter { it.kind == QuranPack.Kind.Tafsir }.mapTo(mutableSetOf()) { it.name }
+        val (books, media) = names.partition { it in bookNames }
+        books.forEach { request(listOf(it)) }
+        if (media.isNotEmpty()) request(media)
+    }
+
+    private fun request(names: List<String>, onDelivered: ((String) -> Unit)? = null) {
         manager.fetch(names)
-            .addOnSuccessListener { result -> result.packStates().values.forEach(::publish) }
+            .addOnSuccessListener { result ->
+                for (state in result.packStates().values) {
+                    publish(state)
+                    if (state.status() == AssetPackStatus.COMPLETED) onDelivered?.invoke(state.name())
+                }
+            }
             .addOnFailureListener { error -> fail(names, error) }
+    }
+
+    /** Ask Play for a newer edition while its only verified local copy is still in PAD. */
+    internal fun refreshInstalledBooks(packs: List<QuranPack>, onDelivered: (String) -> Unit) {
+        packs.forEach { request(listOf(it.name), onDelivered) }
     }
 
     override fun confirmMobileData(packs: List<QuranPack>, launcher: ActivityResultLauncher<IntentSenderRequest>) {
@@ -127,6 +148,8 @@ internal class PlayQuranPackSource(
 
     private fun requestStates() {
         val names = layout.packs.map { it.name }
+        // With a CDN-only catalog refresh() still discovers a previously installed PAD pack.
+        if (names.isEmpty()) return
         manager.getPackStates(names)
             .addOnSuccessListener { result -> result.packStates().values.forEach(::publish) }
             .addOnFailureListener { error ->
@@ -143,6 +166,7 @@ internal class PlayQuranPackSource(
         val mapped = if (reported.status == QuranPackStatus.Missing && onDevice(state.name())) QuranPackState.Available else reported
         if (!mapped.available) locations.remove(state.name())
         mutableStates.update { states -> states + (state.name() to mapped) }
+        if (state.errorCode() == AssetPackErrorCode.PACK_UNAVAILABLE) onPacksUnavailable(setOf(state.name()))
     }
 
     private fun fail(names: List<String>, error: Exception) {
@@ -151,6 +175,7 @@ internal class PlayQuranPackSource(
         if (playUnavailable(code)) onUnavailable()
         val failed = QuranPackState(QuranPackStatus.Failed, problem = playProblem(code))
         mutableStates.update { states -> states + names.associateWith { failed } }
+        if (code == AssetPackErrorCode.PACK_UNAVAILABLE && names.size == 1) onPacksUnavailable(names.toSet())
     }
 
     private fun onDevice(name: String): Boolean = locations[name]?.isDirectory == true

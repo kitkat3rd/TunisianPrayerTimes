@@ -159,6 +159,7 @@ internal fun QuranSurahCard(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     onTafsirIntro: (() -> Unit)? = null,
+    introDownloadSize: String? = null,
 ) {
     var asking by rememberSaveable { mutableStateOf(false) }
     QuranFloatingCard(modifier.testTag("quran_surah_card"), scrollKey = surahName to (count == null)) {
@@ -172,8 +173,16 @@ internal fun QuranSurahCard(
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(bottom = 4.dp)) {
                 CardAction(R.drawable.ic_quran_headphones, "استمع", onListen, Modifier.testTag("quran_surah_listen"), description = "الاستماع إلى سورة $surahName من أولها")
                 CardAction(R.drawable.ic_quran_repeat, "كرّر", onRepeat, Modifier.testTag("quran_surah_repeat"), description = "تكرار سورة $surahName")
-                if (onTafsirIntro != null) CardAction(R.drawable.ic_tab_quran, "عن السورة", onTafsirIntro, Modifier.testTag("quran_surah_tafsir"))
+                if (onTafsirIntro != null) CardAction(
+                    R.drawable.ic_tab_quran, "عن السورة", onTafsirIntro, Modifier.testTag("quran_surah_tafsir"),
+                    description = if (introDownloadSize == null) "اقرأ مقدمة ابن عاشور لسورة $surahName"
+                        else "نزّل تفسير ابن عاشور ($introDownloadSize) لتقرأ مقدمته لسورة $surahName",
+                )
             }
+            if (onTafsirIntro != null && introDownloadSize != null) Text(
+                "تُنزَّل مقدمة السورة مع تفسير ابن عاشور ($introDownloadSize).",
+                Modifier.padding(start = 14.dp, end = 14.dp, bottom = 8.dp), fontSize = 12.sp, color = TextMuted,
+            )
         } else Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("كرّر سورة $surahName", Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
@@ -184,7 +193,6 @@ internal fun QuranSurahCard(
             Box(Modifier.padding(end = 10.dp)) {
                 QuranCountChips(count, onCount = onCount, onOther = { asking = true }, minimum = 2, tagPrefix = "quran_surah_times")
             }
-            Text(quranSurahRepeatLine(surahName, count), Modifier.padding(end = 10.dp), fontSize = 12.sp, color = TextMuted)
             Button(
                 onClick = onStart, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                 modifier = Modifier.fillMaxWidth().padding(end = 10.dp).testTag("quran_surah_start"),
@@ -245,9 +253,8 @@ internal fun QuranRangeCard(
                     Icon(painterResource(R.drawable.ic_adhkar_close), "إلغاء", Modifier.size(18.dp), tint = TextMuted)
                 }
             }
-            Text(
-                if (endChosen) "اضغط على آية تسبق بداية المقطع لتبدأ منها، أو على آية أخرى لتحدّد نهايته، ولو في صفحة أخرى."
-                else "اضغط على آخر آية تريدها، ولو في صفحة أخرى.",
+            if (!endChosen) Text(
+                "اختر آية النهاية، ولو في صفحة أخرى.",
                 fontSize = 12.sp, color = TextMuted,
             )
             // Every choice in view, as everywhere else: the rows wrap rather than scroll out of sight.

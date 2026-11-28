@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="wake_access_confirm_place">اختر موقعك لجدولة المنبّهات المرتبطة بالصلاة</string>
-    <string name="wake_access_saved_needs_exact">المنبّه محفوظ وينتظر إذن المنبّهات الدقيقة</string>
-    <string name="wake_access_draft_needs_exact">يحتاج المنبّه إلى إذن ليرنّ في وقته</string>
-    <string name="wake_access_presentation">إعدادات عرض المنبّه</string>
-    <string name="wake_access_exact_detail">لن يرنّ المنبّه حتى تسمح للتطبيق بجدولته في إعدادات المنبّهات والتذكيرات.</string>
-    <string name="wake_access_exact_action">فتح إعدادات المنبّهات والتذكيرات</string>
-    <string name="wake_access_notifications_detail">إشعارات المنبّه متوقّفة. فعّلها لتظهر أزرار التحكّم عند الرنين.</string>
+    <string name="wake_access_saved_needs_exact">حُفظ المنبّه. لن يرنّ حتى تمنح الإذن.</string>
+    <string name="wake_access_draft_needs_exact">لن يرنّ المنبّه حتى تمنح الإذن.</string>
+    <string name="wake_access_presentation">أذونات عرض المنبّه</string>
+    <string name="wake_access_exact_action">السماح بالمنبّهات الدقيقة</string>
     <string name="wake_access_notifications_action">تفعيل إشعارات المنبّه</string>
-    <string name="wake_access_full_screen_detail">إذن العرض بملء الشاشة متوقّف. اسمح به لعرض المنبّه فوق شاشة القفل عند الرنين.</string>
-    <string name="wake_access_full_screen_action">فتح إعدادات العرض بملء الشاشة</string>
-    <string name="wake_access_low_ringing_channel">ارفع أهمية إشعارات الرنين للسماح بعرض المنبّه بملء الشاشة عند قفل الهاتف.</string>
-    <string name="wake_access_ringing_channel_action">إعدادات إشعارات الرنين</string>
-    <string name="wake_access_awake_check_detail">إشعارات التحقّق من الاستيقاظ متوقّفة. فعّلها ليظهر سؤال التأكيد بعد إيقاف الرنين.</string>
-    <string name="wake_access_awake_check_action">إعدادات إشعارات التحقّق من الاستيقاظ</string>
+    <string name="wake_access_full_screen_action">السماح بعرض المنبّه فوق شاشة القفل</string>
+    <string name="wake_access_ringing_channel_action">رفع أهمية إشعارات الرنين</string>
+    <string name="wake_access_awake_check_action">تفعيل إشعارات تأكيد الاستيقاظ</string>
+    <string name="wake_access_health_exact">تحتاج المنبّهات المفعّلة إلى إذن المنبّهات الدقيقة حتى ترنّ في موعدها.</string>
+    <string name="wake_access_health_notifications">إشعارات الرنين متوقفة. قد يرنّ المنبّه من دون ظهور أزرار إيقافه.</string>
+    <string name="wake_access_health_channel_quiet">أهمية إشعارات الرنين منخفضة، وقد لا تظهر شاشة المنبّه تلقائيًا.</string>
+    <string name="wake_access_health_awake_check">إشعارات تأكيد الاستيقاظ متوقفة، فلن يظهر طلب التأكيد بعد الرنين.</string>
+    <string name="wake_access_health_lock_screen">إذن العرض بملء الشاشة متوقف. قد يرنّ المنبّه من دون عرض شاشته فوق القفل.</string>
 </resources>

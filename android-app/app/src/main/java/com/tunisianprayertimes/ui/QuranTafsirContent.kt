@@ -125,17 +125,23 @@ internal fun TafsirTabs(meaning: Boolean, onSelect: (Boolean) -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TafsirBookChoices(books: List<TafsirBook>, selected: String?, onSelect: (String) -> Unit) {
+internal fun TafsirBookChoices(books: List<TafsirBook>, selected: String?, selectedUnavailable: Boolean,
+                              downloadSize: (TafsirBook) -> String?, onSelect: (String) -> Unit) {
     FlowRow(Modifier.fillMaxWidth().selectableGroup().padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.Center) {
         books.forEach { book ->
             val active = selected == book.id
-            Box(Modifier.heightIn(min = 48.dp).selectable(selected = active, role = Role.RadioButton, onClick = { if (!active) onSelect(book.id) })
+            val size = downloadSize(book)
+            Box(Modifier.heightIn(min = 48.dp).selectable(selected = active, role = Role.RadioButton, onClick = { if (!active || size != null || selectedUnavailable) onSelect(book.id) })
                 .testTag("quran_tafsir_book_${book.id}"), contentAlignment = Alignment.Center) {
                 Surface(shape = RoundedCornerShape(10.dp), color = if (active) MaterialTheme.colorScheme.secondaryContainer
                     else MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(tafsirShortTitle(book), Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
-                        style = MaterialTheme.typography.labelLarge, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 5.dp)) {
+                        Text(tafsirShortTitle(book), style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                        if (size != null || active && selectedUnavailable) Text(size?.let { "تنزيل · $it" } ?: "تنزيل",
+                            style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
@@ -146,9 +152,10 @@ internal fun TafsirBookChoices(books: List<TafsirBook>, selected: String?, onSel
 internal fun TafsirBody(
     modifier: Modifier, scroll: LazyListState, book: TafsirBook, units: List<TafsirUnit>, notes: List<TafsirNote>,
     glossary: List<TafsirUnit>, glossaryBook: TafsirBook?, verse: QuranVerseReference,
+    glossaryMissing: Boolean, noteDownloadSize: (String) -> String?,
     verseText: (QuranVerseReference) -> String?, offPageText: (QuranVerseReference) -> String?, showVerse: Boolean, fontSize: Int, intro: Boolean,
     onBodySpaceNeeded: (Int) -> Unit,
-    fallback: String?, unavailable: Boolean, downloadAction: (@Composable (TafsirBook) -> Unit)?,
+    unavailable: Boolean, downloadAction: (@Composable (TafsirBook) -> Unit)?,
     onAbout: (String) -> Unit, onNote: (TafsirNote) -> Unit,
 ) {
     val from = units.minOfOrNull { it.from } ?: verse.ayah
@@ -174,7 +181,7 @@ internal fun TafsirBody(
             else (if (start > 0) "… " else "") + list.subList(start, end).joinToString(" ") + (if (end < list.size) " …" else "")
         }
     }
-    val contextLine = if (notes.isNotEmpty() || intro || fallback != null) null else when {
+    val contextLine = if (notes.isNotEmpty() || intro) null else when {
         startsMidVerse && endsMidVerse -> "يبدأ هذا المقطع من وسط ${quranAyah(from)} وينتهي في وسط ${quranAyah(to)}."
         startsMidVerse -> "يبدأ هذا المقطع من وسط ${quranAyah(from)}."
         endsMidVerse -> "ينتهي هذا المقطع في وسط ${quranAyah(to)}."
@@ -182,7 +189,7 @@ internal fun TafsirBody(
         else -> null
     }
     val firstAnchor = entries.indexOfFirst { text -> text.spanStyles.any { it.item.background != Color.Unspecified } }
-    val paragraphsStart = (if (fallback != null) 1 else 0) + repeats.size + notes.size + (if (contextLine != null) 1 else 0)
+    val paragraphsStart = repeats.size + notes.size + (if (contextLine != null) 1 else 0)
     val desiredPixels = with(LocalDensity.current) { ((fontSize * 1.85f).sp.toPx() * 5).toInt() }
     val requestBodySpace by rememberUpdatedState(onBodySpaceNeeded)
     LaunchedEffect(scroll, paragraphsStart, desiredPixels, entries) {
@@ -210,13 +217,8 @@ internal fun TafsirBody(
     LazyColumn(modifier.nestedScroll(guard).testTag("quran_tafsir_text"), state = scroll,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (fallback != null) item { Text("تعذّر فتح $fallback على هذا الهاتف، فعرضنا لك ${book.title}.",
-            style = MaterialTheme.typography.bodySmall) }
         if (unavailable) {
-            item {
-                if (book.pack != null && downloadAction != null) downloadAction(book)
-                else Text("تعذّر فتح ${book.title} على هذا الهاتف.")
-            }
+            item(key = "download-${book.id}") { TafsirBookDownload(book, downloadAction) }
         } else {
             items(repeats.size) { index ->
                 Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
@@ -240,7 +242,14 @@ internal fun TafsirBody(
                             "ashur" -> "اقرأ شرح ابن عاشور لكلمة مصحفك"
                             else -> null
                         }
-                        if (label != null) TextButton(onClick = { onNote(note) }) { Text(label) }
+                        if (label != null) TextButton(onClick = { onNote(note) }) {
+                            Column {
+                                Text(label)
+                                note.targetBook?.let(noteDownloadSize)?.let { size ->
+                                    Text("تنزيل · $size", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -256,8 +265,12 @@ internal fun TafsirBody(
                 }
                 item { TafsirSource(book, units.mapNotNull { it.citation }.distinct(), onAbout) }
             }
-            if (glossary.isNotEmpty() && glossaryBook != null) {
-                item { Text("معاني الكلمات", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall) }
+        }
+        if (glossaryBook != null && (glossaryMissing || glossary.isNotEmpty())) {
+            item(key = "glossary-heading") { Text("معاني الكلمات", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall) }
+            if (glossaryMissing) {
+                item(key = "download-gharib") { TafsirBookDownload(glossaryBook, downloadAction) }
+            } else {
                 items(glossary.size) { index ->
                     val entry = glossary[index]
                     Column {
@@ -269,6 +282,14 @@ internal fun TafsirBody(
                 item { TafsirSource(glossaryBook, emptyList(), onAbout) }
             }
         }
+    }
+}
+
+@Composable
+private fun TafsirBookDownload(book: TafsirBook, download: (@Composable (TafsirBook) -> Unit)?) {
+    Column(Modifier.fillMaxWidth().testTag("quran_tafsir_download_${book.id}")) {
+        if (book.pack != null && download != null) download(book)
+        else Text("تعذّر فتح ${book.title} على هذا الهاتف.")
     }
 }
 

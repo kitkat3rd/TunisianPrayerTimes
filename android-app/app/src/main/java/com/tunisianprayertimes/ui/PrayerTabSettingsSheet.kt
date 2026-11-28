@@ -228,9 +228,15 @@ internal fun PrayerTabSettingsSheet(
                             onClick = { context.startActivity(Intent(context, MosqueSettingsActivity::class.java)) },
                         )
                         PrayerSettingsDivider()
+                        PrayerSettingsLink(title = stringResource(R.string.mr_feedback), onClick = {
+                            context.startActivity(Intent(context, com.tunisianprayertimes.mosque.MosqueFeedbackActivity::class.java))
+                        })
+                        PrayerSettingsDivider()
                         PrayerSettingsSwitch(
                             title = stringResource(R.string.call_end_vibration_title),
-                            summary = stringResource(R.string.call_feedback_uses_phone_state),
+                            summary = if (!access.hasPhoneState && !callEndVibrationEnabled) {
+                                stringResource(R.string.call_feedback_uses_phone_state)
+                            } else null,
                             checked = callEndVibrationEnabled,
                             onCheckedChange = onCallEndVibrationChange,
                             modifier = Modifier.testTag(TestTags.CALL_END_VIBRATION_SWITCH),
@@ -253,7 +259,6 @@ internal fun PrayerTabSettingsSheet(
                     PrayerSettingsGroup(title = stringResource(R.string.prayer_settings_location_group)) {
                         PrayerSettingsSwitch(
                             title = stringResource(R.string.auto_location_title),
-                            summary = stringResource(R.string.travel_foreground_summary),
                             checked = autoLocationEnabled,
                             onCheckedChange = onAutoLocationChange,
                             modifier = Modifier.testTag(TestTags.AUTO_LOCATION_SWITCH),
@@ -269,7 +274,6 @@ internal fun PrayerTabSettingsSheet(
                             PrayerSettingsDivider()
                             PrayerSettingsSwitch(
                                 title = stringResource(R.string.travel_in_background),
-                                summary = stringResource(if (access.backgroundTravelActive) R.string.travel_background_active else R.string.auto_location_foreground_only),
                                 checked = access.backgroundTravelActive,
                                 onCheckedChange = onBackgroundTravelChange,
                             )
@@ -341,7 +345,6 @@ private fun TravelNotificationSettings() {
     PrayerSettingsDivider()
     PrayerSettingsLink(
         title = stringResource(R.string.travel_notification_enable),
-        summary = stringResource(R.string.travel_notification_help),
         onClick = { repair(channel) },
     )
 }

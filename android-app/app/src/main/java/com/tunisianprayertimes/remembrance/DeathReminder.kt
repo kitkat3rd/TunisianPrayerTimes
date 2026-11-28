@@ -1,5 +1,7 @@
 package com.tunisianprayertimes.remembrance
 
+import com.tunisianprayertimes.access.ReminderAccessChanges
+
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -85,10 +87,12 @@ object DeathReminder {
 
     fun setEnabled(context: Context, enabled: Boolean): Boolean {
         if (enabled && !PrefsManager.hasConfirmedPlace(context)) return false
+        val wasActive = notificationsRequested(context)
         val edit = prefs(context).edit().putBoolean("enabled", enabled).remove("paused_until_day")
         // The reader's own draw of days and minutes, so two phones do not ring together.
         if (enabled && !prefs(context).contains("salt")) edit.putLong("salt", Random().nextLong())
         edit.apply()
+        if (wasActive != enabled) ReminderAccessChanges.changed()
         if (!enabled) cancelNotification(context)
         refreshLater(context)
         return true
@@ -115,15 +119,22 @@ object DeathReminder {
         pausedUntilDay(context).takeIf { it > today(context, now).toEpochDay() }?.let(LocalDate::ofEpochDay)
 
     fun pauseMonth(context: Context, now: Instant = Instant.now()) {
+        val wasActive = notificationsRequested(context, now)
         prefs(context).edit().putLong("paused_until_day", today(context, now).plusDays(PAUSE_DAYS).toEpochDay()).apply()
+        if (wasActive) ReminderAccessChanges.changed()
         cancelNotification(context)
         refresh(context, now)
     }
 
     fun resume(context: Context) {
+        val wasPaused = isEnabled(context) && pausedUntil(context) != null
         prefs(context).edit().remove("paused_until_day").apply()
+        if (wasPaused) ReminderAccessChanges.changed()
         refreshLater(context)
     }
+
+    internal fun notificationsRequested(context: Context, now: Instant = Instant.now()): Boolean =
+        isEnabled(context) && pausedUntil(context, now) == null
 
     /** The text of [day], the same on the card and in that day's reminder. */
     fun remembranceFor(day: LocalDate): DeathRemembranceTexts.Remembrance = DeathRemembranceTexts.forDay(day.toEpochDay())

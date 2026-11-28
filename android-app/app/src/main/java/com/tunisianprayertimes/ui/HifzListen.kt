@@ -70,9 +70,6 @@ internal fun HifzListenSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text("الاستماع إلى المواضع", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
-            if (candidates.isNotEmpty()) {
-                Text("تسمع الصواب في كل موضع بترتيب المصحف، ويستمرّ الاستماع والشاشة مطفأة.", fontSize = 13.sp, color = TextMuted)
-            }
             if (waiting > 0) Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(GoldLight).padding(start = 12.dp, end = 4.dp, top = 8.dp)
                     .testTag("hifz_listen_waiting"),
@@ -84,33 +81,26 @@ internal fun HifzListenSheet(
             if (candidates.isNotEmpty()) {
                 // Only when there is something to choose: some held, some not.
                 if (held in 1 until candidates.size) {
-                    Text("أيّ المواضع؟", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                    Text("المواضع", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         QuranChoiceChip("التي لم تثبت · ${candidates.size - held}", !mastered, "hifz_listen_learning") { mastered = false }
                         QuranChoiceChip("كلها · ${candidates.size}", mastered, "hifz_listen_all") { mastered = true }
                     }
                 }
-                Text("كم مرة تسمع كل موضع؟", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                Text("تكرار كل موضع", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     HifzListenTimes.forEach { n -> QuranChoiceChip(quranTimes(n), n == times, "hifz_listen_times_$n") { times = n } }
                 }
-                Text("وبعد آخر موضع؟", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                Text("بعد آخر موضع", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // What happens, not an order, as in «ماذا تريد أن تكرّر؟».
-                    QuranChoiceChip("تعود إلى أول موضع", endless, "hifz_listen_endless") { endless = true }
-                    QuranChoiceChip("يتوقّف الاستماع", !endless, "hifz_listen_stop") { endless = false }
+                    QuranChoiceChip("تكرار القائمة", endless, "hifz_listen_endless") { endless = true }
+                    QuranChoiceChip("إيقاف الاستماع", !endless, "hifz_listen_stop") { endless = false }
                 }
-                Text("وقفة بعد كل مرة لتردّده", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                Text("وقفة للترديد", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     QuranChoiceChip("بلا وقفة", !pause, "hifz_listen_no_pause") { pause = false }
                     QuranChoiceChip("بمدة تلاوة الموضع", pause, "hifz_listen_pause") { pause = true }
                 }
-                Text(
-                    hifzListenPlanLine(settings),
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(AdhkarSoftGreen).padding(horizontal = 12.dp, vertical = 8.dp)
-                        .testTag("hifz_listen_plan"),
-                    fontSize = 14.sp, color = GreenPrimary,
-                )
                 Button(
                     onClick = { HifzListenSettings.write(context, settings); onStart(heard, settings) },
                     enabled = heard.isNotEmpty(),
@@ -121,7 +111,6 @@ internal fun HifzListenSheet(
                     Spacer(Modifier.width(8.dp))
                     Text("ابدأ الاستماع", fontSize = 16.sp)
                 }
-                Text("ينقلك زرّا التالي والسابق في السماعة أو في السيارة من موضع إلى آخر.", fontSize = 12.sp, color = TextMuted)
             }
         }
     }
@@ -131,11 +120,4 @@ internal fun HifzListenSheet(
 internal fun hifzListenWaitingLine(count: Int): String {
     val them = when (count) { 1 -> "تسمعه"; 2 -> "تسمعهما"; else -> "تسمعها" }
     return "حان سؤالك عن ${HifzReminder.pointsAbout(count)}، فلن $them قبل أن تجيب."
-}
-
-/** «تسمع كل موضع 3 مرات، وتردّده بعد كل مرة، ثم الذي بعده. وبعد آخرها تعود إلى أولها، حتى توقف الاستماع.» */
-internal fun hifzListenPlanLine(settings: HifzListenSettings): String {
-    val say = if (!settings.pause) "" else if (settings.times == 1) "، وتردّده بعدها" else "، وتردّده بعد كل مرة"
-    val end = if (settings.endless) "وبعد آخرها تعود إلى أولها، حتى توقف الاستماع." else "ويتوقّف الاستماع بعد آخرها."
-    return "تسمع كل موضع ${quranTimes(settings.times)}$say، ثم الذي بعده. $end"
 }

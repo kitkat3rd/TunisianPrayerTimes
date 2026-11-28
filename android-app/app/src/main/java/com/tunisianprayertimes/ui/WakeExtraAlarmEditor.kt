@@ -235,16 +235,9 @@ internal fun WakeExtraAlarmEditor(
                             ),
                             singleLine = true,
                             isError = minutesText.isNotEmpty() && validMinutes == null,
-                            supportingText = {
-                                Text(
-                                    text = stringResource(
-                                        if (minutesText.isNotEmpty() && validMinutes == null) R.string.wake_extra_minutes_error
-                                        else R.string.wake_extra_minutes_range,
-                                    ),
-                                    color = if (minutesText.isNotEmpty() && validMinutes == null) SilenceRed else TextMuted,
-                                    fontSize = 12.sp,
-                                )
-                            },
+                            supportingText = if (minutesText.isNotEmpty() && validMinutes == null) {
+                                { Text(stringResource(R.string.wake_extra_minutes_error), color = SilenceRed, fontSize = 12.sp) }
+                            } else null,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -261,7 +254,6 @@ internal fun WakeExtraAlarmEditor(
                             onClick = { validMinutes?.let { setMinutes(it + 1) } },
                         )
                     }
-                    Text(stringResource(R.string.wake_extra_quick_minutes), color = TextMuted, fontSize = 12.sp)
                     Row(
                         modifier = Modifier.fillMaxWidth().selectableGroup(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -355,7 +347,6 @@ internal fun WakeExtraAlarmEditor(
                         val challengeOn = draft.playback.wakeUpCheckEnabled
                         WakeSwitchSettingRow(
                             title = stringResource(R.string.wake_editor_wake_up_check_title),
-                            subtitle = if (challengeOn) null else stringResource(R.string.wake_extra_challenge_subtitle),
                             checked = challengeOn,
                             onCheckedChange = { enabled ->
                                 draft = draft.copy(playback = draft.playback.withChallengeEnabled(enabled, mainPlayback))

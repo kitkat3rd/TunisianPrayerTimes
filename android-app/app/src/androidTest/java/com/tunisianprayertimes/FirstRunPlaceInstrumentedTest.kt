@@ -40,7 +40,7 @@ private annotation class NeedsCoarseLocation
 
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
-private annotation class AfterCitySelection(val cityPickerLink: Boolean = false)
+private annotation class AfterCitySelection(val cityPickerLink: Boolean = false, val completedSilence: Boolean = false)
 
 @RunWith(AndroidJUnit4::class)
 class FirstRunPlaceInstrumentedTest {
@@ -78,10 +78,17 @@ class FirstRunPlaceInstrumentedTest {
                     }
                     PrefsManager.initializeFirstRun(cleanProfile)
                     check(PrefsManager.isFirstRunSilencePending(context))
-                    if (description.getAnnotation(AfterCitySelection::class.java) != null) {
+                    // A test APK installed as an update has different package dates even with cleared preferences.
+                    if (!PrefsManager.isFreshOnboarding(context)) {
+                        check(stores.getValue("prayer_silence_prefs").edit().putBoolean("first_run_quran_downloads_pending", true).commit())
+                    }
+                    check(PrefsManager.isFirstRunQuranDownloadsPending(context))
+                    val afterCity = description.getAnnotation(AfterCitySelection::class.java)
+                    if (afterCity != null) {
                         val tunis = PrayerPlace.Inm(615)
                         check(PrefsManager.completeFirstRun(context, FirstRunPlaceChoice.Browse(tunis, null)))
                         check(PrefsManager.confirmSuggestedPlace(context, tunis))
+                        if (afterCity.completedSilence) PrefsManager.declineFirstRunSilence(context)
                     }
                     DelegationLocator.locationProvider = object : DelegationLocationProvider {
                         override suspend fun findCurrentLocation(context: Context, permissionState: LocationPermissionState): Location? {
@@ -151,7 +158,8 @@ class FirstRunPlaceInstrumentedTest {
         compose.waitUntil(30_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    private fun tapSilenceAction(tag: String) {
+    private fun tapOnboardingAction(tag: String) {
+        waitFor(tag)
         val action = compose.onNodeWithTag(tag)
         if (!action.isDisplayed()) action.performScrollTo()
         action.assertIsDisplayed().performClick()
@@ -177,13 +185,13 @@ class FirstRunPlaceInstrumentedTest {
         compose.onNodeWithTag("onboarding_browse").performClick()
         compose.waitUntil(30_000) { !PrefsManager.isFirstLaunch(context) }
         waitFor("onboarding_silence")
-        compose.onNodeWithTag("onboarding_silence_time").assertIsSelected()
+        compose.onNodeWithTag("silence_method_time").assertIsSelected()
         scenario.recreate()
         waitFor("onboarding_silence")
         compose.onNodeWithTag("onboarding_browse").assertDoesNotExist()
         assertTrue(PrefsManager.isPlaceProvisional(context))
 
-        tapSilenceAction("onboarding_silence_setup")
+        tapOnboardingAction("onboarding_silence_setup")
         waitFor("feature_cancel_place")
         val automation = InstrumentationRegistry.getInstrumentation()
             .getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
@@ -191,12 +199,19 @@ class FirstRunPlaceInstrumentedTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("feature_cancel_place").fetchSemanticsNodes().isEmpty() }
         assertTrue(PrefsManager.isPlaceProvisional(context))
         assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
-        tapSilenceAction("onboarding_silence_continue")
-        waitFor(TestTags.LOCATION_PICKER)
+        tapOnboardingAction("onboarding_silence_continue")
+        waitFor("onboarding_quran_downloads")
         assertFalse(PrefsManager.isFirstRunSilencePending(context))
+        scenario.recreate()
+        waitFor("onboarding_quran_downloads")
+        assertTrue(PrefsManager.isFirstRunQuranDownloadsPending(context))
+        tapOnboardingAction("onboarding_quran_continue")
+        waitFor(TestTags.LOCATION_PICKER)
+        assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
         scenario.recreate()
         waitFor(TestTags.LOCATION_PICKER)
         compose.onNodeWithTag("onboarding_silence").assertDoesNotExist()
+        compose.onNodeWithTag("onboarding_quran_downloads").assertDoesNotExist()
         assertTrue(PrefsManager.isPlaceProvisional(context))
         assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
         assertFalse(MosqueSilenceSettings.backgroundDisclosureAccepted(context))
@@ -210,7 +225,7 @@ class FirstRunPlaceInstrumentedTest {
         // This activity has no saved bundle; the place was confirmed by an earlier launch.
         waitFor("onboarding_silence")
         compose.onNodeWithTag("onboarding_location_pick").assertDoesNotExist()
-        compose.onNodeWithTag("onboarding_silence_time").assertIsSelected()
+        compose.onNodeWithTag("silence_method_time").assertIsSelected()
         val modes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             AutomaticSilenceMode.entries
         } else {
@@ -228,7 +243,7 @@ class FirstRunPlaceInstrumentedTest {
         instrumentation.addMonitor(monitor)
         try {
             modes.forEachIndexed { index, mode ->
-                val tag = if (mode == AutomaticSilenceMode.TIME_ONLY) "onboarding_silence_time" else "onboarding_silence_mosque"
+                val tag = if (mode == AutomaticSilenceMode.TIME_ONLY) "silence_method_time" else "silence_method_mosque"
                 compose.onNodeWithTag(tag).performScrollTo().performClick().assertIsSelected()
                 if (mode == AutomaticSilenceMode.TIME_AND_MOSQUE) {
                     scenario.recreate()
@@ -237,7 +252,7 @@ class FirstRunPlaceInstrumentedTest {
                 }
                 assertEquals(index, launches.size)
                 assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
-                tapSilenceAction("onboarding_silence_setup")
+                tapOnboardingAction("onboarding_silence_setup")
                 compose.waitUntil(10_000) { launches.size == index + 1 }
                 val expected = MosqueSettingsActivity.onboardingIntent(context, mode)
                 assertEquals(expected.action, launches[index].action)
@@ -247,9 +262,12 @@ class FirstRunPlaceInstrumentedTest {
                 assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
                 assertFalse(MosqueSilenceSettings.backgroundDisclosureAccepted(context))
             }
-            tapSilenceAction("onboarding_silence_continue")
+            tapOnboardingAction("onboarding_silence_continue")
+            waitFor("onboarding_quran_downloads")
+            androidx.test.espresso.Espresso.pressBack()
             waitFor(TestTags.LOCATION_PICKER)
             assertFalse(PrefsManager.isFirstRunSilencePending(context))
+            assertFalse(PrefsManager.isFirstRunQuranDownloadsPending(context))
             assertEquals(0, locationReads.get())
             assertTrue("Unexpected system request: $permissionLaunches", permissionLaunches.isEmpty())
         } finally {
@@ -260,7 +278,8 @@ class FirstRunPlaceInstrumentedTest {
     @AfterCitySelection
     @Test fun editingASavedPrayerRuleAfterOptOutKeepsAutomaticSilencingOff() {
         waitFor("onboarding_silence")
-        tapSilenceAction("onboarding_silence_continue")
+        tapOnboardingAction("onboarding_silence_continue")
+        tapOnboardingAction("onboarding_quran_continue")
         waitFor("today_time_FAJR")
         compose.onNodeWithTag("today_time_FAJR").performScrollTo().performClick()
         val inclusion = compose.onNodeWithContentDescription(
@@ -273,24 +292,40 @@ class FirstRunPlaceInstrumentedTest {
         assertTrue("Unexpected system request: $permissionLaunches", permissionLaunches.isEmpty())
     }
 
-    @AfterCitySelection(cityPickerLink = true)
-    @Test fun travelCityLinkDefersTheSilenceOfferOnlyForThatPrayerVisit() {
+    private fun leaveTravelPickerForAlarms() {
         waitFor("locality_search")
         compose.onNodeWithTag("locality_search").assertIsDisplayed()
         compose.onNodeWithTag("onboarding_silence").assertDoesNotExist()
+        compose.onNodeWithTag("onboarding_quran_downloads").assertDoesNotExist()
         androidx.test.espresso.Espresso.closeSoftKeyboard()
         androidx.test.espresso.Espresso.pressBack()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("locality_search").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag(TestTags.LOCATION_PICKER).assertExists()
         compose.onNodeWithTag("onboarding_silence").assertDoesNotExist()
+        compose.onNodeWithTag("onboarding_quran_downloads").assertDoesNotExist()
         compose.onNodeWithTag(TestTags.MAIN_TAB_ALARMS).performClick()
         compose.onNodeWithTag(TestTags.LOCATION_PICKER).assertDoesNotExist()
+    }
+
+    @AfterCitySelection(cityPickerLink = true)
+    @Test fun travelCityLinkDefersTheSilenceOfferOnlyForThatPrayerVisit() {
+        leaveTravelPickerForAlarms()
         assertTrue(PrefsManager.isFirstRunSilencePending(context))
         compose.onNodeWithTag(TestTags.MAIN_TAB_TODAY).performClick()
         waitFor("onboarding_silence")
         compose.onNodeWithTag("locality_search").assertDoesNotExist()
         assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
         assertEquals(0, locationReads.get())
+        assertTrue("Unexpected system request: $permissionLaunches", permissionLaunches.isEmpty())
+    }
+
+    @AfterCitySelection(cityPickerLink = true, completedSilence = true)
+    @Test fun travelCityLinkDefersQuranDownloadsUntilTheNextPrayerVisit() {
+        leaveTravelPickerForAlarms()
+        assertTrue(PrefsManager.isFirstRunQuranDownloadsPending(context))
+        compose.onNodeWithTag(TestTags.MAIN_TAB_TODAY).performClick()
+        waitFor("onboarding_quran_downloads")
+        compose.onNodeWithTag("locality_search").assertDoesNotExist()
         assertTrue("Unexpected system request: $permissionLaunches", permissionLaunches.isEmpty())
     }
 

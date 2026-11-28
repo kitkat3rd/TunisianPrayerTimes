@@ -59,6 +59,8 @@ internal object MosqueObservationTrace {
         if (prior != null && name == null) {
             val reason = when (engine.detector.departureOnLastFix.takeIf { fix != null }) {
                 AdaptiveVisitDetector.Departure.CLEAR_OUTSIDE -> R.string.trace_mosque_departed
+                AdaptiveVisitDetector.Departure.SUSTAINED_OUTSIDE -> R.string.trace_mosque_stayed_outside
+                AdaptiveVisitDetector.Departure.ENTRANCE_RETURN -> R.string.trace_mosque_left_by_entrance
                 AdaptiveVisitDetector.Departure.EXTERIOR_PATH -> R.string.trace_mosque_returned_to_path
                 null -> R.string.trace_mosque_lost_evidence
             }
@@ -66,6 +68,7 @@ internal object MosqueObservationTrace {
                 longitude = fix?.point?.longitude, accuracyMeters = fix?.accuracyMeters, sessionId = id)
         }
         val detail = when (engine.state) {
+            PresenceState.ENTERING -> c.getString(R.string.mosque_status_entering)
             PresenceState.VISIT_CONFIRMED -> {
                 val reason = when (engine.detector.arrival) {
                     AdaptiveVisitDetector.Arrival.WALKED_IN -> R.string.trace_mosque_walked_in

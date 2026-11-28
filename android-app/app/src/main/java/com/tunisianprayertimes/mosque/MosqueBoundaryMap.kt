@@ -60,6 +60,7 @@ internal fun MosqueBoundaryMap(
     modifier: Modifier = Modifier,
     onStatus: (Boolean) -> Unit,
     onChange: (List<GeoPoint>) -> Unit,
+    reference: List<SilencePolygon> = emptyList(),
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -83,7 +84,7 @@ internal fun MosqueBoundaryMap(
         }
     }
     AndroidView(factory = { view }, modifier = modifier) {
-        it.bind(points, fixedPolygons, crossing, pin, userLocation, mode, focus, onStatus, onChange)
+        it.bind(points, fixedPolygons, crossing, pin, userLocation, mode, focus, onStatus, onChange, reference)
     }
 }
 
@@ -94,6 +95,7 @@ private class BoundaryMapView(context: Context) : MapView(context, mapOptions(co
     private var source: GeoJsonSource? = null
     private var points = emptyList<GeoPoint>()
     private var fixedPolygons = emptyList<SilencePolygon>()
+    private var reference = emptyList<SilencePolygon>()
     private var crossing: Pair<Int, Int>? = null
     private var pin: GeoPoint? = null
     private var userLocation: GeoPoint? = null
@@ -132,6 +134,9 @@ private class BoundaryMapView(context: Context) : MapView(context, mapOptions(co
                 style.addLayer(LineLayer("mosque-edge", boundary.id)
                     .withFilter(Expression.eq(Expression.get("kind"), Expression.literal("edge")))
                     .withProperties(lineColor("#086644"), lineWidth(3f)))
+                style.addLayer(LineLayer("catalogue-reference", boundary.id)
+                    .withFilter(Expression.eq(Expression.get("kind"), Expression.literal("reference")))
+                    .withProperties(lineColor("#97582e"), lineWidth(2f), lineDasharray(arrayOf(3f, 2f))))
                 style.addLayer(LineLayer("mosque-crossing", boundary.id)
                     .withFilter(Expression.eq(Expression.get("kind"), Expression.literal("crossing")))
                     .withProperties(lineColor("#B3261E"), lineWidth(4f)))
@@ -167,11 +172,12 @@ private class BoundaryMapView(context: Context) : MapView(context, mapOptions(co
         focus: BoundaryFocus,
         onStatus: (Boolean) -> Unit,
         onChange: (List<GeoPoint>) -> Unit,
+        reference: List<SilencePolygon>,
     ) {
         this.onStatus = onStatus
         this.onChange = onChange
         succeeded?.let(onStatus)
-        if (this.points != points || this.fixedPolygons != fixedPolygons || this.crossing != crossing ||
+        if (this.reference != reference || this.points != points || this.fixedPolygons != fixedPolygons || this.crossing != crossing ||
             this.pin != pin || this.userLocation != userLocation || this.mode != mode
         ) {
             val ready = map
@@ -184,6 +190,7 @@ private class BoundaryMapView(context: Context) : MapView(context, mapOptions(co
             ) {
                 ready.animateCamera(CameraUpdateFactory.zoomTo(17.5))
             }
+            this.reference = reference
             this.points = points
             this.fixedPolygons = fixedPolygons
             this.crossing = crossing
@@ -220,6 +227,12 @@ private class BoundaryMapView(context: Context) : MapView(context, mapOptions(co
         val closed = mode != BoundaryEditMode.DRAW && outline.size >= 3
         val edge = if (closed) outline + outline.first() else outline
         val features = buildList {
+            reference.forEach { polygon ->
+                for (ring in listOf(polygon.exterior) + polygon.holes) {
+                    val open = ring.openOutline().map { it.mapPoint() }
+                    add(lineFeature(open + open.first(), "reference"))
+                }
+            }
             fixedPolygons.forEach { polygon ->
                 val rings = (listOf(polygon.exterior) + polygon.holes).map { ring ->
                     val open = ring.openOutline().map { it.mapPoint() }

@@ -1,11 +1,14 @@
 package com.tunisianprayertimes.ui
 
 import android.app.Application
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.FirstRunPlaceChoice
 import com.tunisianprayertimes.PrefsManager
@@ -33,7 +36,10 @@ class LifeReminderPlaceReturnTest {
         compose.onNodeWithText(reading.headline).assertExists()
         compose.onNodeWithContentDescription("تذكير ذكر الموت").performClick()
         compose.onNodeWithTag("feature_confirm_suggested_place").performClick()
-        compose.onNodeWithText("لماذا نذكر الموت؟").assertExists()
+        val reason = "نتذكّر الموت لنراجع"
+        compose.onNodeWithText(reason, substring = true).assertDoesNotExist()
+        compose.onNodeWithText("لماذا نذكر الموت؟").performScrollTo().performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText(reason, substring = true).performScrollTo().assertExists()
         assertTrue(PrefsManager.hasConfirmedPlace(app))
         assertFalse(DeathReminder.isEnabled(app))
     }

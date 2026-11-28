@@ -3,6 +3,7 @@ package com.tunisianprayertimes.mosque.presence
 enum class PresenceState {
     IDLE,
     ACQUIRING,
+    ENTERING,
     VISIT_CONFIRMED,
     EXITING,
     INACTIVE_NEEDS_SETUP,

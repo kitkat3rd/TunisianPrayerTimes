@@ -14,6 +14,7 @@ import com.google.android.gms.common.GoogleApiAvailability
 import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
+import com.tunisianprayertimes.mosque.presence.MAX_WAKE_CIRCLES
 
 object MosqueReadiness {
     internal fun forMode(context: Context, mode: AutomaticSilenceMode?, areas: SilenceAreaRead? = null): List<Int> =
@@ -46,7 +47,7 @@ object MosqueReadiness {
         if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) != ConnectionResult.SUCCESS) add(R.string.mosque_needs_play_services)
         if (!store.available) add(R.string.mosque_store_unavailable)
         else if (store.areas.none { it.geometry.enabled }) add(R.string.mosque_no_areas)
-        else if (store.areas.filter { it.geometry.enabled }.sumOf { it.geometry.polygons.size } > 100) add(R.string.mosque_too_many_areas)
+        else if (store.areas.filter { it.geometry.enabled }.sumOf { it.geometry.polygons.size } > MAX_WAKE_CIRCLES) add(R.string.mosque_too_many_areas)
     }
     fun locationIssue(issue: Int) = issue == R.string.mosque_needs_precise ||
         issue == R.string.mosque_needs_background || issue == R.string.mosque_needs_location

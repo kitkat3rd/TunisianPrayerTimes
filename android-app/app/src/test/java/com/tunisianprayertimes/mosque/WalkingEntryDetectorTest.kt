@@ -32,11 +32,12 @@ class WalkingEntryDetectorTest {
         assertTrue("expected a valid provider sample at ${s.sec}s", o.observe(fix(s), s.at))
     }
 
-    private fun stillUnconfirmed(o: AdaptiveObservation, samples: List<Sample>) {
+    private fun stillUnconfirmed(o: AdaptiveObservation, samples: List<Sample>,
+        temporarySilenceAt: IntRange = IntRange.EMPTY) {
         for (s in samples) {
             feed(o, s)
             assertNull("confirmed at ${s.sec}s", o.detector.arrival)
-            assertFalse("silencing at ${s.sec}s", o.desired)
+            assertEquals("silence at ${s.sec}s", s.sec in temporarySilenceAt, o.desired)
         }
     }
 
@@ -45,7 +46,7 @@ class WalkingEntryDetectorTest {
 
     @Test fun walkingAcrossTheEntranceConfirmsInsideTheWindowBeforeAnyStationaryDwell() {
         val o = observing()
-        stillUnconfirmed(o, approach + crossing.dropLast(1))
+        stillUnconfirmed(o, approach + crossing.dropLast(1), 20..26)
         feed(o, crossing.last())
         assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, o.detector.arrival)
         assertEquals(hall.id, o.detector.confirmedAreaId)
@@ -54,7 +55,7 @@ class WalkingEntryDetectorTest {
 
     @Test fun crossingBetweenSamplesCanConfirmWithoutAReadingOnTheDoorstep() {
         val o = observing()
-        stillUnconfirmed(o, approach + Sample(20, 11) + Sample(23, 15) + Sample(26, 20))
+        stillUnconfirmed(o, approach + Sample(20, 11) + Sample(23, 15) + Sample(26, 20), 20..26)
         feed(o, Sample(29, 24))
         assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, o.detector.arrival)
         assertTrue(o.desired)
@@ -63,7 +64,7 @@ class WalkingEntryDetectorTest {
     @Test fun sixSecondFixesCanSettleAtTheSamePositionAfterMeasuredAdvanceThroughTheDoor() {
         val o = observing()
         val outside = listOf(Sample(0, -42), Sample(6, -32), Sample(12, -20))
-        stillUnconfirmed(o, outside + Sample(18, 2) + Sample(24, 11))
+        stillUnconfirmed(o, outside + Sample(18, 2) + Sample(24, 11), 18..24)
         feed(o, Sample(30, 11))
         assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, o.detector.arrival)
         assertTrue(o.desired)
@@ -73,7 +74,7 @@ class WalkingEntryDetectorTest {
         val sparse = observing()
         val spacedApproach = listOf(Sample(0, -60), Sample(30, -35), Sample(58, -18))
         val entry = crossing.map { it.copy(sec = it.sec + 54) }
-        stillUnconfirmed(sparse, spacedApproach + entry.dropLast(1))
+        stillUnconfirmed(sparse, spacedApproach + entry.dropLast(1), 74..80)
         feed(sparse, entry.last())
         assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, sparse.detector.arrival)
 
@@ -93,7 +94,7 @@ class WalkingEntryDetectorTest {
         for (area in listOf(hall, irregular)) {
             val samples = (outside + inside).map { s -> if (area == hall) s else s.copy(x = -s.y, y = s.x) }
             val o = observing(listOf(area))
-            stillUnconfirmed(o, samples.dropLast(1))
+            stillUnconfirmed(o, samples.dropLast(1), 68..74)
             feed(o, samples.last())
             assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, o.detector.arrival)
             assertEquals(area.id, o.detector.confirmedAreaId)
@@ -128,13 +129,14 @@ class WalkingEntryDetectorTest {
         stillUnconfirmed(observing(), inside)
     }
 
-    @Test fun anOutsideSnapshotFollowedByEdgeSkimmingOrImprovingPrecisionDoesNotSilence() {
+    @Test fun anOutsideSnapshotFollowedByEdgeSkimmingOrImprovingPrecisionDoesNotConfirmAVisit() {
         val outside = listOf(Sample(0, -29, -20), Sample(20, -30, -6))
         val skimming = listOf(Sample(40, 2, 0, 6.0), Sample(44, 5, 7, 6.0),
             Sample(49, 5, 15, 6.0), Sample(53, -3, 21, 6.0))
         // Better precision makes these last two centres look deep while the route stays parallel to the wall.
         val precisionChange = listOf(Sample(40, 6, 0, 7.0), Sample(44, 7, 6, 3.0), Sample(49, 7, 13, 3.0))
-        for (passing in listOf(skimming, precisionChange)) stillUnconfirmed(observing(), outside + passing)
+        stillUnconfirmed(observing(), outside + skimming, 40..53)
+        stillUnconfirmed(observing(), outside + precisionChange, 40..49)
     }
 
     @Test fun recentInteriorEvidenceRequiresACorroboratedOutsideReturnBeforeAnotherWalkIn() {
@@ -144,7 +146,7 @@ class WalkingEntryDetectorTest {
         stillUnconfirmed(observing(), listOf(recentlyInside, outside) + entering)
 
         val corroborated = observing()
-        stillUnconfirmed(corroborated, listOf(recentlyInside, outside, Sample(18, -30)) + entering.dropLast(1))
+        stillUnconfirmed(corroborated, listOf(recentlyInside, outside, Sample(18, -30)) + entering.dropLast(1), 28..32)
         feed(corroborated, entering.last())
         assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, corroborated.detector.arrival)
         assertTrue(corroborated.desired)
@@ -271,15 +273,14 @@ class WalkingEntryDetectorTest {
             Sample(31, -8, 25), Sample(35, -18, 35))
         val cuttingCorner = listOf(Sample(12, -8, -28), Sample(15, 1, -31),
             Sample(18, 5, -34), Sample(21, 9, -38), Sample(24, 14, -42), Sample(27, 17, -47))
-        for (pass in listOf(alongWall, cuttingCorner)) {
-            stillUnconfirmed(observing(), approach.map { it.copy(y = pass.first().y) } + pass)
-        }
+        stillUnconfirmed(observing(), approach.map { it.copy(y = alongWall.first().y) } + alongWall)
+        stillUnconfirmed(observing(), approach.map { it.copy(y = cuttingCorner.first().y) } + cuttingCorner, 15..24)
     }
 
-    @Test fun turningBackAcrossTheDoorwayClearsTheIncompleteEntry() {
+    @Test fun oneUncertainReversalInterruptsWalkingConfirmationButKeepsTheOriginalTemporarySilence() {
         val turnBack = listOf(Sample(20, 2), Sample(22, 6), Sample(24, 9), Sample(26, 13),
             Sample(31, -2), Sample(34, 2), Sample(37, 9), Sample(39, 13), Sample(42, 17))
-        stillUnconfirmed(observing(), approach + turnBack)
+        stillUnconfirmed(observing(), approach + turnBack, 20..42)
     }
 
     @Test fun aNearbyHomeAndAnAccuracyEstimateThatChangesWhileStationaryDoNotConfirm() {
@@ -298,8 +299,9 @@ class WalkingEntryDetectorTest {
         val gap = listOf(Sample(20, 2), Sample(23, 9), Sample(40, 15), Sample(43, 19), Sample(46, 22), Sample(49, 25))
         val jump = listOf(Sample(10, 55), Sample(13, 52), Sample(16, 49), Sample(19, 46))
         val uncertainAtDoor = listOf(Sample(20, 2), Sample(26, 11), Sample(30, 4), Sample(34, 12))
-        for (samples in listOf(imprecise, lostPrecision, frozenPosition, gap, jump, uncertainAtDoor)) {
-            stillUnconfirmed(observing(), approach + samples)
+        for (samples in listOf(imprecise, jump)) stillUnconfirmed(observing(), approach + samples)
+        for (samples in listOf(lostPrecision, frozenPosition, gap, uncertainAtDoor)) {
+            stillUnconfirmed(observing(), approach + samples, 20..samples.last().sec)
         }
     }
 
@@ -321,7 +323,11 @@ class WalkingEntryDetectorTest {
         val o = observing(listOf(courtyard, hall.copy(id = "disabled", enabled = false)))
         val throughHole = listOf(Sample(20, 2), Sample(23, 9), Sample(26, 17), Sample(29, 22),
             Sample(31, 26), Sample(33, 30), Sample(35, 34), Sample(38, 38))
-        stillUnconfirmed(o, approach + throughHole)
+        // A single uncertain centre in the 6 m-wide excluded courtyard breaks the walk-in
+        // evidence. It cannot prove the user has left, or advance the original silence deadline.
+        stillUnconfirmed(o, approach + throughHole, 20..38)
+        o.tick(65_000)
+        assertFalse(o.desired)
     }
 
     @Test fun eachAdjacentMosqueNeedsItsOwnOutdoorEvidence() {
@@ -331,10 +337,10 @@ class WalkingEntryDetectorTest {
             Sample(36, 15, 34), Sample(39, 16, 37), Sample(42, 17, 40), Sample(45, 18, 43))
         val walk = approach + changeDirection
         // These outside samples approach the west hall. They stay 12 m from the nearer north wall.
-        stillUnconfirmed(observing(listOf(westHall, northHall(12))), walk)
+        stillUnconfirmed(observing(listOf(westHall, northHall(12))), walk, 20..26)
         // At 24 m the north hall has its own clear outside fix, then a genuine measured crossing.
         val separated = observing(listOf(westHall, northHall(24)))
-        stillUnconfirmed(separated, walk.dropLast(1))
+        stillUnconfirmed(separated, walk.dropLast(1), 20..42)
         feed(separated, walk.last())
         assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, separated.detector.arrival)
         assertEquals("north-hall", separated.detector.confirmedAreaId)

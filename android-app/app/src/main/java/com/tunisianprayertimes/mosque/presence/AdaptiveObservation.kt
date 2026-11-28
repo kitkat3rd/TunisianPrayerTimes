@@ -4,6 +4,9 @@ package com.tunisianprayertimes.mosque.presence
 internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedAt: Long) {
     enum class Sampling { PARKED, BALANCED, PRECISE }
     val detector = AdaptiveVisitDetector(areas)
+    val wakeCircles = mosqueWakeCircles(areas)
+    var wakeCoverageUntil = 0L
+    var observationEnd = 0L
     var sampling = Sampling.PARKED
         private set
     var generation = 0L
@@ -22,11 +25,17 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
     private var lastRadius = 0.0
     private var retried = false
     private var recoveryStart: Long? = null
-    private var recoveryOutside: Long? = null
+    private var recoveryOutside: LongRange? = null
     private var burstEnd: Long? = null
     private var lastMovementBurst: Long? = null
     private var lastGeofence: Pair<Int, Long>? = null
-    private var supportingBurst: Long? = null
+    private var lastBoundaryCheck: Long? = null
+    private var probingExit = false
+    private var nextVisitProbe: Long? = null
+    private companion object {
+        const val EXIT_PROBE_MILLIS = 30_000L
+        const val VISIT_PROBE_RETRY_MILLIS = 300_000L
+    }
     private data class ApproachFix(val at: Long, val distance: Double, val accuracy: Double)
     private val recentApproach = ArrayDeque<ApproachFix>()
     private var recentExterior: PresenceFix? = null
@@ -39,6 +48,7 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
             acceptedAt = null
             recentApproach.clear()
             sampling = next
+            if (next != Sampling.PRECISE) probingExit = false
         }
     }
 
@@ -50,13 +60,14 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
 
     fun geofence(now: Long, transition: Int): Boolean {
         val previous = lastGeofence
-        if (previous?.first == transition && now - previous.second < 120_000) return false
+        if (sampling != Sampling.PARKED && previous?.first == transition && now - previous.second < 120_000) return false
         lastGeofence = transition to now
-        start(now, forceBurst = true)
+        if (detector.arrival != null) probeVisit(now) else start(now, forceBurst = true)
         return true
     }
 
-    private fun burst(now: Long, duration: Long = 120_000) {
+    private fun burst(now: Long, duration: Long = 120_000, probeExit: Boolean = false) {
+        probingExit = probeExit
         burstEnd = now + duration
         change(Sampling.PRECISE, force = sampling == Sampling.PRECISE)
     }
@@ -72,6 +83,7 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         if (unavailable == disabled) return
         unavailable = disabled
         if (disabled) {
+            wakeCoverageUntil = 0L
             park()
             detector.reset()
             fallback = eligiblePeriod
@@ -103,30 +115,93 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
 
     fun observe(fix: PresenceFix, now: Long, watchForReturn: Boolean = false): Boolean {
         tick(now)
-        if (sampling == Sampling.PARKED || unavailable || !detector.observe(fix, now, openedAt)) return false
+        if (sampling == Sampling.PARKED || unavailable) return false
+        val at = fix.elapsedRealtimeMillis
+        if (!detector.observe(fix, now, openedAt)) {
+            // A new but unusable measurement interrupts recovery. Old or mock callbacks add no evidence.
+            val previous = recoveryOutside
+            if (previous != null && !fix.isMock && at > previous.last && at <= now) recoveryOutside = null
+            return false
+        }
         approachingOnLastFix = false
         lastValid = now; diagnosticStart = null; retried = false
         val radius = requireNotNull(fix.accuracyMeters)
         val distance = detector.distance
+        val near = distance <= radius + 100
         if (fallback) {
             if (recoveryStart == null) { recoveryStart = now; burst(now) }
-            recoveryOutside = if (detector.clearlyAway) recoveryOutside ?: fix.elapsedRealtimeMillis else null
-            if (detector.arrival != null || recoveryOutside?.let { fix.elapsedRealtimeMillis - it >= 20_000 } == true)
-                endFallback()
-        }
-        val near = distance <= radius + 100
-        if (detector.arrival != null) {
-            if ((detector.clearlyAway || detector.returningToExteriorPath) && sampling != Sampling.PRECISE) burst(now)
-            else if (detector.lastSupport == fix.elapsedRealtimeMillis && !checkingExit) {
-                change(Sampling.BALANCED); burstEnd = null
+            val previous = recoveryOutside
+            recoveryOutside = when {
+                !detector.clearlyAway || (near && radius > 30) || now - at > MAX_DEPARTURE_GAP_MILLIS -> null
+                previous == null || at - previous.last > MAX_DEPARTURE_GAP_MILLIS -> at..at
+                else -> previous.first..at
             }
+            if (detector.arrival != null || recoveryOutside?.let { it.last - it.first >= 20_000 } == true) endFallback()
+        }
+        val tentativeUntil = detector.tentativeUntil
+        if (detector.arrival != null) {
+            sampleVisit(at, distance, radius, now)
+        } else if (tentativeUntil != null && !fallback) {
+            // Keep collecting arrival evidence until this crossing is confirmed or expires.
+            if (sampling != Sampling.PRECISE || (burstEnd ?: now) < tentativeUntil)
+                burst(now, duration = tentativeUntil - now)
         } else if (!fallback) {
-            if (!near) park()
-            else sampleApproach(fix, distance, radius, now, watchForReturn)
+            if (near) sampleApproach(fix, distance, radius, now, watchForReturn)
+            else if (wakeCoverageUntil > now && wakeCoverageUntil >= observationEnd - 1_000 &&
+                wakeCircles.size in 1..MAX_WAKE_CIRCLES && wakeCircles.none { it.overlaps(fix) }) {
+                park()
+            } else {
+                // Inside a wake circle there may be no further transition before reaching the mosque.
+                // An unregistered or expiring circle cannot wake a parked observer either.
+                change(Sampling.BALANCED)
+                burstEnd = null
+            }
         }
         lastDistance = distance; lastRadius = radius
         tick(now)
         return true
+    }
+
+    private fun sampleVisit(at: Long, distance: Double, accuracy: Double, now: Long) {
+        if (detector.checkingExterior || detector.returningToExteriorPath) {
+            // Stronger exit evidence gets its full sampling window, even late in a short check.
+            if (sampling != Sampling.PRECISE || probingExit) burst(now)
+            return
+        }
+        // An indoor approach probe may expire just before the doorway. Collect the second
+        // exterior fix while the first is still fresh, even during the ordinary probe cooldown.
+        val until = detector.entranceCheckUntil
+        if (until != null && until > now) {
+            if (sampling != Sampling.PRECISE || (burstEnd ?: now) < until)
+                burst(now, duration = until - now, probeExit = true)
+            return
+        }
+        if (accuracy > 30 && detector.clearlyAway) {
+            probeVisit(now)
+            return
+        }
+        if (detector.lastSupport == at && nextVisitProbe?.let { now >= it } == true) nextVisitProbe = null
+        val backInside = if (probingExit) distance < 0 && accuracy <= 30 else detector.lastSupport == at
+        // A centre just outside every saved polygon warrants more fixes. The detector alone decides departure.
+        if (sampling == Sampling.BALANCED && (detector.approachingEntrance || distance > 0 && accuracy <= 30) &&
+            lastBoundaryCheck?.let { now - it < 120_000 } != true) {
+            lastBoundaryCheck = now
+            burst(now, duration = EXIT_PROBE_MILLIS, probeExit = true)
+        } else if (backInside && !detector.approachingEntrance) {
+            change(Sampling.BALANCED)
+            burstEnd = null
+        }
+    }
+
+    /** Weak cues and missing indoor support share a budget. Usable exit evidence bypasses it in sampleVisit. */
+    private fun probeVisit(now: Long, supportExpired: Boolean = false) {
+        val retry = nextVisitProbe
+        if (retry != null && now < retry) return
+        nextVisitProbe = now + VISIT_PROBE_RETRY_MILLIS
+        // A precision request already in progress gives the weak evidence its chance to improve.
+        if (sampling != Sampling.BALANCED) return
+        if (supportExpired && retry == null) burst(now)
+        else burst(now, duration = EXIT_PROBE_MILLIS, probeExit = true)
     }
 
     private fun sampleApproach(fix: PresenceFix, distance: Double, accuracy: Double, now: Long,
@@ -157,7 +232,7 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
             recentExterior = fix.takeIf { accuracy <= 10.0 }
         }
         if (checkedInterior || distance >= 0 || accuracy > 30.0) return false
-        if (distance < -(accuracy + 2)) return true
+        if (distance < -(accuracy + 2) || detector.awaitingAccurateEntry) return true
         // An imprecise edge alone cannot justify an extra burst. Check an actual recent crossing.
         val outside = recentExterior ?: return false
         val elapsed = fix.elapsedRealtimeMillis - outside.elapsedRealtimeMillis
@@ -193,6 +268,11 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
 
     fun tick(now: Long) {
         detector.tick(now)
+        if (detector.arrival == null) {
+            lastBoundaryCheck = null
+            nextVisitProbe = null
+            probingExit = false
+        }
         if (unavailable) { fallback = eligiblePeriod; requested = fallback; return }
         if (burstEnd?.let { now >= it } == true) {
             burstEnd = null
@@ -218,23 +298,23 @@ internal class AdaptiveObservation(areas: List<SilenceArea>, private val openedA
         }
         val support = detector.lastSupport
         if (detector.arrival != null && support != null && sampling == Sampling.BALANCED &&
-            now - support >= 180_000 && (supportingBurst == null || now - supportingBurst!! >= 180_000)) {
-            supportingBurst = now; burst(now)
-        }
+            now - support >= 180_000) probeVisit(now, supportExpired = true)
         val fresh = support != null && now - support <= 30_000 && !checkingExit
-        requested = eligiblePeriod && (fallback || detector.arrival != null && (requested || fresh))
+        requested = eligiblePeriod && (fallback || detector.tentativeUntil != null ||
+            detector.arrival != null && (requested || fresh))
     }
 
     val desired get() = requested
-    private val checkingExit get() = detector.outsideSince != null || detector.returningToExteriorPath
+    private val checkingExit get() = detector.checkingExterior || detector.returningToExteriorPath || detector.entranceCheckUntil != null
     val isUnavailable get() = unavailable
     val requestEnd get() = listOfNotNull(burstEnd, diagnosticStart?.plus(90_000), recoveryStart?.plus(120_000)).minOrNull()
-    val deadline get() = listOfNotNull(requestEnd, detector.expiry,
+    val deadline get() = listOfNotNull(requestEnd, detector.tentativeUntil, detector.expiry,
         diagnosticStart?.takeUnless { retried }?.plus(45_000)).minOrNull()
     val state get() = when {
         fallback -> PresenceState.SCHEDULE_FALLBACK
         checkingExit -> PresenceState.EXITING
         detector.arrival != null -> PresenceState.VISIT_CONFIRMED
+        desired && detector.tentativeUntil != null -> PresenceState.ENTERING
         sampling != Sampling.PARKED -> PresenceState.ACQUIRING
         else -> PresenceState.IDLE
     }

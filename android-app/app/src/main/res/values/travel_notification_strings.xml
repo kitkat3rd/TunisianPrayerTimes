@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="travel_notification_enable">السماح بإشعارات السفر</string>
-    <string name="travel_notification_help">لتعرف متى تغيّرت مدينة المواقيت أو يلزم اختيار مدينة جديدة أثناء السفر.</string>
+    <string name="travel_notification_enable">السماح بإشعارات تغيير المدينة</string>
 </resources>

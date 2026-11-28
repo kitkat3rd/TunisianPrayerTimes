@@ -8,7 +8,7 @@ import org.junit.Test
 
 class TafsirRepositoryTest {
     private val files = mutableMapOf<String, String>()
-    private val repo = TafsirRepository(files::get)
+    private val repo = tafsirFixtureRepository(files::get)
 
     private fun book(id: String, vararg surahs: Int) = JSONObject()
         .put("id", id).put("source", "مصدر $id").put("edition", "طبعة الاختبار")
@@ -31,12 +31,12 @@ class TafsirRepositoryTest {
         assertEquals(TafsirCatalogStatus.EMPTY, repo.catalogStatus())
         assertTrue(repo.books().isEmpty())
         files["quran/tafsir/catalog.json"] = "{bad json"
-        val invalid = TafsirRepository(files::get)
+        val invalid = tafsirFixtureRepository(files::get)
         assertEquals(TafsirCatalogStatus.INVALID, invalid.catalogStatus())
         assertTrue(invalid.books().isEmpty())
 
         catalog(book("ashur", 1), book("qurtubi", 1), book("mukhtasar", 1), preview = true)
-        val valid = TafsirRepository(files::get)
+        val valid = tafsirFixtureRepository(files::get)
         assertEquals(TafsirCatalogStatus.PARTIAL, valid.catalogStatus())
         assertEquals(listOf("mukhtasar", "ashur"), valid.books().map { it.id })
         assertTrue(valid.books().all { it.preview && !it.shareable })
@@ -109,17 +109,42 @@ class TafsirRepositoryTest {
         assertEquals("end-fatiha", repo.read("ashur", QuranVerseReference(2, 1)).previousUnit)
     }
 
-    @Test fun bundledExcerptRemainsReachableWithoutTheFullCommentary() {
-        catalog(book("ashur", 67).put("pack", "quran_tafsir_ashur").put("introSurahs", JSONArray().put(67)))
-        chapter("ashur", 67, unit("intro", 0, 0).put("kind", "intro"), unit("reading", 1, 2).put("kind", "excerpt"))
-        val verse = QuranVerseReference(67, 1)
-        assertTrue(repo.read("ashur", verse).unavailable)
-        val excerpt = repo.read("ashur", verse, "reading")
-        assertFalse(excerpt.unavailable)
-        assertEquals(listOf("reading"), excerpt.units.map { it.id })
-        assertNull(excerpt.next)
+    @Test fun eachDownloadBecomesReadableIndependentlyAndDeletionInvalidatesCachedChapters() {
+        val ids = listOf("muyassar", "mukhtasar", "gharib", "juzayy", "ashur")
+        catalog(*ids.map { id ->
+            book(id, 67).apply { if (id == "ashur") put("introSurahs", JSONArray().put(67)) }
+        }.toTypedArray())
+        val verse = QuranVerseReference(67, 13)
+        assertEquals(ids, repo.downloadableBooks().map { it.id })
+        assertTrue(repo.books().none(repo::isInstalled))
+        assertTrue(ids.all { repo.read(it, verse).unavailable })
+        assertNull(repo.introduction(67))
+
+        chapter("gharib", 67, unit("term", 13, 14, "definition").put("headword", "word"))
+        val glossOnly = repo.read("muyassar", verse)
+        assertTrue(glossOnly.unavailable)
+        assertTrue(glossOnly.glossaryAvailable)
+        assertEquals("gharib", glossOnly.glossaryBook?.id)
+        assertEquals(listOf("term"), glossOnly.glossary.map { it.id })
+        assertEquals(setOf(verse, QuranVerseReference(67, 14)), glossOnly.exposed)
+        assertFalse(repo.read("gharib", verse).unavailable)
+
+        chapter("muyassar", 67, unit("meaning", 13, 13))
+        assertEquals("meaning", repo.read("muyassar", verse).units.single().id)
+        assertTrue(repo.read("mukhtasar", verse).unavailable)
+        files.remove("quran/tafsir/gharib/67.json")
+        val withoutGlossary = repo.read("muyassar", verse)
+        assertFalse(withoutGlossary.unavailable)
+        assertTrue(withoutGlossary.glossary.isEmpty())
+        assertFalse(withoutGlossary.glossaryAvailable)
+
+        assertTrue(repo.read("ashur", verse, "explanation").unavailable)
+        chapter("ashur", 67, unit("intro", 0, 0).put("kind", "intro"), unit("explanation", 13, 13))
         assertEquals("intro", repo.introduction(67)?.id)
-        assertTrue(repo.read("ashur", QuranVerseReference(67, 13), "reading").unavailable)
+        assertEquals("explanation", repo.read("ashur", verse, "explanation").units.single().id)
+        files.remove("quran/tafsir/ashur/67.json")
+        assertTrue(repo.read("ashur", verse, "explanation").unavailable)
+        assertNull(repo.introduction(67))
     }
 
     @Test fun corruptCoverageNeverMasqueradesAsAnUnexplainedVerse() {
@@ -128,9 +153,38 @@ class TafsirRepositoryTest {
         assertTrue(repo.read("juzayy", QuranVerseReference(67, 13)).unavailable)
     }
 
+    @Test fun retainedEditionsKeepTheirOwnAttributionAndNeverBorrowAnotherBooksCache() {
+        val old = "1".repeat(64)
+        val current = "2".repeat(64)
+        catalog(*listOf("ashur", "muyassar").map { id ->
+            book(id, 67).put("pack", "quran_tafsir_$id").put("baseId", current)
+        }.toTypedArray())
+        var ashurRevision = "old"
+        val packs = object : TafsirPackAccess {
+            override fun revision(bookId: String) = if (bookId == "ashur") ashurRevision else "old"
+            override fun metadata(bookId: String) = mapOf(
+                "baseId" to if (revision(bookId) == "new") current else old,
+                "source" to "source-$bookId", "edition" to "$bookId-${revision(bookId)}",
+            )
+            override fun read(bookId: String, surah: Int) = JSONObject().put("units", JSONArray()
+                .put(unit("unit", 13, 13, "$bookId-${revision(bookId)}"))).toString()
+        }
+        val reader = TafsirRepository(files::get, packs)
+        val verse = QuranVerseReference(67, 13)
+        val retained = reader.read("ashur", verse)
+        assertEquals("ashur-old", retained.book?.edition)
+        assertFalse(retained.book!!.shareable)
+        assertEquals("muyassar-old", reader.read("muyassar", verse).book?.edition)
+        ashurRevision = "new"
+        val updated = reader.read("ashur", verse)
+        assertEquals("ashur-new", updated.units.single().text)
+        assertTrue(updated.book!!.shareable)
+        assertEquals("muyassar-old", reader.read("muyassar", verse).units.single().text)
+    }
+
     @Test fun missingPackStepsUseTheMushafsChapterCounts() {
         catalog(book("ashur", 1, 2).put("pack", "quran_tafsir_ashur"))
-        val reader = TafsirRepository(files::get) { surah -> mapOf(1 to 7, 2 to 285)[surah] }
+        val reader = tafsirFixtureRepository(files::get) { surah -> mapOf(1 to 7, 2 to 285)[surah] }
         val fatihaEnd = reader.read("ashur", QuranVerseReference(1, 7))
         assertTrue(fatihaEnd.unavailable)
         assertEquals(QuranVerseReference(2, 1), fatihaEnd.next)

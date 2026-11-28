@@ -493,7 +493,6 @@ private fun QuranReader(
     /** Counts the surahs opened that way: the same surah opened again brings its heading back into view. */
     var landingTurn by remember { mutableIntStateOf(0) }
     var panel by rememberSaveable { mutableStateOf<String?>(null) }
-    val tafsir = rememberQuranTafsirSession()
     var selectionDraft by rememberSaveable { mutableStateOf<String?>(null) }
     // Read through a State, a call at each use: past 256 registers, D8 lost reads of the plain value in the reader's
     // main lambda (see reviewOnPage), as it did of the recited verse's two values below.
@@ -576,8 +575,12 @@ private fun QuranReader(
     val pageFillsWidth by rememberUpdatedState(quranPageFillsWidth(configuration.screenWidthDp, configuration.screenHeightDp, configuration.smallestScreenWidthDp))
     // Pages and recitations this install downloads rather than carries.
     val media = rememberQuranMedia()
-    val starter = rememberQuranRecitationStarter(media)
     val mobileData = rememberMobileDataLauncher()
+    val tafsir = rememberQuranTafsirSession(media, mobileData)
+    val tafsirPacks = rememberTafsirPackAvailability(media, tafsir.books.orEmpty())
+    fun tafsirDownloadSize(bookId: String): String? =
+        if (tafsirPacks[bookId]?.first == false) media?.tafsir(bookId)?.let { quranSize(it.archive.bytes) } else null
+    val starter = rememberQuranRecitationStarter(media)
     // Unknown until the layout is read: a missing page waits quietly rather than showing an error.
     val pagesReady = media?.pagesReady ?: false
     // Read through a State, as pageFillsWidth: the pages read it in the reader's lambda.
@@ -1247,6 +1250,7 @@ private fun QuranReader(
         followAudio = false
         expanded = false
         tafsir.show(verse, intro)
+        if (intro) tafsir.requestBook("ashur")
     }
     fun closeTafsir() {
         val verse = tafsir.verse
@@ -2948,19 +2952,17 @@ private fun QuranReader(
                             )
                         }
                         duePagePoints.isNotEmpty() && !reviewOnPage -> QuranDueBanner(
-                            title = "راجع قبل أن تقرأ الإجابة",
-                            line = if (reviewMode) "راجع المواضع المستحقة قبل إظهار الآية، أو اقرأها الآن وأجّل أسئلتها."
-                                else "حجبنا إجابات ${HifzReminder.pointsAbout(duePagePoints.size)} المستحقة. يمكنك مراجعتها أولًا أو القراءة الآن وتأجيل أسئلتها.",
+                            title = "${HifzReminder.pointsLabel(duePagePoints.size)} للمراجعة",
                             onAsk = { startReview(first = duePagePoints.first()) },
                             onRead = { readDuePage() },
-                            readLabel = if (reviewMode) "اقرأ الآية الآن" else "اقرأ الصفحة الآن",
+                            readLabel = if (reviewMode) "اقرأ الآية وأجّل المراجعة" else "اقرأ الصفحة وأجّل المراجعة",
                         )
                         // The passage's card and the verse or surah card, below, take this place.
                         rangeFrom != null -> Unit
                         tafsir.open || ((selection != null || chosenSurah != null) && !expanded) -> Unit
                         // «مراجعة» gives the tap to the eraser.
-                        tapHint && catalog != null && !expanded && !reviewMode -> QuranHint("اضغط على أي آية لتستمع منها أو تكرّرها أو تنسخها.") { hideHint("hint_tap_seen") }
-                        stripHint && hasSession && showDock && !expanded -> QuranHint("اسحب شريط الآيات الذي فوق أزرار المشغّل لتنتقل إلى آية.") { hideHint("hint_strip_seen") }
+                        tapHint && catalog != null && !expanded && !reviewMode -> QuranHint("المس الآية لعرض خياراتها.") { hideHint("hint_tap_seen") }
+                        stripHint && hasSession && showDock && !expanded -> QuranHint("اسحب شريط التلاوة لاختيار آية.") { hideHint("hint_strip_seen") }
                         // One message at a time: the hint waits for the snackbar, as after a mistake is saved.
                         focusChosen && focus && focusHint && snackbar.currentSnackbarData == null ->
                             QuranHint("اضغط على هامش الصفحة أو زر الرجوع لإظهار الأدوات.") { hideHint("hint_focus_seen") }
@@ -3113,6 +3115,7 @@ private fun QuranReader(
                             onTafsirIntro = if (!reviewMode && !reviewActive && tafsir.hasIntro(cardSurah)) {
                                 { openTafsir(QuranVerseReference(cardSurah, 1), intro = true) }
                             } else null,
+                            introDownloadSize = tafsirDownloadSize("ashur"),
                             onDismiss = { selectionDraft = null },
                         )
                     }
@@ -3198,7 +3201,6 @@ private fun QuranReader(
         }
         val tafsirVerse = tafsir.verse
         if (tafsirVerse != null && tafsir.offered && catalog != null && !reviewMode && !reviewActive && panel == null) {
-            val pack = media?.tafsir
             QuranTafsirPanel(
                 repository = tafsir.repository,
                 verse = tafsirVerse,
@@ -3222,13 +3224,19 @@ private fun QuranReader(
                     }
                 },
                 onTouch = { lastTouch.longValue = System.currentTimeMillis() },
-                packRevision = if (media != null && pack != null) media.state(pack).let { it.available to it.previousVersion } else null,
-                downloadAction = if (media != null && pack != null) { _, started, cancelled ->
-                    QuranTafsirDownloadCard(
+                packRevision = tafsirPacks,
+                onRequestBook = { book -> tafsir.requestBook(book.id) },
+                bookDownloadSize = { book -> tafsirDownloadSize(book.id) },
+                downloadAction = { book, started, cancelled ->
+                    val pack = media?.tafsir(book.id)
+                    if (media == null) CircularProgressIndicator()
+                    else if (pack == null) Text("تعذّر العثور على ملف تنزيل هذا الكتاب.", style = MaterialTheme.typography.bodyMedium)
+                    else QuranTafsirDownloadCard(
                         media, pack, onUseMobileData = { media.source?.confirmMobileData(listOf(pack), mobileData) },
+                        allowRemoval = media.state(pack).available,
                         onDownloadStarted = started, onDownloadCancelled = cancelled,
                     )
-                } else null,
+                },
                 offPageText = { reference -> catalog.mushafTextOutsidePage(reference, page.number) },
                 onPassageHighlight = { verses -> tafsir.passage = verses },
             )
@@ -3958,20 +3966,17 @@ private fun hifzBeforeHidden(
 /** Review-first choice shown while due answers are still covered; reading remains an equally explicit option. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun QuranDueBanner(title: String, line: String, onAsk: () -> Unit, onRead: () -> Unit, readLabel: String) {
+private fun QuranDueBanner(title: String, onAsk: () -> Unit, onRead: () -> Unit, readLabel: String) {
     Column(
         Modifier.padding(horizontal = 16.dp, vertical = 12.dp).clip(RoundedCornerShape(14.dp)).background(GoldLight)
             .padding(horizontal = 12.dp, vertical = 8.dp).testTag("quran_due_banner"),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // Short of room, with large text in landscape, the words scroll and the two buttons keep their place.
-        Column(
-            Modifier.weight(1f, fill = false).then(if (largeText()) Modifier.verticalScroll(rememberScrollState()) else Modifier),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
-            Text(line, fontSize = 12.sp, color = Color(0xFF6E5A2E))
-        }
+        Text(
+            title, Modifier.weight(1f, fill = false).then(if (largeText()) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark,
+        )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = onAsk, modifier = Modifier.heightIn(min = 48.dp).testTag("quran_due_banner_ask")) { Text("راجع أولًا") }
             TextButton(onClick = onRead, modifier = Modifier.heightIn(min = 48.dp).testTag("quran_due_banner_read")) { Text(readLabel) }
@@ -4017,13 +4022,6 @@ private fun QuranTextSizeBar(value: Float, followsPhone: Boolean, onChange: (Flo
             )
             TextButton(onClick = { larger?.let(onChange) }, enabled = larger != null, modifier = Modifier.testTag("quran_text_larger")) { Text("تكبير") }
         }
-        Text(
-            when {
-                value <= 1.01f -> "صفحة المصحف كما طُبعت."
-                else -> "الكلمات أكبر والأسطر أقصر، ولا تُقطع كلمة."
-            },
-            fontSize = 12.sp, color = TextMuted, textAlign = TextAlign.Center,
-        )
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             if (!followsPhone) TextButton(onClick = { onChange(null) }, modifier = Modifier.testTag("quran_text_phone")) { Text("حسب الهاتف") }
             else Spacer(Modifier.width(1.dp))
@@ -4040,7 +4038,7 @@ private fun QuranNightDialog(enabled: Boolean, level: Float, onEnabled: (Boolean
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("تخفيف إضاءة الشاشة", Modifier.weight(1f))
+                    Text("تخفيف إضاءة المصحف", Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = onEnabled, modifier = Modifier.testTag("quran_night_switch"))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -4052,7 +4050,6 @@ private fun QuranNightDialog(enabled: Boolean, level: Float, onEnabled: (Boolean
                     val widest = with(LocalDensity.current) { measurer.measure(ltr("100%"), style, maxLines = 1, softWrap = false).size.width.toDp() }
                     Text(ltr("${(level * 100).toInt()}%"), Modifier.width(maxOf(48.dp, widest)), fontSize = 13.sp, maxLines = 1)
                 }
-                Text("تبقى الصفحة بيضاء، وتخفّ إضاءة الشاشة في المصحف فقط.", fontSize = 12.sp, color = TextMuted)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("تم") } },
@@ -5402,9 +5399,10 @@ internal fun quranPageLabel(scan: Int): String = "صفحة${HifzReminder.NB}${qu
 internal fun quranShortPageLabel(scan: Int): String = quranNumber(scan + 1)
 
 @Composable
-internal fun QuranPanelHeader(title: String, onDismiss: () -> Unit) {
+internal fun QuranPanelHeader(title: String, onDismiss: () -> Unit, action: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+        action?.invoke()
         IconButton(onClick = onDismiss) { Icon(painterResource(R.drawable.ic_adhkar_close), "إغلاق") }
     }
 }

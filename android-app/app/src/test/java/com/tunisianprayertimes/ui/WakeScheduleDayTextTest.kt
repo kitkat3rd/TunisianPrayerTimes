@@ -27,7 +27,7 @@ class WakeScheduleDayTextTest {
     @Test
     fun selectedDaysSummaryUsesFullDayNames() {
         assertEquals(
-            "الإثنين، الخميس",
+            "الاثنين، الخميس",
             formatWakeScheduleDaysSummary(
                 context = context,
                 days = setOf(WakeScheduleDay.THURSDAY, WakeScheduleDay.MONDAY),

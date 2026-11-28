@@ -50,17 +50,21 @@ class SuhoorAccessUiTest {
         }
     }
 
-    @Test fun futurePreferenceCanBeSavedWithoutSchedulingAccess() {
+    @Test fun aFutureSuhoorShowsTheDateAndRequiresSchedulingAccess() {
         val controller = Robolectric.buildActivity(AppCompatActivity::class.java)
         controller.get().setTheme(androidx.appcompat.R.style.Theme_AppCompat_Light_NoActionBar)
         val activity = controller.setup().get()
         try {
             ShadowAlarmManager.setCanScheduleExactAlarms(false)
             activity.setContent {
-                SuhoorAlarmSetupSheet(null, 30, FajrAlarmPersistence.GENTLE, "حفظ", { _, _ -> }, {})
+                SuhoorAlarmSetupSheet(
+                    System.currentTimeMillis() + 2 * 86_400_000L, 30, FajrAlarmPersistence.GENTLE,
+                    "إضافة منبه السحور", { _, _ -> }, {}, fastDayLabel = "الاثنين 30 نوفمبر",
+                )
             }
-            compose.onNodeWithText("حفظ").assertIsEnabled()
-            compose.onNodeWithText(activity.getString(R.string.wake_access_exact_action)).assertDoesNotExist()
+            compose.onNodeWithText("منبّه السحور يوم الاثنين 30 نوفمبر").assertExists()
+            compose.onNodeWithText("إضافة منبه السحور").assertIsNotEnabled()
+            compose.onNodeWithText(activity.getString(R.string.wake_access_exact_action)).assertExists()
             assertNull(shadowOf(activity).nextStartedActivity)
         } finally {
             controller.pause().stop().destroy()

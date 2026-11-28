@@ -39,6 +39,7 @@ import com.tunisianprayertimes.adhkar.DhikrEntry
     var showErrors by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    var preview by rememberSaveable(source.id) { mutableStateOf(false) }
     fun integer(value: String): Int? = value.trim().map { if (it.isDigit()) Character.digit(it, 10).digitToChar() else it }.joinToString("").toIntOrNull()
     val count = integer(countText) ?: 0
     val problem = when {
@@ -63,34 +64,17 @@ import com.tunisianprayertimes.adhkar.DhikrEntry
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("اكتب الذكر بالطريقة التي تناسبك. سيظهر في «أذكاري»، ويمكنك قراءته وعدّ مرات تكراره وإنشاء تذكير له.",
-                    color = p.muted, fontSize = 13.sp, lineHeight = 24.sp)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("عنوان الذكر", color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    OutlinedTextField(title, { if (it.length <= 120) title = it }, singleLine = true,
-                        placeholder = { Text("مثال: وردي اليومي", fontSize = 14.sp, color = p.muted) },
-                        shape = RoundedCornerShape(14.dp), colors = fieldColors,
-                        modifier = Modifier.fillMaxWidth().testTag("adhkar_custom_title"))
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("نص الذكر", color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    OutlinedTextField(text, { text = it }, minLines = 4, maxLines = 8,
-                        placeholder = { Text("اكتب نص الذكر...", fontSize = 14.sp, color = p.muted) },
-                        textStyle = LocalTextStyle.current.copy(lineHeight = 30.sp),
-                        shape = RoundedCornerShape(14.dp), colors = fieldColors,
-                        modifier = Modifier.fillMaxWidth().testTag("adhkar_custom_text"))
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("المصدر أو ملاحظة (اختياري)", color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    OutlinedTextField(reference, { if (it.length <= 200) reference = it }, singleLine = true,
-                        placeholder = { Text("مثال: من أذكار الصباح", fontSize = 14.sp, color = p.muted) },
-                        shape = RoundedCornerShape(14.dp), colors = fieldColors,
-                        modifier = Modifier.fillMaxWidth().testTag("adhkar_custom_reference"))
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("عدد مرات التكرار عند القراءة", color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    Text("للتذكير عدد مستقل تختاره عند إعداده.", color = p.muted, fontSize = 12.sp)
-                }
+                OutlinedTextField(title, { if (it.length <= 120) title = it }, singleLine = true,
+                    label = { Text("عنوان الذكر") }, shape = RoundedCornerShape(14.dp), colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth().testTag("adhkar_custom_title"))
+                OutlinedTextField(text, { text = it }, minLines = 4, maxLines = 8,
+                    label = { Text("نص الذكر") }, textStyle = LocalTextStyle.current.copy(lineHeight = 30.sp),
+                    shape = RoundedCornerShape(14.dp), colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth().testTag("adhkar_custom_text"))
+                OutlinedTextField(reference, { if (it.length <= 200) reference = it }, singleLine = true,
+                    label = { Text("المصدر أو ملاحظة (اختياري)") }, shape = RoundedCornerShape(14.dp), colors = fieldColors,
+                    modifier = Modifier.fillMaxWidth().testTag("adhkar_custom_reference"))
+                Text("عدد مرات التكرار عند القراءة", color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Surface(onClick = { countText = ((integer(countText) ?: 0) + 1).coerceAtMost(100000).toString() },
@@ -114,7 +98,10 @@ import com.tunisianprayertimes.adhkar.DhikrEntry
                         }
                     }
                 }
-                if (text.isNotBlank()) AdhkarCard(Modifier.fillMaxWidth()) {
+                if (text.isNotBlank()) TextButton(onClick = { preview = !preview }) {
+                    Text(if (preview) "إخفاء المعاينة" else "معاينة الذكر")
+                }
+                if (preview && text.isNotBlank()) AdhkarCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(title.ifBlank { "ذكر جديد" }, color = AdhkarHeading, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                         Text(text, fontFamily = AdhkarReadingFont, fontSize = 24.sp, lineHeight = 44.sp,
@@ -145,8 +132,7 @@ import com.tunisianprayertimes.adhkar.DhikrEntry
                 if (initial != null) OutlinedButton(onClick = { onDelete(initial) }, enabled = !saving,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("adhkar_custom_delete")) {
-                    DhikrIcon(R.drawable.ic_delete, "حذف الذكر",
-                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                    DhikrIcon(R.drawable.ic_delete, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("حذف الذكر", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
                 }

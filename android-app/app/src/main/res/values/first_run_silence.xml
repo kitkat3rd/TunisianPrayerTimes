@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="first_silence_title">الإسكات وقت الصلاة</string>
-    <string name="first_silence_description">اختر متى يصمت هاتفك. يحتاج الإسكات إلى إذن «عدم الإزعاج» لتغيير وضع الصوت.</string>
-    <string name="first_silence_description_exact">يحتاج الإسكات إلى إذن «عدم الإزعاج» لتغيير وضع الصوت، وإلى التنبيهات الدقيقة لبدء الإسكات وإنهائه في الموعد.</string>
-    <string name="first_silence_time_detail">يسكت هاتفك خلال فترات الصلاة المفعّلة أينما كنت.</string>
-    <string name="first_silence_mosque_detail">يسكت هاتفك خلال فترة الصلاة عندما تؤكّد قراءات الموقع وجودك داخل مسجد محفوظ. إذا انتهت الفترة وأنت في المسجد، قد يستمرّ الإسكات حتى تأكيد مغادرتك، لمدة تصل إلى 15 دقيقة إضافية. يستخدم الموقع في الخلفية ويعرض إشعارًا أثناء التتبّع. قد يتّبع الجدول إذا تعذّر تحديد موقعك.</string>
+    <string name="first_silence_title">إسكات الهاتف وقت الصلاة</string>
+    <string name="first_silence_description">يمكنك إعداد الإسكات الآن أو لاحقًا من تبويب الصلاة.</string>
+    <string name="first_silence_methods">طريقة الإسكات</string>
     <string name="first_silence_setup">إعداد الإسكات</string>
     <string name="first_silence_resume">متابعة إعداد الإسكات</string>
-    <string name="first_silence_decline">المتابعة بدون إسكات تلقائي</string>
-    <string name="first_silence_continue">عرض مواقيت الصلاة</string>
-    <string name="first_silence_off">الإسكات التلقائي متوقّف. يمكنك متابعة إعداده الآن أو لاحقًا من إعدادات الصلاة.</string>
+    <string name="first_silence_decline">المتابعة دون إسكات تلقائي</string>
+    <string name="first_silence_turn_off">إيقاف الإسكات التلقائي والمتابعة</string>
+    <string name="first_silence_continue">متابعة</string>
+    <string name="first_silence_off">الإسكات التلقائي متوقّف.</string>
     <string name="first_silence_ready">طريقة الإسكات المفعّلة: %1$s.</string>
     <string name="first_silence_pending">لإكمال إعداد الإسكات (%1$s)، %2$s</string>
     <string name="first_silence_checking">جارٍ التحقّق من إعداد الإسكات…</string>
-    <string name="first_silence_check_failed">تعذّر التحقّق من جاهزية الإسكات. افتح إعداد الإسكات للتحقّق.</string>
+    <string name="first_silence_check_failed">تعذّر التحقّق من إعداد الإسكات.</string>
 </resources>

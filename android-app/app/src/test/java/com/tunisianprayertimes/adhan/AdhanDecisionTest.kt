@@ -31,7 +31,7 @@ class AdhanDecisionTest {
     @Test
     fun thePhoneTheUserMadeQuietStaysQuiet() {
         assertEquals(Outcome.QUIET_SILENT_PHONE, AdhanDecision.decide(situation(phoneQuiet = true)))
-        assertEquals(Outcome.QUIET_SILENT_PHONE, AdhanDecision.decide(situation(userChoseAppSilence = true)))
+        assertEquals(Outcome.QUIET_APP_SILENCE, AdhanDecision.decide(situation(userChoseAppSilence = true, phoneQuiet = true)))
     }
 
     @Test

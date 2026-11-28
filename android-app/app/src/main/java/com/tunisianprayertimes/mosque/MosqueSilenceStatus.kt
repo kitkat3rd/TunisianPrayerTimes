@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.mosque.presence.AutomaticSilenceMode
 import com.tunisianprayertimes.mosque.presence.PresenceState
+import com.tunisianprayertimes.ui.AppInfoButton
 import com.tunisianprayertimes.ui.PrayerSettingsGroup
 import com.tunisianprayertimes.ui.PrayerSilencePalette
 
@@ -53,6 +54,7 @@ internal fun MosqueSilenceStatus(
         state == PresenceState.INACTIVE_NEEDS_REARM -> stringResource(R.string.mosque_status_rearm)
         !inWindow && periods.observation != null -> stringResource(R.string.mosque_adaptive_early)
         !inWindow -> stringResource(R.string.mosque_status_waiting)
+        state == PresenceState.ENTERING -> stringResource(R.string.mosque_status_entering)
         state == PresenceState.VISIT_CONFIRMED -> stringResource(R.string.mosque_adaptive_hold)
         state == PresenceState.EXITING -> stringResource(R.string.mosque_status_uncertain)
         state == PresenceState.ACQUIRING -> stringResource(R.string.mosque_status_checking)
@@ -85,20 +87,20 @@ internal fun MosqueSilenceStatus(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = PrayerSilencePalette.PrimaryText,
+                    modifier = Modifier.weight(1f),
                 )
+                if (phoneSilent == true) {
+                    AppInfoButton(
+                        title = stringResource(R.string.mosque_phone_status_silent),
+                        text = stringResource(R.string.mosque_status_other_dnd),
+                    )
+                }
             }
             if (releasePending) {
                 Text(stringResource(R.string.mosque_release_pending), color = MaterialTheme.colorScheme.error)
             }
             if (observationStatus != null) {
                 Text(observationStatus, color = PrayerSilencePalette.SecondaryText)
-            }
-            if (phoneSilent == true) {
-                Text(
-                    stringResource(R.string.mosque_status_other_dnd),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = PrayerSilencePalette.SecondaryText,
-                )
             }
             if (watchingMosques && periods.continuationEnd == null &&
                 issues?.isEmpty() == true && (inWindow || periods.observation != null)) {

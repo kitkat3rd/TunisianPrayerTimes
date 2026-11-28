@@ -16,6 +16,9 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import kotlin.concurrent.thread
 import java.security.MessageDigest
+import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -26,6 +29,7 @@ class QuranPackInstallerTest {
     // A minimal HTTP/1.1 server: the JDK's own is not on Android's unit-test classpath.
     private lateinit var server: ServerSocket
     private var served = ByteArray(0)
+    private val archives = ConcurrentHashMap<String, ByteArray>()
     private var honoursRange = true
     private val requestedRanges = mutableListOf<String?>()
 
@@ -37,7 +41,9 @@ class QuranPackInstallerTest {
                 val socket = runCatching { server.accept() }.getOrNull() ?: break
                 socket.use { client ->
                     val input = client.getInputStream().bufferedReader(Charsets.ISO_8859_1)
-                    val headers = generateSequence { input.readLine()?.takeIf { it.isNotEmpty() } }.drop(1).toList()
+                    val requestPath = input.readLine()?.substringAfter(' ')?.substringBefore(' ') ?: return@use
+                    val response = archives[requestPath] ?: served
+                    val headers = generateSequence { input.readLine()?.takeIf { it.isNotEmpty() } }.toList()
                     val range = headers.firstOrNull { it.startsWith("Range:", ignoreCase = true) }?.substringAfter(':')?.trim()
                     requestedRanges += range
                     val start = range?.removePrefix("bytes=")?.substringBefore('-')?.toIntOrNull()
@@ -48,12 +54,12 @@ class QuranPackInstallerTest {
                         out.flush()
                     }
                     when {
-                        start != null && honoursRange && start < served.size -> respond(
-                            "206 Partial Content", served.copyOfRange(start, served.size),
-                            "Content-Range: bytes $start-${served.size - 1}/${served.size}\r\n",
+                        start != null && honoursRange && start < response.size -> respond(
+                            "206 Partial Content", response.copyOfRange(start, response.size),
+                            "Content-Range: bytes $start-${response.size - 1}/${response.size}\r\n",
                         )
                         start != null && honoursRange -> respond("416 Range Not Satisfiable", ByteArray(0))
-                        else -> respond("200 OK", served)
+                        else -> respond("200 OK", response)
                     }
                 }
             }
@@ -185,9 +191,65 @@ class QuranPackInstallerTest {
 
     private val tafsirPath = "quran/tafsir/ashur.db"
 
-    private fun tafsirPack(text: ByteArray, archive: ByteArray) =
-        pack(archive).copy(name = "quran_tafsir_ashur", kind = QuranPack.Kind.Tafsir, bytes = text.size.toLong(),
-            files = listOf(QuranPackFile(tafsirPath, text.size.toLong(), sha256(text))))
+    private fun tafsirPack(text: ByteArray, archive: ByteArray, id: String = "ashur"): QuranPack {
+        val name = "quran_tafsir_$id"
+        val hash = sha256(archive)
+        return QuranPack(name, QuranPack.Kind.Tafsir, QuranPack.Delivery.Play, null, null, text.size.toLong(),
+            QuranPackArchive("v1/packs/$name-${hash.take(12)}.zip", archive.size.toLong(), hash),
+            listOf(QuranPackFile("quran/tafsir/$id.db", text.size.toLong(), sha256(text))))
+    }
+
+    @Test
+    fun fiveConcurrentBookDownloadsHaveIndependentRevisionsAndRemoval() {
+        val ids = listOf("muyassar", "mukhtasar", "juzayy", "ashur", "gharib")
+        val installer = QuranPackInstaller(folder.root)
+        val packs = ids.associateWith { id ->
+            val db = id.toByteArray()
+            val archive = zip("quran/tafsir/$id.db" to db)
+            tafsirPack(db, archive, id).also { archives["/${it.archive.key}"] = archive }
+        }
+        val executor = Executors.newFixedThreadPool(ids.size)
+        try {
+            val jobs = packs.values.map { pack ->
+                Callable {
+                    val archive = installer.download("http://127.0.0.1:${server.localPort}/${pack.archive.key}", pack)
+                    installer.install(archive, pack)
+                }
+            }
+            executor.invokeAll(jobs).forEach { it.get() }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        val updated = ids.associateWith { id ->
+            val text = "edition 2 of $id".toByteArray()
+            tafsirPack(text, zip("quran/tafsir/$id.db" to text), id)
+        }
+        installer.removeStale(QuranPackLayout("https://cdn.example/", updated.values.toList()))
+        installer.remove(updated.getValue("mukhtasar"))
+        assertTrue(installer.readableDirectory(updated.getValue("mukhtasar")) == null)
+        for (id in ids - "mukhtasar") {
+            val dir = installer.readableDirectory(updated.getValue(id))!!
+            assertEquals(installer.installedDirectory(packs.getValue(id)), dir)
+            assertArrayEquals(id.toByteArray(), File(dir, "quran/tafsir/$id.db").readBytes())
+        }
+    }
+
+    @Test
+    fun unpublishedBookMakesNoRequestAndAnArchiveWithTheWrongDatabaseIsRejected() {
+        val installer = QuranPackInstaller(folder.root)
+        val contents = zip(tafsirPath to ByteArray(page1.size))
+        val pack = tafsirPack(page1, contents)
+        val unavailable = assertThrows(QuranPackException::class.java) {
+            installer.download(url, pack.copy(cdnPublished = false))
+        }
+        assertEquals(QuranDownloadProblem.Unpublished, unavailable.problem)
+        assertTrue(requestedRanges.isEmpty())
+        val archive = folder.newFile().apply { writeBytes(contents) }
+        val invalid = assertThrows(QuranPackException::class.java) { installer.install(archive, pack) }
+        assertEquals(QuranDownloadProblem.Integrity, invalid.problem)
+        assertFalse(installer.isInstalled(pack))
+    }
 
     @Test
     fun tafsirUpdateKeepsTheReadableEditionUntilItsSuccessorIsInstalled() {
@@ -229,5 +291,104 @@ class QuranPackInstallerTest {
         installer.remove(next)
         assertFalse(installer.isInstalled(old))
         assertTrue(installer.readableDirectory(next) == null)
+    }
+
+    @Test
+    fun migratedBundledAshurRequiresThePinnedBytesAndHonorsLaterDeletion() {
+        val packs = folder.newFolder("packs")
+        val cache = folder.newFolder("tafsir-database")
+        val installer = QuranPackInstaller(packs)
+        val book = tafsirPack(page1, zip(tafsirPath to page1))
+        fun cached(name: String, bytes: ByteArray) = File(cache, name).apply { writeBytes(bytes) }
+        val first = cached("ashur-12-${page1.size}.db", page1)
+        val duplicate = cached("ashur-13-${page1.size}.db", page1)
+        val altered = cached("ashur-14-${page1.size}.db", ByteArray(page1.size))
+        val unrelated = cached("private.db", page1)
+        val otherEdition = cached("ashur-15-4.db", ByteArray(4))
+
+        val layout = QuranPackLayout("https://cdn.example/", listOf(book))
+        val other = tafsirPack(page1, zip("quran/tafsir/gharib.db" to page1), "gharib")
+        installer.migrateBundledTafsir(other, cache)
+        assertFalse(installer.isInstalled(other))
+        installer.migrateBundledTafsir(book, cache)
+        assertArrayEquals(page1, File(installer.readableDirectory(book)!!, tafsirPath).readBytes())
+        assertFalse(first.exists())
+        assertFalse(duplicate.exists())
+        assertTrue(listOf(altered, unrelated, otherEdition).all(File::isFile))
+
+        // Even a cache copy left over or restored after the migration cannot undo explicit deletion.
+        duplicate.writeBytes(page1)
+        installer.remove(book)
+        installer.removeStale(layout)
+        val restarted = QuranPackInstaller(packs)
+        restarted.migrateBundledTafsir(book, cache)
+        assertFalse(restarted.isInstalled(book))
+    }
+
+    @Test
+    fun interruptedLegacyCopyLeavesTheBundledCacheForALaterLaunch() {
+        val packs = folder.newFolder("packs")
+        // Simulate a filesystem that cannot create a staging directory.
+        val occupiedStaging = File(packs, ".installs").apply { writeText("occupied") }
+        val cache = folder.newFolder("tafsir-database")
+        val source = File(cache, "ashur-12-${page1.size}.db").apply { writeBytes(page1) }
+        val installer = QuranPackInstaller(packs)
+        val book = tafsirPack(page1, zip(tafsirPath to page1))
+        installer.migrateBundledTafsir(book, cache)
+        assertFalse(installer.isInstalled(book))
+        assertArrayEquals(page1, source.readBytes())
+        assertTrue(occupiedStaging.delete())
+        installer.migrateBundledTafsir(book, cache)
+        assertTrue(installer.isInstalled(book))
+        assertFalse(source.exists())
+    }
+
+    @Test
+    fun playTafsirRequiresAnExactEditionAndAnUnrecognizedCacheCannotReplaceTheCurrentOne() {
+        val packs = folder.newFolder("packs")
+        val play = folder.newFolder("play")
+        val db = File(play, tafsirPath).apply { parentFile!!.mkdirs(); writeBytes(page1) }
+        val installer = QuranPackInstaller(packs)
+        val current = tafsirPack(page1, zip(tafsirPath to page1))
+        assertEquals(current, installer.authenticatedPlayRevision(current, db))
+        installer.retainPlayTafsir(current, play)
+
+        db.writeBytes(ByteArray(page1.size))
+        assertTrue(installer.authenticatedPlayRevision(current, db) == null)
+        assertFalse(installer.retainLegacyPlayAshur(current, play))
+        assertArrayEquals(page1, File(installer.readableDirectory(current)!!, tafsirPath).readBytes())
+    }
+
+    @Test
+    fun eachPlayBookAuthenticatesAndReplacesOnlyItsOwnEdition() {
+        val ids = listOf("muyassar", "mukhtasar", "gharib", "juzayy", "ashur")
+        val installer = QuranPackInstaller(folder.newFolder("packs"))
+        val play = folder.newFolder("play")
+        val editions = ids.mapIndexed { index, id ->
+            val path = "quran/tafsir/$id.db"
+            val oldBytes = ByteArray(128) { index.toByte() }
+            val newBytes = ByteArray(oldBytes.size) { (index + 1).toByte() }
+            val old = tafsirPack(oldBytes, zip(path to oldBytes), id)
+            val next = tafsirPack(newBytes, zip(path to newBytes), id)
+            val file = File(play, path).apply { parentFile!!.mkdirs(); writeBytes(oldBytes) }
+            val stamp = file.lastModified()
+            assertTrue(installer.retainPlayTafsir(old, play))
+            // An update can reuse the filename and timestamp, and all five databases in this fixture have equal size.
+            file.writeBytes(ByteArray(oldBytes.size) { (-1).toByte() })
+            assertTrue(file.setLastModified(stamp))
+            assertTrue(installer.authenticatedPlayRevision(next, file) == null)
+            assertThrows(QuranPackException::class.java) { installer.retainPlayTafsir(next, play) }
+            assertEquals(installer.installedDirectory(old), installer.readableDirectory(next))
+            file.writeBytes(newBytes)
+            assertTrue(file.setLastModified(stamp))
+            assertEquals(sha256(newBytes), installer.authenticatedPlayRevision(next, file)?.files?.single()?.sha256)
+            old to next
+        }
+        for ((old, next) in editions) {
+            assertTrue(installer.retainPlayTafsir(next, play))
+            assertTrue(installer.isInstalled(next))
+            assertFalse(installer.isInstalled(old))
+            for ((_, other) in editions) assertTrue(installer.readableDirectory(other) != null)
+        }
     }
 }

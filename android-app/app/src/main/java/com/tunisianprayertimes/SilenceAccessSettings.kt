@@ -14,6 +14,8 @@ import com.tunisianprayertimes.mosque.SilenceOwner
 internal object SilenceAccessSettings {
     // Android Settings supports this per-app page on some devices. The public action opens the access list.
     internal const val DND_ACCESS_DETAIL = "android.settings.NOTIFICATION_POLICY_ACCESS_DETAIL_SETTINGS"
+    // Android's per-app power page is optional. The public app-details screen also leads to Battery.
+    internal const val APP_BATTERY_DETAIL = "android.settings.VIEW_ADVANCED_POWER_USAGE_DETAIL"
 
     fun openDnd(context: Context) = open(
         context,
@@ -23,8 +25,18 @@ internal object SilenceAccessSettings {
 
     fun openExactAlarms(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            open(context, Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.fromParts("package", context.packageName, null)))
+            openAppSettingsPage(context, Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.fromParts("package", context.packageName, null)))
         }
+    }
+
+    fun openAppSettingsPage(context: Context, intent: Intent) {
+        val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+        open(context, intent, fallback = details.takeUnless { it.filterEquals(intent) })
+    }
+
+    fun openAppBattery(context: Context) {
+        val app = Uri.fromParts("package", context.packageName, null)
+        open(context, Intent(APP_BATTERY_DETAIL, app), Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, app))
     }
 
     fun openRules(context: Context, owner: SilenceOwner) = open(context, MosqueSettingsActivity.setupIntent(context, owner))

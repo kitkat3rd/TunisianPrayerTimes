@@ -5,6 +5,8 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
@@ -38,25 +40,101 @@ internal class QuranPackInstaller(private val root: File) {
     }
 
     /** Play may replace its own directories when the APK updates. Retain its delivered edition on IO. */
-    fun retainPlayTafsir(pack: QuranPack, source: File) = synchronized(installLock) {
-        if (pack.kind != QuranPack.Kind.Tafsir || isInstalled(pack)) return@synchronized
+    fun retainPlayTafsir(pack: QuranPack, source: File): Boolean {
+        if (pack.kind != QuranPack.Kind.Tafsir) return false
+        val entry = pack.files.singleOrNull() ?: return false
+        val file = File(source, entry.path)
+        if (entry.sha256 == null || !Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return false
+        return retainTafsirDatabase(pack, entry, file)
+    }
+
+    /** The returned database digest identifies direct PAD reads even if the path, size and mtime are reused. */
+    fun authenticatedPlayRevision(pack: QuranPack, file: File): QuranPack? {
+        if (pack.kind != QuranPack.Kind.Tafsir || !Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return null
+        val candidates = buildList {
+            add(pack)
+            if (canAdoptLegacyAshur(pack)) add(LEGACY_ASHUR)
+        }
+        return identifyRevision(candidates, file)
+    }
+
+    private fun identifyRevision(revisions: List<QuranPack>, file: File): QuranPack? {
+        val sized = revisions.filter { it.bytes == file.length() }
+        if (sized.isEmpty()) return null
+        val digest = sha256(file)
+        return sized.firstOrNull { it.files.singleOrNull()?.sha256 == digest }
+    }
+
+    private fun hasLegacyAshur(pack: QuranPack): Boolean = pack.kind == QuranPack.Kind.Tafsir &&
+        pack.name == LEGACY_ASHUR.name && pack.files.singleOrNull()?.path == LEGACY_ASHUR.files.single().path
+
+    private fun canAdoptLegacyAshur(current: QuranPack): Boolean {
+        if (!hasLegacyAshur(current) || current.files.single().sha256 == LEGACY_ASHUR.files.single().sha256) return false
+        val readable = readableDirectory(current)
+        if (readable != null) return readable == installedDirectory(LEGACY_ASHUR)
+        return !File(root, LEGACY_ASHUR_HANDLED).exists()
+    }
+
+    /** Keep the earlier PAD edition in its own revision folder even when the catalog now names a newer one. */
+    fun retainLegacyPlayAshur(current: QuranPack, directory: File): Boolean = synchronized(installLock) {
+        if (!canAdoptLegacyAshur(current)) return@synchronized false
+        if (isInstalled(LEGACY_ASHUR)) return@synchronized true
+        val entry = LEGACY_ASHUR.files.single()
+        val file = File(directory, entry.path)
+        if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return@synchronized false
+        retainTafsirDatabase(LEGACY_ASHUR, entry, file)
+    }
+
+    private fun retainTafsirDatabase(pack: QuranPack, entry: QuranPackFile, original: File): Boolean = synchronized(installLock) {
+        if (isInstalled(pack)) return@synchronized true
+        if (!original.isFile || original.length() != entry.bytes) return@synchronized false
         val target = installedDirectory(pack)
         val staging = File(root, "$INSTALLS/${target.name}.play")
         staging.deleteRecursively()
         try {
-            for (entry in pack.files) {
-                val original = File(source, entry.path)
-                if (!original.isFile || original.length() != entry.bytes) return@synchronized
-                val dest = File(staging, entry.path)
-                dest.parentFile?.mkdirs()
-                original.inputStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
-                if (dest.length() != entry.bytes) return@synchronized
-                if (entry.sha256 != null && sha256(dest) != entry.sha256)
-                    throw QuranPackException(QuranDownloadProblem.Integrity, "Unexpected Play copy of ${entry.path}")
-            }
-            if (staging.renameTo(target)) pruneReplacedTafsir(pack, target)
+            val dest = File(staging, entry.path)
+            dest.parentFile?.mkdirs()
+            original.inputStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
+            if (dest.length() != entry.bytes) return@synchronized false
+            if (entry.sha256 != null && sha256(dest) != entry.sha256)
+                throw QuranPackException(QuranDownloadProblem.Integrity, "Unexpected contents of ${entry.path}")
+            if (!staging.renameTo(target)) return@synchronized false
+            pruneReplacedTafsir(pack, target)
+            true
         } finally {
             staging.deleteRecursively()
+        }
+    }
+
+    /** Earlier standalone APKs extracted their signed Ibn Ashur database into cacheDir/tafsir-database. */
+    fun migrateBundledTafsir(pack: QuranPack, cacheDirectory: File) = synchronized(installLock) {
+        if (!hasLegacyAshur(pack)) return@synchronized
+        val done = File(root, LEGACY_ASHUR_HANDLED)
+        if (done.exists() || !Files.isDirectory(cacheDirectory.toPath(), LinkOption.NOFOLLOW_LINKS)) return@synchronized
+        val revisions = listOf(pack, LEGACY_ASHUR)
+        try {
+            val copies = cacheDirectory.listFiles().orEmpty().mapNotNull { file ->
+                val size = LEGACY_CACHE_NAME.matchEntire(file.name)?.groupValues?.get(1)?.toLongOrNull()
+                if (size == null || !Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS) || file.length() != size)
+                    return@mapNotNull null
+                identifyRevision(revisions, file)?.let { it to file }
+            }
+            if (copies.isEmpty()) return@synchronized
+            val candidate = copies.firstOrNull { it.first == pack } ?: copies.first()
+            if (isInstalled(pack)) {
+                val installed = File(installedDirectory(pack), pack.files.single().path)
+                if (!installed.isFile || identifyRevision(listOf(pack), installed) == null) return@synchronized
+            } else {
+                val (revision, file) = candidate
+                if (revision != pack && !canAdoptLegacyAshur(pack)) return@synchronized
+                if (!retainTafsirDatabase(revision, revision.files.single(), file)) return@synchronized
+            }
+            // Write the receipt before unlinking cache files. Even a leftover duplicate cannot reinstall a deleted book.
+            if (done.createNewFile()) copies.forEach { (_, file) -> file.delete() }
+        } catch (_: IOException) {
+            // Full or evicted cache; keep the source and retry on a subsequent launch.
+        } catch (_: QuranPackException) {
+            // The cached file changed during copying. Its bytes are not published to the reader.
         }
     }
 
@@ -68,6 +146,9 @@ internal class QuranPackInstaller(private val root: File) {
 
     /** Returns the verified archive. [onProgress] receives the bytes downloaded so far. */
     fun download(url: String, pack: QuranPack, onProgress: (Long) -> Unit = {}): File {
+        if (!pack.cdnPublished) {
+            throw QuranPackException(QuranDownloadProblem.Unpublished, "No CDN archive for ${pack.name}")
+        }
         val expected = pack.archive.bytes
         val part = partialFile(pack)
         part.parentFile?.mkdirs()
@@ -139,7 +220,7 @@ internal class QuranPackInstaller(private val root: File) {
         val staging = File(root, "$INSTALLS/${target.name}")
         staging.deleteRecursively()
         if (!staging.mkdirs()) throw QuranPackException(QuranDownloadProblem.Storage, "Cannot create $staging")
-        val expected = pack.files.associate { it.path to it.bytes }
+        val expected = pack.files.associateBy { it.path }
         val stagingPath = staging.canonicalPath + File.separator
         try {
             ZipFile(archive).use { zip ->
@@ -149,13 +230,17 @@ internal class QuranPackInstaller(private val root: File) {
                 }
                 entries.forEach { entry ->
                     val destination = File(staging, entry.name)
-                    if (!destination.canonicalPath.startsWith(stagingPath) || entry.size != expected.getValue(entry.name)) {
+                    val file = expected.getValue(entry.name)
+                    if (!destination.canonicalPath.startsWith(stagingPath) || entry.size != file.bytes) {
                         throw QuranPackException(QuranDownloadProblem.Integrity, "Unexpected entry ${entry.name} in ${archive.name}")
                     }
                     destination.parentFile?.mkdirs()
                     zip.getInputStream(entry).use { input -> destination.outputStream().use(input::copyTo) }
                     if (destination.length() != entry.size) {
                         throw QuranPackException(QuranDownloadProblem.Integrity, "Truncated entry ${entry.name}")
+                    }
+                    if (file.sha256 != null && sha256(destination) != file.sha256) {
+                        throw QuranPackException(QuranDownloadProblem.Integrity, "Unexpected contents of ${entry.name}")
                     }
                 }
             }
@@ -189,10 +274,14 @@ internal class QuranPackInstaller(private val root: File) {
     }
 
     /** A deletion by the reader also removes any retained edition. */
-    fun remove(pack: QuranPack) = synchronized(installLock) {
+    fun remove(pack: QuranPack): Unit = synchronized(installLock) {
         installedDirectory(pack).deleteRecursively()
         tafsirRevisions(pack).forEach { it.deleteRecursively() }
         discardDownload(pack)
+        if (pack.kind == QuranPack.Kind.Tafsir && pack.name == LEGACY_ASHUR_PACK) {
+            root.mkdirs()
+            File(root, LEGACY_ASHUR_HANDLED).createNewFile()
+        }
     }
 
     /**
@@ -205,7 +294,8 @@ internal class QuranPackInstaller(private val root: File) {
             .mapNotNull { readableDirectory(it)?.name }.toSet()
         val archives = layout.packs.map { partialFile(it).name }.toSet()
         root.listFiles()?.forEach { file ->
-            if (file.name != DOWNLOADS && file.name != INSTALLS && file.name !in current && file.name !in retained)
+            if (file.name != DOWNLOADS && file.name != INSTALLS && file.name != LEGACY_ASHUR_HANDLED &&
+                file.name !in current && file.name !in retained)
                 file.deleteRecursively()
         }
         File(root, INSTALLS).listFiles()?.forEach { if (it.name !in current) it.deleteRecursively() }
@@ -215,6 +305,20 @@ internal class QuranPackInstaller(private val root: File) {
     companion object {
         private val installLock = Any()
         private val REVISION = Regex("[0-9a-f]{12}")
+        private const val LEGACY_ASHUR_PACK = "quran_tafsir_ashur"
+        private const val LEGACY_ASHUR_HANDLED = ".legacy-ashur-handled"
+        private val LEGACY_CACHE_NAME = Regex("ashur-[0-9]{1,10}-([0-9]+)\\.db")
+        // The pre-five-book standalone APK and PAD pack shipped this exact database. It can be
+        // adopted from the phone only, under its original archive revision and offline metadata.
+        private val LEGACY_ASHUR = QuranPack(
+            name = LEGACY_ASHUR_PACK, kind = QuranPack.Kind.Tafsir, delivery = QuranPack.Delivery.Play,
+            reciterId = null, surahs = null, bytes = 28_008_448L,
+            archive = QuranPackArchive("v1/packs/quran_tafsir_ashur-43c9580ed5ac.zip", 7_647_106L,
+                "43c9580ed5acbfe32dcbdd19751caf8faf1cba6712650c0fd2bb65bb5eb6207a"),
+            files = listOf(QuranPackFile("quran/tafsir/ashur.db", 28_008_448L,
+                "ff6946d4f31e3920b935076a5fa64da414140a7c6a4831e403fccf9e30363e1c")),
+            cdnPublished = false,
+        )
         private const val DOWNLOADS = ".downloads"
         private const val INSTALLS = ".installs"
         private const val BUFFER = 64 * 1024

@@ -126,6 +126,7 @@ class MosqueSettingsScreenTest {
         }
         row(R.string.mosque_allow_precise).assertDoesNotExist()
         row(R.string.mosque_allow_background).assertDoesNotExist()
+        row(R.string.mosque_interruption_battery_action).assertDoesNotExist()
         assertFalse(onboardingActivationAvailable())
         assertFalse(PrefsManager.isAutomaticSilenceRequested(context))
         assertOpenedDndForThisApp()
@@ -166,6 +167,8 @@ class MosqueSettingsScreenTest {
         }
         row(R.string.mosque_allow_precise).assertExists()
         row(R.string.mosque_allow_background).assertExists()
+        row(R.string.mosque_interruption_battery_action).assertExists()
+        row(R.string.mosque_battery_guidance_body).assertDoesNotExist()
         assertNull(shadowOf(controller.get()).nextStartedActivity)
         assertFalse(onboardingActivationAvailable())
         assertFalse(MosqueSilenceSettings.usesOwnedRules(context))
@@ -355,7 +358,8 @@ class MosqueSettingsScreenTest {
 
         row(R.string.mosque_mode_time).assertIsDisplayed().assertIsSelected()
         row(R.string.mosque_mode_combined).assertIsNotSelected()
-            .assertTextContains(context.getString(R.string.mosque_method_arrival_detail), substring = true)
+            .assertTextContains(context.getString(R.string.mosque_method_arrival_summary))
+        row(R.string.mosque_method_arrival_detail).assertDoesNotExist()
         row(R.string.mosque_add_area).assertDoesNotExist()
         savePreview("overview")
 
@@ -365,6 +369,19 @@ class MosqueSettingsScreenTest {
         compose.onNodeWithContentDescription(context.getString(R.string.mosque_back)).performClick()
 
         row(R.string.mosque_mode_time).performScrollTo().assertIsSelected()
+        assertEquals(AutomaticSilenceMode.TIME_ONLY, MosqueSilenceSettings.mode(context))
+    }
+
+    @Test
+    fun readingMosqueDetailsDoesNotSelectTheMethodOrAcceptBackgroundLocation() {
+        openSettings()
+        val infoLabel = context.getString(R.string.info_about_topic, context.getString(R.string.mosque_mode_combined))
+        compose.onNodeWithContentDescription(infoLabel).performScrollTo().performClick()
+        row(R.string.mosque_method_arrival_detail).assertIsDisplayed()
+        row(R.string.prayer_control_close).performClick()
+        row(R.string.mosque_method_arrival_detail).assertDoesNotExist()
+        row(R.string.mosque_mode_time).assertIsSelected()
+        assertFalse(MosqueSilenceSettings.backgroundDisclosureAccepted(context))
         assertEquals(AutomaticSilenceMode.TIME_ONLY, MosqueSilenceSettings.mode(context))
     }
 
@@ -440,7 +457,7 @@ class MosqueSettingsScreenTest {
         controller.recreate()
         row(R.string.mosque_mode_combined).assertIsSelected()
         row(R.string.mosque_mode_time).assertIsNotSelected()
-        row(R.string.mosque_method_arrival_detail).assertExists()
+        row(R.string.mosque_method_arrival_detail).assertDoesNotExist()
         compose.onNodeWithText("تفعيل التعرّف على الوصول").assertDoesNotExist()
         compose.onNodeWithText("التعرّف على الوصول مفعّل").assertDoesNotExist()
         assertTrue(MosqueSilenceSettings.backgroundDisclosureAccepted(context))
@@ -461,11 +478,19 @@ class MosqueSettingsScreenTest {
         assertTrue(MosqueSilenceSettings.saveMode(context, AutomaticSilenceMode.TIME_AND_MOSQUE))
         MosqueSilenceSettings.acceptBackgroundDisclosure(context)
         openSettings()
+        row(R.string.mosque_interruption_battery_action).assertExists()
+        row(R.string.mosque_battery_guidance_body).assertDoesNotExist()
+        val batteryHelp = context.getString(R.string.info_about_topic, context.getString(R.string.mosque_battery_guidance_title))
+        compose.onNodeWithContentDescription(batteryHelp).performScrollTo().performClick()
+        row(R.string.mosque_battery_guidance_body).assertIsDisplayed()
+        row(R.string.prayer_control_close).performClick()
+        row(R.string.mosque_battery_guidance_body).assertDoesNotExist()
+        assertNull(shadowOf(controller.get()).nextStartedActivity)
 
         row(R.string.mosque_mode_combined).assertIsSelected()
             .assertTextEquals(
                 context.getString(R.string.mosque_mode_combined),
-                context.getString(R.string.mosque_method_arrival_detail),
+                context.getString(R.string.mosque_method_arrival_summary),
             )
         compose.onNode(isDialog()).assertDoesNotExist()
         assertTrue(MosqueSilenceSettings.combined(context))
@@ -479,8 +504,7 @@ class MosqueSettingsScreenTest {
         openSettings()
         savePreview("overview-font-150")
 
-        val labels = listOf(R.string.mosque_mode_time, R.string.mosque_method_time_detail,
-            R.string.mosque_mode_combined, R.string.mosque_method_arrival_detail)
+        val labels = listOf(R.string.mosque_mode_time, R.string.mosque_mode_combined, R.string.mosque_method_arrival_summary)
         labels.forEach { id ->
             val label = context.getString(id)
             val node = compose.onNodeWithText(label, useUnmergedTree = true).performScrollTo().assertIsDisplayed()

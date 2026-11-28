@@ -43,7 +43,11 @@ class MosqueObservationTraceTest {
             }
 
             assertEquals(AdaptiveVisitDetector.Arrival.WALKED_IN, engine.detector.arrival)
-            val event = SilenceTraceStore.entries(context, id).single { it.kind == "mosque_presence" && area.name in it.detail }
+            val events = SilenceTraceStore.entries(context, id).filter { it.kind == "mosque_presence" }
+            val entering = events.single { it.detail == context.getString(R.string.mosque_status_entering) }
+            assertEquals(point(11).longitude, requireNotNull(entering.longitude), 0.0)
+            val event = events.single { area.name in it.detail }
+            assertTrue(entering.id < event.id)
             assertEquals(context.getString(R.string.trace_mosque_arrival, area.name,
                 context.getString(R.string.trace_mosque_walked_in)), event.detail)
             val confirmingPoint = point(route.last().second)

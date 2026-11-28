@@ -45,6 +45,7 @@ open class TunisianPrayerTimesApplication : Application() {
         if (PrefsManager.isBackgroundTravelEnabled(this)) SilenceVerifyWorker.reconcileSchedule(this)
         // Cleanup only: a process start never acquires mosque location or revives stored presence.
         SilenceCoordinator.recover(this)
+        com.tunisianprayertimes.mosque.MosqueMetrics.resume(this)
         AndroidAutoConnection.observe(this)
         val locationSwitch = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
@@ -91,6 +92,7 @@ open class TunisianPrayerTimesApplication : Application() {
                 .onFailure { Log.w("Hifz", "Could not refresh hifz reminders", it) }
             runCatching { com.tunisianprayertimes.fasting.FastingReminder.refresh(this@TunisianPrayerTimesApplication) }
                 .onFailure { Log.w("Fasting", "Could not refresh the fasting reminder", it) }
+            com.tunisianprayertimes.worship.WorshipReminder.refreshAll(this@TunisianPrayerTimesApplication)
             runCatching { com.tunisianprayertimes.remembrance.DeathReminder.refresh(this@TunisianPrayerTimesApplication) }
                 .onFailure { Log.w("Remembrance", "Could not refresh the remembrance reminder", it) }
         }

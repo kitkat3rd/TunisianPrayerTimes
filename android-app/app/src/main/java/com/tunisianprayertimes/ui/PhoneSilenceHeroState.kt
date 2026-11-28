@@ -5,7 +5,9 @@ import com.tunisianprayertimes.ManualSilenceMode
 import com.tunisianprayertimes.ManualSilenceScheduler
 import com.tunisianprayertimes.Prayer
 import com.tunisianprayertimes.R
+import com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor
 import com.tunisianprayertimes.mosque.MosquePrayerActions
+import com.tunisianprayertimes.mosque.presence.PresenceState
 import com.tunisianprayertimes.silence.SilenceWindow
 import java.time.Instant
 import java.time.ZoneId
@@ -63,11 +65,14 @@ internal fun phoneSilenceReasonText(context: Context, reason: PhoneSilenceReason
         if (ManualSilenceScheduler.canScheduleExact(context)) R.string.phone_status_silent_manual_until_time else R.string.manual_approximate_time,
         formatTimeOfDay(com.tunisianprayertimes.PrefsManager.getManualSilenceEndsAtMillis(context)))
     return when (reason.source) {
-        PhoneSilenceReasonSource.MOSQUE_WINDOW -> when {
-            reason.endsAtMillis > 0L -> MosquePrayerActions.continuationLabel(context, reason.endsAtMillis)
-            com.tunisianprayertimes.mosque.AdaptiveMosqueMonitor.fallbackRequested(context) ->
-                context.getString(R.string.mosque_adaptive_fallback)
-            else -> context.getString(R.string.mosque_phone_reason)
+        PhoneSilenceReasonSource.MOSQUE_WINDOW -> if (reason.endsAtMillis > 0L) {
+            MosquePrayerActions.continuationLabel(context, reason.endsAtMillis)
+        } else {
+            context.getString(when (AdaptiveMosqueMonitor.requestedState(context)) {
+                PresenceState.ENTERING -> R.string.mosque_status_entering
+                PresenceState.SCHEDULE_FALLBACK -> R.string.mosque_adaptive_fallback
+                else -> R.string.mosque_phone_reason
+            })
         }
         PhoneSilenceReasonSource.AUTO_PRAYER -> context.getString(
             R.string.phone_status_silent_auto_prayer,

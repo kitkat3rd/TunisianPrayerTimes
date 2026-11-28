@@ -194,7 +194,7 @@ internal fun QuranSearchSheet(
     onLocation: (QuranGoTo, Boolean) -> Unit,
 ) {
     val context = LocalContext.current
-    var showSources by rememberSaveable { mutableStateOf(false) }
+    var showSearchInfo by rememberSaveable { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val visible = search.visible
@@ -234,7 +234,9 @@ internal fun QuranSearchSheet(
     }
     AppModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = BgCream) {
         Column(Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 16.dp)) {
-            QuranPanelHeader("البحث في القرآن", onDismiss)
+            QuranPanelHeader("البحث في القرآن", onDismiss) {
+                AppInfoButton(title = "البحث في القرآن", onClick = { showSearchInfo = true })
+            }
             OutlinedTextField(
                 value = search.query, onValueChange = ::updateQuery,
                 modifier = Modifier.fillMaxWidth().testTag("quran_search_input"),
@@ -250,13 +252,12 @@ internal fun QuranSearchSheet(
                 keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
             )
             CollapsingHeaderColumn(collapse, Modifier.weight(1f), header = {
-            Text(
+            if (search.query.isNotBlank()) Text(
                 when {
-                    search.query.isBlank() -> "اكتب مثلًا «طه» أو «صفحة\u00A0321» أو «طه:130» أو «حزب\u00A012» أو كلمات من آية مع التشكيل أو دونه."
                     search.searching -> "جارٍ البحث…"
-                    search.results.isEmpty() && locations.isEmpty() -> "لا توجد نتائج. جرّب اسم سورة أو رقم صفحة أو كلمات من آية."
-                    search.surah != null -> "${quranResultsLabel(visible.size)} في سورة ${search.surah}. اضغط على النتيجة لتفتح صفحتها."
-                    else -> "${quranResultsLabel(search.results.size + locations.size)}. اضغط على النتيجة لتفتح صفحتها."
+                    search.results.isEmpty() && locations.isEmpty() -> "لا توجد نتائج"
+                    search.surah != null -> "${quranResultsLabel(visible.size)} في سورة ${search.surah}"
+                    else -> quranResultsLabel(search.results.size + locations.size)
                 },
                 Modifier.padding(vertical = 12.dp), fontSize = 12.sp, color = TextMuted,
             )
@@ -322,22 +323,22 @@ internal fun QuranSearchSheet(
                     }
                 }
             }
-            // Not while typing with large text: the results need the room above the keyboard.
-            if (!(WindowInsets.isImeVisible && collapse.collapsible)) TextButton(onClick = { showSources = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("مصادر النص") }
             }
         }
     }
-    if (showSources) AlertDialog(
-        onDismissRequest = { showSources = false },
-        title = { Text("مصادر النص") },
+    if (showSearchInfo) AlertDialog(
+        onDismissRequest = { showSearchInfo = false },
+        title = { Text("البحث في القرآن") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("نبحث في نص رواية قالون من الموسوعة القرآنية، ونستعين ببيانات Tanzil لأرقام الصفحات وللبحث بالرسم الإملائي.", fontSize = 14.sp)
+                Text("ابحث بكلمات من آية، بالتشكيل أو دونه، أو بمرجع مثل «طه:130» أو «صفحة 321» أو «حزب 12».")
+                Text("مصادر النص", Modifier.padding(top = 16.dp), fontWeight = FontWeight.SemiBold)
+                Text("نصّ رواية قالون من الموسوعة القرآنية. أرقام الصفحات والبحث بالرسم الإملائي من Tanzil.", fontSize = 14.sp)
                 TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://quranpedia.net/surah/7/1"))) }) { Text("الموسوعة القرآنية") }
                 TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://tanzil.net"))) }) { Text("Tanzil Project · CC BY 3.0") }
             }
         },
-        confirmButton = { TextButton(onClick = { showSources = false }) { Text("أغلق") } },
+        confirmButton = { TextButton(onClick = { showSearchInfo = false }) { Text("إغلاق") } },
     )
 }
 

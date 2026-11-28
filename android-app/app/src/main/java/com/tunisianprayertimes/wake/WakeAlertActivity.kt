@@ -719,11 +719,6 @@ internal fun MathStepContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = stringResource(R.string.wake_alarm_solve_wake_up_check_prompt),
-            style = MaterialTheme.typography.bodyLarge,
-            color = onGradient,
-        )
-        Text(
             text = challenge.prompt,
             style = MaterialTheme.typography.displayMedium,
             fontWeight = FontWeight.Bold,

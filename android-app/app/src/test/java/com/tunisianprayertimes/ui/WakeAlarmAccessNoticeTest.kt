@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performClick
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.wake.AwakeCheckService
 import com.tunisianprayertimes.wake.WakePlaybackService
+import com.tunisianprayertimes.wake.wakeAlarmAccess
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -45,7 +46,7 @@ class WakeAlarmAccessNoticeTest {
         manager.createNotificationChannel(NotificationChannel(AwakeCheckService.CHANNEL_ID, "Awake check", NotificationManager.IMPORTANCE_NONE))
         assertNull(wakeAlarmAccess(activity).awakeCheckIssue)
         activity.setContent { WakeAlarmAccessNotice(activity, saved = true, awakeCheckEnabled = true) }
-        compose.onNodeWithText(activity.getString(R.string.wake_access_notifications_detail)).assertDoesNotExist()
+        compose.onNodeWithText(activity.getString(R.string.wake_access_notifications_action)).assertDoesNotExist()
         compose.onNodeWithText(activity.getString(R.string.wake_access_ringing_channel_action)).performClick()
         val ringing = shadowOf(activity).nextStartedActivity
         assertEquals(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS, ringing.action)

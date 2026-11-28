@@ -196,10 +196,11 @@ private fun DateDayButton(previous: Boolean, enabled: Boolean, onClick: () -> Un
 internal fun TimetableSourceDetails(methodName: String?, officialSource: Boolean, zoneName: String?) {
     var open by rememberSaveable { mutableStateOf(false) }
     val label = stringResource(R.string.prayer_timetable_source)
-    TextButton(
+    AppInfoButton(
+        title = label,
         onClick = { open = true },
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("times_source_details"),
-    ) { Text(label, color = GreenPrimaryDark) }
+        modifier = Modifier.testTag("times_source_details"),
+    )
     if (open) {
         AlertDialog(
             onDismissRequest = { open = false },

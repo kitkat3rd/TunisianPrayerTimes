@@ -10,6 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.WindowInfo
@@ -18,6 +19,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.core.app.ActivityOptionsCompat
 import androidx.test.core.app.ApplicationProvider
 import com.tunisianprayertimes.DelegationLocationResult
@@ -26,6 +29,7 @@ import com.tunisianprayertimes.PrefsManager
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.place.PrayerPlace
 import com.tunisianprayertimes.place.ZoneSource
+import com.tunisianprayertimes.ui.theme.TunisianPrayerTimesTheme
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.ObjectInputStream
@@ -38,11 +42,43 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "ar-rTN-w360dp-h800dp-mdpi", application = Application::class)
 class FirstRunPlaceScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    @Config(qualifiers = "ar-rTN-w320dp-h480dp-mdpi")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun narrowRtlScreenAtDoubleFontSizeKeepsAllThreeChoicesReadableAndReachable() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale = 2f)) {
+                TunisianPrayerTimesTheme { OnboardingScreen {} }
+            }
+        }
+        val actions = listOf(
+            "onboarding_location_pick" to R.string.onboarding_location_pick,
+            "onboarding_location_locate" to R.string.first_run_use_location,
+            "onboarding_browse" to R.string.first_run_browse,
+        )
+        for ((tag, resource) in actions) {
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed().assertIsEnabled()
+            val label = context.getString(resource)
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(label, useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            assertFalse(
+                "Clipped action label: $label, measured=${layout.size}, " +
+                    "paragraph=${layout.multiParagraph.width}×${layout.multiParagraph.height}, " +
+                    "constraints=${layout.layoutInput.constraints}, lines=${layout.lineCount}",
+                layout.hasVisualOverflow,
+            )
+        }
+    }
 
     @Test fun denialKeepsSearchAndBrowsingAvailableWithoutAnotherPermissionRequest() {
         val context = ApplicationProvider.getApplicationContext<Application>()
@@ -86,7 +122,7 @@ class FirstRunPlaceScreenTest {
         locationAction.assertIsEnabled().performClick()
         compose.runOnIdle { denyRequest() }
         val recovery = compose.onNodeWithText(context.getString(R.string.first_run_denied_title))
-            .assertIsDisplayed().assert(hasText(context.getString(R.string.first_run_manual_help))).fetchSemanticsNode()
+            .assertIsDisplayed().fetchSemanticsNode()
         assertTrue(recovery.config.contains(SemanticsProperties.Heading))
         assertEquals(LiveRegionMode.Polite, recovery.config[SemanticsProperties.LiveRegion])
         val recoveryAction = compose.onNodeWithTag("onboarding_location_pick").assertIsEnabled().assertIsFocused()

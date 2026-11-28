@@ -5,10 +5,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +27,7 @@ import com.tunisianprayertimes.adhkar.isInCollection
 import com.tunisianprayertimes.adhkar.dhikrSearchText
 import com.tunisianprayertimes.adhkar.normalizeDhikrSearch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DhikrCollectionAddDialog(
     category: DhikrCategory,
@@ -44,13 +45,15 @@ internal fun DhikrCollectionAddDialog(
         }
     }
 
-    AlertDialog(
+    AppModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("إضافة ذكر إلى " + collectionTitle(category), color = AdhkarHeading, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("اختر ذكرًا من المكتبة لإضافته إلى هذه المجموعة. سيظهر أيضًا في القراءة الحالية، وسيبقى في المكتبة. تظهر هنا الأذكار غير الموجودة في المجموعة فقط.",
-                    color = p.muted, fontSize = 13.sp, lineHeight = 21.sp)
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = p.background,
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.85f).imePadding()) {
+            DhikrSheetHeader("إضافة ذكر إلى " + collectionTitle(category), onDismiss)
+            Column(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -62,15 +65,16 @@ internal fun DhikrCollectionAddDialog(
                 )
                 if (available.isEmpty()) {
                     Text(
-                        if (normalized.isEmpty()) "جميع الأذكار موجودة بالفعل في هذه المجموعة."
-                        else "لا توجد أذكار مطابقة يمكن إضافتها إلى هذه المجموعة.",
+                        if (normalized.isEmpty()) "تضمّ المجموعة جميع الأذكار."
+                        else "لا توجد أذكار مطابقة للإضافة.",
                         color = p.muted,
                         fontSize = 14.sp,
                         modifier = Modifier.padding(vertical = 16.dp),
                     )
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).testTag("adhkar_add_to_list_results"),
+                        modifier = Modifier.fillMaxWidth().weight(1f).testTag("adhkar_add_to_list_results"),
+                        contentPadding = PaddingValues(bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(available, key = { it.id }) { entry ->
@@ -96,7 +100,6 @@ internal fun DhikrCollectionAddDialog(
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("تم") } },
-    )
+        }
+    }
 }

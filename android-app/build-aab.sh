@@ -3,6 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+PLAY_BETA=false
 UNSIGNED_RELEASE=false
 SIGNING_LABEL="Signed"
 if [[ "${1:-}" == "--unsigned" ]]; then
@@ -10,8 +11,12 @@ if [[ "${1:-}" == "--unsigned" ]]; then
     SIGNING_LABEL="Unsigned"
     shift
 fi
+if [[ "${1:-}" == "--beta" ]]; then
+    PLAY_BETA=true
+    shift
+fi
 if [[ $# -ne 0 ]]; then
-    echo "Usage: $0 [--unsigned]" >&2
+    echo "Usage: $0 [--unsigned] [--beta]" >&2
     exit 1
 fi
 
@@ -23,7 +28,7 @@ if [[ -f quran-assets/manifest.tsv ]]; then
 fi
 
 echo "Building release AAB ($SIGNING_LABEL)..."
-./gradlew clean bundleRelease --no-daemon "-PunsignedRelease=$UNSIGNED_RELEASE"
+./gradlew clean bundleRelease --no-daemon "-PunsignedRelease=$UNSIGNED_RELEASE" "-PmosquePlayBeta=$PLAY_BETA"
 
 AAB="app/build/outputs/bundle/release/app-release.aab"
 if [[ -f "$AAB" ]]; then

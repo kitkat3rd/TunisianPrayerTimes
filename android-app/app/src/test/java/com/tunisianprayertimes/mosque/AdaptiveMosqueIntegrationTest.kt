@@ -41,6 +41,7 @@ class AdaptiveMosqueIntegrationTest {
     @Test fun onlyAPreciseArrivalCheckRequestsTwoSecondUpdates() {
         val plan = MosqueObservationPlan("session", 120_000, 120_000, true, PresenceState.ACQUIRING, emptyList())
         assertEquals(2_000L, plan.intervalMillis)
+        assertEquals(2_000L, plan.copy(state = PresenceState.ENTERING).intervalMillis)
         assertEquals(60_000L, plan.copy(highAccuracy = false).intervalMillis)
         assertEquals(5_000L, plan.copy(state = PresenceState.EXITING).intervalMillis)
         assertEquals(5_000L, plan.copy(state = PresenceState.VISIT_CONFIRMED).intervalMillis)

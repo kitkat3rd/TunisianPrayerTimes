@@ -21,12 +21,14 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.zip.ZipFile
 
 /** Play installs: Play's packs go through Play, the rest through the quran-cdn Worker. */
 class PlayOrCdnPackSourceTest {
@@ -85,7 +87,7 @@ class PlayOrCdnPackSourceTest {
 
     @Test
     fun initialAvailabilityIsUnknownUntilTheSourcesHaveAnswered() = runTest {
-        val starting = PlayOrCdnPackSource(layout, lazy { worker }, QuranPackInstaller(folder.root), backgroundScope) { play }
+        val starting = PlayOrCdnPackSource(layout, lazy { worker }, QuranPackInstaller(folder.root), backgroundScope) { _ -> play }
         assertTrue(starting.states.value.isEmpty())
     }
 
@@ -129,7 +131,7 @@ class PlayOrCdnPackSourceTest {
         val installer = QuranPackInstaller(folder.newFolder())
         installer.retainPlayTafsir(old, playAssets("old"))
         val layout = QuranPackLayout("https://cdn.example/", listOf(updated))
-        val source = PlayOrCdnPackSource(layout, lazy { worker }, installer, scope) { play }
+        val source = PlayOrCdnPackSource(layout, lazy { worker }, installer, scope) { _ -> play }
         val name = updated.name
         val progress = QuranPackState(QuranPackStatus.Downloading, 10, 100)
         play.states.value = mapOf(name to progress)
@@ -152,15 +154,130 @@ class PlayOrCdnPackSourceTest {
 
     private val db = "quran/tafsir/ashur.db"
 
-    private fun edition(hash: Char, body: String) = QuranPack(
-        "quran_tafsir_ashur", QuranPack.Kind.Tafsir, QuranPack.Delivery.Play, null, null, body.length.toLong(),
-        QuranPackArchive("v1/packs/quran_tafsir_ashur-${hash.toString().repeat(12)}.zip", 100, hash.toString().repeat(64)),
-        listOf(QuranPackFile(db, body.length.toLong(),
+    private fun edition(hash: Char, body: String, book: String = "ashur", delivery: QuranPack.Delivery = QuranPack.Delivery.Play) = QuranPack(
+        "quran_tafsir_$book", QuranPack.Kind.Tafsir, delivery, null, null, body.length.toLong(),
+        QuranPackArchive("v1/packs/quran_tafsir_$book-${hash.toString().repeat(12)}.zip", 100, hash.toString().repeat(64)),
+        listOf(QuranPackFile("quran/tafsir/$book.db", body.length.toLong(),
             MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) })),
     )
 
+    private fun books(delivery: QuranPack.Delivery) = listOf("muyassar", "mukhtasar", "gharib", "juzayy", "ashur").map { book ->
+        edition('b', book, book, delivery)
+    }
+
     private fun playAssets(body: String) = folder.newFolder().apply {
         File(this, db).apply { parentFile!!.mkdirs(); writeText(body) }
+    }
+
+    private fun deliver(pack: QuranPack, contents: String) {
+        val root = folder.newFolder()
+        val database = File(root, pack.files.single().path)
+        requireNotNull(database.parentFile).mkdirs()
+        database.writeText(contents)
+        play.directories[pack.name] = root
+        play.states.value += pack.name to QuranPackState.Available
+    }
+
+    @Test
+    fun fivePlayBooksKeepIndependentTransfersAndExposeOnlyVerifiedFiles() = runBlocking {
+        val books = books(QuranPack.Delivery.Play)
+        val (meaning, concise, glossary, juzayy, ashur) = books
+        val installer = QuranPackInstaller(folder.newFolder())
+        val local = PlayOrCdnPackSource(QuranPackLayout("https://cdn.example/", books), lazy { worker }, installer, scope) { _ -> play }
+        books.forEach { local.fetch(listOf(it), allowMetered = true) }
+        assertEquals(books.map { listOf(it.name) to true }, play.fetched)
+        assertTrue(worker.fetched.isEmpty())
+
+        val progress = QuranPackState(QuranPackStatus.Downloading, 32, 100)
+        play.states.value = mapOf(juzayy.name to progress, ashur.name to QuranPackState(QuranPackStatus.NeedsConfirmation))
+        deliver(meaning, "muyassar")
+        deliver(concise, "mukhtasar")
+        deliver(glossary, "broken") // Same length as "gharib", but a different hash.
+        withTimeout(5_000) { local.states.first { states ->
+            states[meaning.name] == QuranPackState.Available && states[concise.name] == QuranPackState.Available &&
+                states[glossary.name]?.problem == QuranDownloadProblem.Integrity &&
+                states[juzayy.name] == progress && states[ashur.name]?.status == QuranPackStatus.NeedsConfirmation
+        } }
+        assertTrue(installer.isInstalled(meaning) && installer.isInstalled(concise))
+        assertEquals("mukhtasar", File(requireNotNull(local.directory(concise)), concise.files.single().path).readText())
+        assertNull(local.directory(glossary))
+
+        local.confirmMobileData(listOf(juzayy, ashur), launcher)
+        local.cancel(listOf(juzayy))
+        local.remove(listOf(meaning))
+        withTimeout(5_000) { local.states.first { it[meaning.name] == QuranPackState.Missing } }
+        assertNull(local.directory(meaning))
+        assertTrue(installer.isInstalled(concise))
+        assertEquals(listOf(listOf(ashur.name)), play.confirmed)
+        assertEquals(listOf(listOf(juzayy.name)), play.cancelled)
+        assertEquals(listOf(listOf(meaning.name)), play.removed)
+        assertTrue(worker.confirmed.isEmpty() && worker.cancelled.isEmpty() && worker.removed.isEmpty())
+    }
+
+    @Test
+    fun permanentPlayFailureHandsOnlyOutstandingBookRequestsToCdn() = runBlocking {
+        val books = books(QuranPack.Delivery.Play)
+        val (ready, invalid, pending, cancelled, untouched) = books
+        val installer = QuranPackInstaller(folder.newFolder())
+        var unavailable: () -> Unit = {}
+        val local = PlayOrCdnPackSource(QuranPackLayout("https://cdn.example/", books), lazy { worker }, installer, scope) { failure ->
+            unavailable = failure
+            play
+        }
+        local.fetch(listOf(ready, invalid, pending, cancelled), allowMetered = false)
+        local.fetch(listOf(pending), allowMetered = true)
+        local.cancel(listOf(cancelled))
+        deliver(ready, "muyassar")
+        deliver(invalid, "xxxxxxxxx") // PAD reports completion, but these bytes cannot serve the book.
+        play.states.value += pending.name to QuranPackState(QuranPackStatus.Pending)
+        withTimeout(5_000) { local.states.first { states ->
+            states[ready.name] == QuranPackState.Available && states[invalid.name]?.problem == QuranDownloadProblem.Integrity
+        } }
+        worker.states.value = books.associate { it.name to QuranPackState.Missing }
+        unavailable()
+        withTimeout(5_000) { while (worker.fetched.size < 2) delay(10) }
+        assertEquals(setOf(listOf(invalid.name) to false, listOf(pending.name) to true), worker.fetched.toSet())
+        assertEquals(2, worker.fetched.size)
+        assertTrue(installer.isInstalled(ready))
+        local.fetch(listOf(untouched), allowMetered = true)
+        assertEquals(listOf(untouched.name) to true, worker.fetched.last())
+        assertEquals(2, play.fetched.size)
+    }
+
+    @Test
+    fun oneUnavailablePlayBookUsesItsPublishedCdnCopyWhileOtherBooksStayOnPlay() = runBlocking {
+        val base = books(QuranPack.Delivery.Play)
+        val meaning = base[0]
+        val glossary = base[2]
+        val unpublished = base[3].copy(cdnPublished = false)
+        val books = listOf(meaning, glossary, unpublished)
+        val installer = QuranPackInstaller(folder.newFolder())
+        var packsUnavailable: (Set<String>) -> Unit = {}
+        val local = PlayOrCdnPackSource(QuranPackLayout("https://cdn.example/", books), lazy { worker }, installer, scope) { _, missing ->
+            packsUnavailable = missing
+            play
+        }
+        val downloading = QuranPackState(QuranPackStatus.Downloading, 19, 100)
+        val storeError = QuranPackState(QuranPackStatus.Failed, problem = QuranDownloadProblem.Store)
+        play.states.value = mapOf(meaning.name to downloading, glossary.name to storeError, unpublished.name to storeError)
+        worker.states.value = books.associate { it.name to QuranPackState.Missing }
+        local.fetch(listOf(meaning, glossary, unpublished), allowMetered = false)
+        packsUnavailable(setOf(glossary.name, unpublished.name))
+        withTimeout(5_000) { while (worker.fetched.isEmpty()) delay(10) }
+        assertEquals(listOf(listOf(glossary.name) to false), worker.fetched)
+        val waiting = QuranPackState(QuranPackStatus.WaitingForWifi, 0, 100)
+        worker.states.value += glossary.name to waiting
+        withTimeout(5_000) { local.states.first { states ->
+            states[meaning.name] == downloading && states[glossary.name] == waiting && states[unpublished.name] == storeError
+        } }
+        local.confirmMobileData(listOf(meaning, glossary), launcher)
+        local.cancel(listOf(glossary))
+        assertEquals(listOf(listOf(glossary.name)), worker.confirmed)
+        assertEquals(listOf(listOf(glossary.name)), worker.cancelled)
+        assertTrue(play.confirmed.isEmpty() && play.cancelled.isEmpty())
+        local.fetch(listOf(meaning), allowMetered = true)
+        assertEquals(listOf(meaning.name) to true, play.fetched.last())
+        assertEquals(1, worker.fetched.size)
     }
 
     @Test
@@ -172,11 +289,113 @@ class PlayOrCdnPackSourceTest {
         val layout = QuranPackLayout("https://cdn.example/", listOf(updated))
         play.directories[updated.name] = playAssets("bad")
         play.states.value = mapOf(updated.name to QuranPackState.Available)
-        val source = PlayOrCdnPackSource(layout, lazy { worker }, installer, scope) { play }
+        val source = PlayOrCdnPackSource(layout, lazy { worker }, installer, scope) { _ -> play }
         withTimeout(5_000) { source.states.first { states ->
             states[updated.name]?.let { it.problem == QuranDownloadProblem.Integrity && it.previousVersion } == true
         } }
         assertEquals("old", File(source.directory(updated)!!, db).readText())
+    }
+
+    @Test
+    fun fiveCommentaryPacksUseTheCdnIndependentlyOnPlayInstalls() = runBlocking {
+        val books = books(QuranPack.Delivery.Cdn)
+        val catalog = QuranPackLayout("https://cdn.example/", books)
+        val source = PlayOrCdnPackSource(catalog, lazy { worker }, QuranPackInstaller(folder.newFolder()), scope) { _ -> play }
+        books.forEach { source.fetch(listOf(it), allowMetered = true) }
+        assertEquals(books.map { listOf(it.name) to true }, worker.fetched)
+        assertTrue(play.fetched.isEmpty())
+
+        val perBook = books.map { it.name }.zip(listOf(
+            QuranPackState(QuranPackStatus.Downloading, 32, 100),
+            QuranPackState.Available,
+            QuranPackState(QuranPackStatus.WaitingForWifi),
+            QuranPackState(QuranPackStatus.Failed, problem = QuranDownloadProblem.Network),
+            QuranPackState.Missing,
+        )).toMap()
+        worker.states.value = perBook
+        // A generic Play callback cannot make a CDN glossary appear downloaded.
+        play.states.value = mapOf(books[2].name to QuranPackState.Available)
+        withTimeout(5_000) { source.states.first { it == perBook } }
+
+        source.cancel(listOf(books[0]))
+        source.remove(listOf(books[1]))
+        source.confirmMobileData(listOf(books[2]), launcher)
+        assertEquals(listOf(listOf(books[0].name)), worker.cancelled)
+        assertEquals(listOf(listOf(books[1].name)), worker.removed)
+        assertEquals(listOf(listOf(books[2].name)), worker.confirmed)
+        assertTrue(play.cancelled.isEmpty() && play.removed.isEmpty() && play.confirmed.isEmpty())
+    }
+
+    @Test
+    fun previouslyInstalledPlayAshurIsReadableUnderTheNewCdnCatalog() = runBlocking {
+        val books = books(QuranPack.Delivery.Cdn)
+        val ashur = books.last()
+        val installer = QuranPackInstaller(folder.newFolder())
+        val catalog = QuranPackLayout("https://cdn.example/", books)
+        worker.states.value = books.associate { it.name to QuranPackState.Missing }
+        play.directories[ashur.name] = playAssets("ashur")
+        play.states.value = mapOf(ashur.name to QuranPackState.Available)
+        val source = PlayOrCdnPackSource(catalog, lazy { worker }, installer, scope) { _ -> play }
+
+        withTimeout(5_000) { while (!installer.isInstalled(ashur)) delay(10) }
+        val states = withTimeout(5_000) { source.states.first { it[ashur.name]?.available == true && it.keys.containsAll(books.map { book -> book.name }) } }
+        assertTrue(books.dropLast(1).all { states[it.name] == QuranPackState.Missing })
+        assertEquals("ashur", File(source.directory(ashur)!!, db).readText())
+        assertTrue(play.fetched.isEmpty() && worker.fetched.isEmpty())
+
+        source.remove(listOf(ashur))
+        assertEquals(listOf(listOf(ashur.name)), worker.removed)
+        assertEquals(listOf(listOf(ashur.name)), play.removed)
+        source.fetch(listOf(ashur), allowMetered = true)
+        assertEquals(listOf(listOf(ashur.name) to true), worker.fetched)
+        assertTrue(play.fetched.isEmpty())
+    }
+
+    @Test
+    fun signedEarlierPadEditionRemainsReadableWhenNoRoomForAPrivateCopy() = runBlocking {
+        // The active PAD directory now contains the current edition on a release workstation.
+        // Reconstruct the exact earlier PAD file from its archived publication when available.
+        val relative = "android-app/quran-assets/build/quran_tafsir_ashur-43c9580ed5ac.zip"
+        val repo = generateSequence(File("").absoluteFile) { it.parentFile }
+            .firstOrNull { File(it, relative).isFile }
+        assumeTrue("Legacy publication archive unavailable", repo != null)
+        val archive = File(requireNotNull(repo), relative)
+        assertEquals("43c9580ed5acbfe32dcbdd19751caf8faf1cba6712650c0fd2bb65bb5eb6207a", QuranPackInstaller.sha256(archive))
+        val originalAssets = folder.newFolder()
+        val original = File(originalAssets, db)
+        requireNotNull(original.parentFile).mkdirs()
+        ZipFile(archive).use { zip -> zip.getInputStream(zip.getEntry(db)).use { input ->
+            original.outputStream().use(input::copyTo)
+        } }
+        assertEquals("ff6946d4f31e3920b935076a5fa64da414140a7c6a4831e403fccf9e30363e1c", QuranPackInstaller.sha256(original))
+        val catalog = QuranPackLayout.parse(File(repo, "android-app/app/src/main/assets/quran/packs.json").readText())
+        val current = requireNotNull(catalog.tafsir("ashur"))
+        val books = catalog.packs
+        val installer = QuranPackInstaller(folder.newFile()) // no directory available for a second copy
+        play.directories[current.name] = originalAssets
+        play.states.value = mapOf(current.name to QuranPackState.Available)
+        worker.states.value = books.associate { it.name to QuranPackState.Missing }
+        var unavailable = {}
+        val source = PlayOrCdnPackSource(catalog, lazy { worker }, installer, scope) { failure ->
+            unavailable = failure
+            play
+        }
+        withTimeout(20_000) {
+            source.states.first { it[current.name]?.previousVersion == true }
+        }
+        assertEquals(original, File(source.directory(current)!!, db))
+        assertTrue(!installer.isInstalled(current))
+
+        // Switching the delivery source must preserve the revision identity and CDN progress.
+        unavailable()
+        val updating = QuranPackState(QuranPackStatus.Downloading, 25, 100)
+        worker.states.value = worker.states.value + (current.name to updating)
+        withTimeout(5_000) {
+            source.states.first { it[current.name] == updating.copy(previousVersion = true) }
+        }
+        source.remove(listOf(current))
+        assertNull(source.directory(current))
+        assertTrue(play.fetched.isEmpty())
     }
 
     @Test

@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -37,12 +36,9 @@ import com.tunisianprayertimes.quran.QuranGoTo
 import com.tunisianprayertimes.quran.QuranVerseReference
 import com.tunisianprayertimes.quran.normalizeQuranSearch
 import com.tunisianprayertimes.quran.quranGoTo
-import com.tunisianprayertimes.quran.hifz.HifzGrade
 import com.tunisianprayertimes.quran.hifz.HifzPoint
 import com.tunisianprayertimes.quran.hifz.HifzReminder
 import com.tunisianprayertimes.quran.hifz.HifzReminderControlState
-import com.tunisianprayertimes.quran.hifz.HifzReminder.NB
-import com.tunisianprayertimes.quran.hifz.HifzFreshGapMs
 import com.tunisianprayertimes.quran.hifz.HifzListenSettings
 import com.tunisianprayertimes.quran.hifz.HifzSettings
 import com.tunisianprayertimes.quran.hifz.dueToday
@@ -182,18 +178,7 @@ internal fun HifzHomeSheet(
     // the car's «مراجعة الدفتر» asks in too.
     val allOrder = points.notebookOrder()
     val listDueIds = eligibleDueIds ?: dueAll.map { it.id }.toSet()
-    // The footer's lines about reviewing every point. With large text they would leave the notebook's list a sliver:
-    // they go at the list's end then, and the footer keeps its button.
     val allPlan = if (notebook) hifzListPlan(points, allOrder, listDueIds) else null
-    val allCountLine = allPlan?.let { "كل مواضع الدفتر: ${it.selectedCount}، بما فيها ما أخفته التصفية." }
-    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-    val window = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize
-    val density = LocalDensity.current
-    val allLinesInList = allPlan != null && allPlan.points.isNotEmpty() && remember(allCountLine, window, density) {
-        val lines = androidx.compose.ui.unit.Constraints(maxWidth = (window.width - with(density) { 32.dp.roundToPx() }).coerceAtLeast(1))
-        val height = measurer.measure(allCountLine.orEmpty(), androidx.compose.ui.text.TextStyle(fontFamily = AppFontFamily, fontSize = 13.sp), constraints = lines).size.height
-        height > window.height * 0.2f
-    }
     /**
      * A tap on a row gives that point's test, never its answer (owner, 16 November). Its own question waiting: the
      * day's review from it, as before (owner, 23 October). Otherwise its test first, then the rows after it.
@@ -235,7 +220,16 @@ internal fun HifzHomeSheet(
                     if (notebook) "دفتر المراجعة" else "المراجعة", Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark,
                     autoSize = WholeWords(20.sp),
                 )
-                if (!notebook) TextButton(onClick = actions::settings, modifier = Modifier.testTag("hifz_settings")) { Text("الإعدادات") }
+                if (!notebook) {
+                    AppInfoButton("المراجعة", onClick = { howItWorks = true }, modifier = Modifier.testTag("hifz_home_how_it_works"))
+                    IconButton(onClick = actions::settings, modifier = Modifier.testTag("hifz_settings")) {
+                        Icon(painterResource(R.drawable.ic_settings), "إعدادات المراجعة", tint = GreenPrimaryDark)
+                    }
+                } else if (points.isNotEmpty()) {
+                    IconButton(onClick = { away = true }) {
+                        Icon(painterResource(R.drawable.ic_add), "سجّل موضعًا", tint = GreenPrimaryDark)
+                    }
+                }
                 IconButton(onClick = actions::dismiss) { Icon(painterResource(R.drawable.ic_adhkar_close), "إغلاق") }
             }
             Column(Modifier.padding(horizontal = 16.dp)) { sessionFeedback() }
@@ -286,19 +280,15 @@ internal fun HifzHomeSheet(
                                 // No «استمع إليها» here: hearing the answers first would be no check at all. They can be heard
                                 // once the review is done.
                             } else if (points.isEmpty()) {
-                                Text("ابدأ من أخطائك", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
-                                // When the questions come, as the settings say: with the reminder off, they wait in «مراجعة اليوم».
-                                val asked = if (settings.reminder) "نسألك عنها ${HifzReminder.timesPhrase(settings.times)}"
-                                    else "تجدها في «مراجعة اليوم» بعد ${HifzFreshGapMs / 60_000L}${NB}دقيقة على الأقل"
-                                Text(
-                                    "إذا أخطأت وأنت تقرأ، فاضغط على الآية ثم «أخطأت». $asked، والآية مغطاة. عدد المحاولات يتبع خطتها ونتائجها الأخيرة، ثم تتباعد الأسئلة.",
-                                    fontSize = 13.sp, color = TextMuted,
-                                )
+                                Text("سجّل أول موضع للمراجعة", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
+                                Text("يمكنك أيضًا الضغط على آية في المصحف واختيار «أخطأت».", fontSize = 13.sp, color = TextMuted)
+                                Button(onClick = { away = true }, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)) {
+                                    Text("اختر الآية")
+                                }
                             } else {
                                 // Finishing the available review does not claim that future questions were answered.
                                 val reviewedToday = points.any { point -> point.checks.any { it.day == today } }
                                 Text(if (reviewedToday) "أكملت المراجعة" else "لا توجد أسئلة للمراجعة الآن", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = GreenPrimaryDark)
-                                if (reviewedToday) Text("لا توجد أسئلة للمراجعة الآن.", fontSize = 13.sp, color = TextMuted)
                             }
                             if (reviewAvailable || resume) {
                                 Button(
@@ -330,8 +320,7 @@ internal fun HifzHomeSheet(
                                 )
                                 // How far the mistakes have come: those held; nothing to say before one is.
                                 val held = points.count { it.mastered }
-                                if (points.isEmpty()) Text("لم تسجّل مواضع بعد", fontSize = 12.sp, color = TextMuted)
-                                else if (held > 0) Text("ثبت منها ${hifzCountLabel(held)}", fontSize = 12.sp, color = TextMuted)
+                                if (held > 0) Text("ثبت منها ${hifzCountLabel(held)}", fontSize = 12.sp, color = TextMuted)
                             }
                             // It opens, as a row in a list does.
                             Icon(painterResource(R.drawable.ic_adhkar_next), null, Modifier.size(18.dp), tint = GreenPrimaryDark)
@@ -353,11 +342,10 @@ internal fun HifzHomeSheet(
                         }
                     }
                 }
-                if (!notebook) item(key = "how_it_works") {
-                    TextButton(onClick = { howItWorks = true }, modifier = Modifier.testTag("hifz_home_how_it_works")) { Text("كيف تعمل المراجعة؟", fontSize = 14.sp) }
-                    HifzNotificationsWarning(listOfNotNull(HifzReminder.CHANNEL_ID.takeIf { settings.reminder && points.isNotEmpty() }))
+                if (!notebook && settings.reminder && points.isNotEmpty()) item(key = "notifications_warning") {
+                    HifzNotificationsWarning(listOf(HifzReminder.CHANNEL_ID))
                 }
-                if (notebook) item(key = "notebook_filters") {
+                if (notebook && points.isNotEmpty()) item(key = "notebook_filters") {
                     OutlinedTextField(
                         value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth().testTag("hifz_notebook_search"),
                         label = { Text("ابحث في دفتر المراجعة") },
@@ -409,8 +397,8 @@ internal fun HifzHomeSheet(
                 if (notebook && shown.isEmpty()) item(key = "empty_notebook") {
                     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(if (points.isEmpty()) "لم تسجّل مواضع بعد" else "لا مواضع تطابق اختيارك", fontSize = 14.sp, color = GreenPrimaryDark)
-                        Text(if (points.isEmpty()) "سجّل الموضع الذي أخطأت فيه لتجده هنا وتتابع مراجعته." else "جرّب اسم السورة أو رقم الآية أو كلمات من ملاحظتك.", fontSize = 13.sp, color = TextMuted)
-                        if (points.isNotEmpty()) TextButton(onClick = { query = ""; surahFilter = null; tab = 1 }) { Text("اعرض كل المواضع") }
+                        if (points.isEmpty()) TextButton(onClick = { away = true }) { Text("سجّل موضعًا") }
+                        else TextButton(onClick = { query = ""; surahFilter = null; tab = 1 }) { Text("اعرض كل المواضع") }
                     }
                 }
                 // The list as filtered, when any of it can be heard: «الآن» holds only questions waiting. The sheet
@@ -420,32 +408,20 @@ internal fun HifzHomeSheet(
                         Text("استمع إلى هذه المواضع", fontSize = 13.sp)
                     }
                 }
-                if (allLinesInList) item(key = "practice_all_lines") {
-                    Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(allCountLine.orEmpty(), fontSize = 13.sp, color = GreenPrimaryDark, modifier = Modifier.testTag("hifz_notebook_practice_all_count"))
-                    }
-                }
             }
-            // With large text, while typing in the notebook's search, its results need the room its part of the footer
-            // takes; what plays keeps its controls.
-            val typing = allLinesInList && WindowInsets.isImeVisible
-            if ((notebook && !typing) || (audio != null && audioControls != null)) Column(
+            // Keep large-text search results in view while the keyboard is open.
+            val typing = largeText() && WindowInsets.isImeVisible
+            val practiceAll = allPlan?.takeIf { it.selectedCount > 0 && !typing }
+            if (practiceAll != null || (audio != null && audioControls != null)) Column(
                 Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.End,
             ) {
                 if (audio != null && audioControls != null) HifzAudioStrip(audio, audioControls)
-                if (notebook && !typing && allPlan != null) {
-                    val plan = allPlan
-                    if (plan.points.isNotEmpty() && !allLinesInList) {
-                        Text(
-                            allCountLine.orEmpty(),
-                            fontSize = 13.sp, color = GreenPrimaryDark, modifier = Modifier.fillMaxWidth().testTag("hifz_notebook_practice_all_count"),
-                        )
-                    }
+                if (practiceAll != null) {
                     Button(
-                        onClick = { focus.clearFocus(); actions.reviewList(allOrder) }, enabled = plan.points.isNotEmpty(),
+                        onClick = { focus.clearFocus(); actions.reviewList(allOrder) }, enabled = practiceAll.points.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                         modifier = Modifier.fillMaxWidth().testTag("hifz_notebook_practice_all"),
-                    ) { Text("راجع كل المواضع") }
+                    ) { Text("راجع كل مواضع الدفتر (${practiceAll.selectedCount})") }
                 }
             }
         }
@@ -558,7 +534,7 @@ internal fun HifzAwayDialog(
     onChosen: (QuranVerseReference) -> Unit,
     onDismiss: () -> Unit,
     title: String = "سجّل موضعًا",
-    prompt: String = "في أي آية أخطأت؟ اكتب كلمات منها أو رقم صفحتها أو اسم السورة ورقم الآية، مثل «النساء 47».",
+    prompt: String = "في أي آية أخطأت؟",
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,

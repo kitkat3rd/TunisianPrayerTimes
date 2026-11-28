@@ -9,6 +9,8 @@ import org.json.JSONObject
 enum class DhikrTimeKind { FIXED, FAJR, SHURUK, DHUHR, ASR, MAGHRIB, ISHA }
 enum class DhikrCadence { ONCE, GENTLE, BALANCED, HOURLY, CUSTOM }
 
+internal const val EVENING_ADHKAR_REMINDER_DELAY_MINUTES = 30
+
 data class DhikrTime(
     val kind: DhikrTimeKind = DhikrTimeKind.FIXED,
     val minuteOfDay: Int = 480,
@@ -305,6 +307,11 @@ fun DhikrState.isInCollection(entry: DhikrEntry, category: DhikrCategory): Boole
     category in entry.categories -> true
     else -> entry.id in collectionAdditions[category].orEmpty()
 }
+
+internal fun DhikrState.enabledReminderVibrations(): Set<Boolean> = reminders.asSequence()
+    .filter { rule -> rule.enabled && (rule.collection?.let { category -> allEntries.any { isInCollection(it, category) } } ?: true) }
+    .map { it.vibrate }
+    .toSet()
 
 fun DhikrState.collectionEntries(category: DhikrCategory): List<DhikrEntry> {
     val entries = allEntries.filter { isInCollection(it, category) }

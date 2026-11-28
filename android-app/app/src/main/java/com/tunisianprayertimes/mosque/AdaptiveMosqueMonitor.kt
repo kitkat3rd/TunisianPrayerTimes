@@ -40,7 +40,8 @@ internal object AdaptiveMosqueMonitor {
     private data class HeldVisit(val areaId: String, val windows: List<SilenceWindow>, val expiresElapsed: Long)
     private data class Runtime(var start: Long, val areas: List<SilenceArea>, val token: String,
         val engine: AdaptiveObservation, var observedEnd: Long, var silenceStart: Long? = null,
-        var held: HeldVisit? = null, var continuing: Boolean = false)
+        var held: HeldVisit? = null, var continuing: Boolean = false,
+        var targets: List<SilenceWindow> = emptyList(), var journal: MosqueObservationInterruption? = null)
     private data class Schedule(val periods: MosquePeriods, val carriesVisit: Boolean = false)
     private var current: Runtime? = null
     private fun prefs(c: Context) = c.getSharedPreferences("mosque_presence", Context.MODE_PRIVATE)
@@ -77,6 +78,7 @@ internal object AdaptiveMosqueMonitor {
         val r = current
         if (barrier && r != null) prefs(c).edit().putLong("adaptive_blocked_start", r.start).commit()
         if (r != null) activeMosqueDiagnostics(c)?.stopped(barrier)
+        if (r?.journal != null) MosqueObservationInterruptions.finished(c)
         current = null
     }
     fun dismiss(c: Context, expected: Set<String>) {
@@ -105,14 +107,26 @@ internal object AdaptiveMosqueMonitor {
         val r = current
         if (r != null && token == r.token && r.engine.sampling != AdaptiveObservation.Sampling.PARKED) {
             // The provider is no longer collecting. Its 90-second request cannot prove an outage.
-            failedStart(c)
+            failedStart(c, serviceLost = true)
             MosqueSilenceMonitor.stopLocked(c, needsRearm = false)
         }
     }
 
-    fun failedStart(c: Context) {
+    fun failedStart(c: Context, serviceLost: Boolean) {
+        val r = current
+        val now = SilenceScheduler.now().toEpochMilli()
+        // A service or provider callback can arrive before the end alarm processes the cutoff.
+        if (r != null && now >= r.observedEnd) return
+        if (serviceLost) MosqueMetrics.flag(c, "interrupted")
+        MosqueMetrics.fault(c, "monitor_start_failed", now)
         activeMosqueDiagnostics(c)?.failedStart()
-        current?.let { prefs(c).edit().putLong("adaptive_failed_start", it.start).commit() }
+        if (r != null) {
+            if (r.journal != null) {
+                MosqueObservationInterruptions.interrupted(c)
+                r.journal = null
+            }
+            prefs(c).edit().putLong("adaptive_failed_start", r.start).commit()
+        }
     }
     private fun blocked(c: Context, periods: MosquePeriods): Boolean {
         val state = prefs(c)
@@ -132,6 +146,8 @@ internal object AdaptiveMosqueMonitor {
         val savedAreas = if (scope == null) null else PrivateSilenceAreaStore.read(c)
         val issues = savedAreas?.let { MosqueReadiness.issues(c, it) }.orEmpty()
         val hardLoss = issues.any(MosqueReadiness::locationIssue)
+        MosqueMetrics.scope(c, periods, wall, canStart, issues)
+        MosqueWalkSharing.scope(c, periods)
         var diagnostics = activeMosqueDiagnostics(c)
         diagnostics?.period(periods)
         if (scope == null || issues.any { !MosqueReadiness.locationIssue(it) } || continuing && hardLoss) {
@@ -166,6 +182,7 @@ internal object AdaptiveMosqueMonitor {
             MosqueSilenceMonitor.rememberObservation(c, scope.activeEnd)
         }
         val engine = r.engine
+        r.targets = periods.targets
         // A held visit bridges the cutoff, including a newer nominal window becoming active.
         // All other changes still invalidate pre-gap authority even on a late alarm.
         if (!schedule.carriesVisit && r.silenceStart != periods.silence?.start) engine.period(false, now)
@@ -185,11 +202,23 @@ internal object AdaptiveMosqueMonitor {
             else engine.start(now, deliberate || burst && engine.detector.arrival == null)
         }
         engine.tick(now)
+        MosqueMetrics.decision(c, engine, wall)
         DetectionRecording.acquiring(c, r.token, engine, periods = periods, recheck = recheck,
             prayerStart = canStart && burst)
         diagnostics = activeMosqueDiagnostics(c)
         diagnostics?.engine(engine, savedAreas.areas, evidenceFix.takeIf { diagnostics.sessionId == evidenceSession })
         if (continuing && (engine.detector.arrival == null || engine.fallback || !engine.desired)) {
+            MosqueSilenceMonitor.stopLocked(c, needsRearm = false)
+            return null
+        }
+        // Android's rule survives this process. Install its wake-up before requesting silence,
+        // including the first provisional crossing, while the nominal cutoff still bounds it.
+        val scopeEnd = now + scope.activeEnd - wall
+        val silenceEnd = periods.silence?.let { now + it.activeEnd - wall }
+        val graceEnd = periods.continuationEnd?.let { now + it - wall }
+        val deadline = listOfNotNull(scopeEnd, silenceEnd, graceEnd, engine.deadline).min()
+        if (engine.desired && !MosqueSilenceMonitor.armDeadline(c, deadline)) {
+            MosqueMetrics.fault(c, "deadline_failed", wall)
             MosqueSilenceMonitor.stopLocked(c, needsRearm = false)
             return null
         }
@@ -209,6 +238,7 @@ internal object AdaptiveMosqueMonitor {
         // Enlarge the existing native request before the cutoff; its lifetime must not depend on
         // the end alarm being delivered at the exact instant the old request would have expired.
         val hold = r.held
+        MosqueMetrics.hold(c, hold != null, periods.continuationEnd)
         val nativeEnd = if (hold == null || periods.silence == null) scope.activeEnd else maxOf(scope.activeEnd,
             minOf(periods.silence.activeEnd + MosquePeriods.CONTINUATION_MILLIS, wall + (hold.expiresElapsed - now)))
         if (r.observedEnd != nativeEnd) {
@@ -216,11 +246,19 @@ internal object AdaptiveMosqueMonitor {
             MosqueSilenceMonitor.rememberObservation(c, nativeEnd)
         }
         val observeEnd = now + nativeEnd - wall
-        val silenceEnd = periods.silence?.let { now + it.activeEnd - wall }
-        val graceEnd = periods.continuationEnd?.let { now + it - wall }
-        val deadline = listOfNotNull(observeEnd, silenceEnd, graceEnd, engine.deadline).min()
-        MosqueSilenceMonitor.armDeadline(c, deadline)
-        if (hardLoss || engine.sampling == AdaptiveObservation.Sampling.PARKED) return null
+        engine.observationEnd = observeEnd
+        if (!engine.desired) MosqueSilenceMonitor.armDeadline(c, deadline)
+        if (hardLoss || engine.sampling == AdaptiveObservation.Sampling.PARKED) {
+            if (r.journal != null) {
+                MosqueObservationInterruptions.finished(c)
+                r.journal = null
+            }
+            return null
+        }
+        if (r.journal != null) {
+            recordObservation(c, r)
+            MosqueMetrics.started(c, wall)
+        }
         return MosqueObservationPlan(r.token, observeEnd, deadline,
             engine.sampling == AdaptiveObservation.Sampling.PRECISE, engine.state, areas,
             engine.generation, minOf(observeEnd, engine.requestEnd ?: observeEnd))
@@ -250,9 +288,29 @@ internal object AdaptiveMosqueMonitor {
     fun plan(c: Context, token: String): MosqueObservationPlan? =
         if (current?.token == token) reconcile(c) else null
 
+    fun setWakeCoverage(token: String, until: Long) = synchronized(SilenceCoordinator.serial) {
+        current?.takeIf { it.token == token }?.engine?.wakeCoverageUntil = until
+    }
+
     fun accepted(c: Context, token: String, generation: Long) {
         val r = current ?: return
-        if (r.token == token) r.engine.accepted(generation, SystemClock.elapsedRealtime())
+        if (r.token != token || r.engine.generation != generation ||
+            r.engine.sampling == AdaptiveObservation.Sampling.PARKED) return
+        r.engine.accepted(generation, SystemClock.elapsedRealtime())
+        MosqueMetrics.started(c, SilenceScheduler.now().toEpochMilli())
+        recordObservation(c, r)
+    }
+
+    private fun recordObservation(c: Context, r: Runtime) {
+        val targets = r.targets
+        val observation = MosqueObservationInterruption(r.token,
+            targets.map { it.prayer }.distinct().singleOrNull(),
+            targets.map { it.prayerDay }.distinct().singleOrNull(),
+            r.engine.detector.arrival != null)
+        if (observation != r.journal) {
+            MosqueObservationInterruptions.observing(c, observation)
+            r.journal = observation
+        }
     }
 
     fun observe(c: Context, token: String, generation: Long, fix: PresenceFix, fixTime: Long) {
@@ -260,7 +318,18 @@ internal object AdaptiveMosqueMonitor {
         if (plan.generation != generation) return
         val runtime = current ?: return
         val engine = runtime.engine
+        val previousArrival = engine.detector.arrival
+        val wasProvisional = engine.detector.tentativeUntil != null
         val used = engine.observe(fix, SystemClock.elapsedRealtime(), DetectionRecording.awaitingReturn(token))
+        MosqueWalkSharing.fix(c, fix, fixTime, used, runtime.areas)
+        if (used && previousArrival == null && engine.detector.arrival != null) MosqueWalkSharing.event(c, fixTime, "arrival")
+        if (used && previousArrival != null && engine.detector.arrival == null) MosqueWalkSharing.event(c, fixTime, "departure")
+        if (used && !wasProvisional && engine.detector.tentativeUntil != null) MosqueWalkSharing.event(c, fixTime, "provisional")
+        MosqueMetrics.fix(c, used, fix.accuracyMeters, SystemClock.elapsedRealtime() - fix.elapsedRealtimeMillis,
+            used && engine.detector.distance <= 0, SilenceScheduler.now().toEpochMilli())
+        // A first native fix can race the asynchronous request-accepted callback.
+        if (used && runtime.journal == null && engine.sampling != AdaptiveObservation.Sampling.PARKED)
+            recordObservation(c, runtime)
         if (used) DetectionRecording.acquiring(c, token, engine, fix = fix)
         val diagnostics = activeMosqueDiagnostics(c)
         val recorded = diagnostics?.fix(fix, fixTime, used, engine.detector.distance) == true
@@ -269,9 +338,11 @@ internal object AdaptiveMosqueMonitor {
         }
         reconcile(c, evidenceFix = fix.takeIf { used && recorded }, evidenceSession = diagnostics?.sessionId)
     }
-    fun fallbackRequested(c: Context): Boolean = synchronized(SilenceCoordinator.serial) {
-        current?.engine?.fallback == true && SilenceCoordinator.requested(c, SilenceOwner.MOSQUE)
+    fun requestedState(c: Context): PresenceState? = synchronized(SilenceCoordinator.serial) {
+        current?.engine?.state?.takeIf { SilenceCoordinator.requested(c, SilenceOwner.MOSQUE) }
     }
+
+    fun fallbackRequested(c: Context): Boolean = requestedState(c) == PresenceState.SCHEDULE_FALLBACK
 
     fun status(c: Context): PresenceState? {
         reconcile(c)

@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.sp
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.ui.theme.GreenPrimary
 import com.tunisianprayertimes.ui.theme.PrayerNameColor
-import com.tunisianprayertimes.ui.theme.TextMuted
 
 @Composable
 internal fun PrayerDataUnavailable(
@@ -36,16 +35,10 @@ internal fun PrayerDataUnavailable(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = stringResource(R.string.prayer_data_unavailable_title),
+            text = stringResource(if (isToday) R.string.prayer_data_unavailable_today else R.string.prayer_data_unavailable_date),
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
             color = PrayerNameColor,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            text = stringResource(if (isToday) R.string.prayer_data_unavailable_today else R.string.prayer_data_unavailable_date),
-            fontSize = 14.sp,
-            color = TextMuted,
             textAlign = TextAlign.Center,
         )
         if (!isToday) {

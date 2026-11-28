@@ -77,8 +77,11 @@ end of the prayer tab's settings sheet. Each colour is one launcher entry in the
 (`LauncherTeal`, `LauncherBlue`), and `LauncherIcon.kt` turns one on. To export again:
 
 ```
-python -I ../round3/_gen/export_app.py ../round4/06-one-axis-cream blue=../round4/12-one-axis-blue-cream
+python -I ../round3/_gen/export_app.py --launcher-placement 1.13 -1.63368 ../round4/06-one-axis-cream blue=../round4/12-one-axis-blue-cream
 ```
+
+This placement enlarges both Android launcher emblems and their shared themed icon
+by 13%, with a slight upward shift.
 
 They were made with `sed` colour swaps on the SVG files, not with `_gen/gen.py`, so
 `gen.py` does not know them. `sheet-blue.png` shows them next to the polished blue

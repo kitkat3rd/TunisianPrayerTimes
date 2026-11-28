@@ -1,0 +1,8 @@
+<resources>
+    <string name="feature_access_review_one">مراجعة أذونات %1$s</string>
+    <string name="feature_access_review">مراجعة أذونات الميزات المفعّلة</string>
+    <string name="feature_access_title">أذونات تحتاج إلى مراجعة</string>
+    <string name="feature_access_silence_setup">مراجعة إعدادات الإسكات التلقائي</string>
+    <string name="feature_access_notification_settings">فتح إعدادات الإشعارات</string>
+    <string name="feature_access_full_screen_settings">إعدادات العرض فوق شاشة القفل</string>
+</resources>

@@ -188,5 +188,5 @@ private fun positionDescription(entry: TraceEntry, nearby: TraceEntry?): String 
     val location = "الإحداثيات ⁦$coordinates⁩  ·  دقّة الموقع $accuracy"
     if (nearby == null) return location
     val seconds = String.format(Locale.US, "%.1f", (entry.at - nearby.at) / 1000.0)
-    return "بلا إحداثيات مسجّلة لهذا الحدث. الدائرة الفارغة تبيّن آخر نقطة من المسار، قبل الحدث بـ $seconds ثانية.\n$location"
+    return "آخر موضع مسجّل قبل الحدث بـ $seconds ثانية\n$location"
 }

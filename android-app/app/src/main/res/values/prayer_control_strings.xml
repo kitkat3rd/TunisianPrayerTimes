@@ -1,4 +1,5 @@
 <resources>
+    <string name="info_about_topic">معلومات عن %1$s</string>
     <string name="prayer_silence_start">بداية الإسكات</string>
     <string name="prayer_silence_end">نهاية الإسكات</string>
     <string name="prayer_delay_mode_minutes">دقائق من الأذان</string>

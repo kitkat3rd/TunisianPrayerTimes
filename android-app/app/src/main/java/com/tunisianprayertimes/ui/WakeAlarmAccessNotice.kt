@@ -1,11 +1,8 @@
 package com.tunisianprayertimes.ui
 
-import android.app.NotificationManager
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
@@ -32,27 +29,8 @@ import com.tunisianprayertimes.AnalyticsTracker
 import com.tunisianprayertimes.NotificationAccess
 import com.tunisianprayertimes.R
 import com.tunisianprayertimes.wake.AwakeCheckService
-import com.tunisianprayertimes.wake.WakeAlarmScheduler
 import com.tunisianprayertimes.wake.WakePlaybackService
-
-internal data class WakeAlarmAccess(
-    val exact: Boolean,
-    val ringingIssue: NotificationAccess.Issue?,
-    val awakeCheckIssue: NotificationAccess.Issue?,
-    val fullScreen: Boolean,
-) {
-    val ready: Boolean get() = exact && ringingIssue == null && awakeCheckIssue == null && fullScreen
-}
-
-internal fun wakeAlarmAccess(context: Context, awakeCheckEnabled: Boolean = false): WakeAlarmAccess {
-    val manager = context.getSystemService(NotificationManager::class.java)
-    return WakeAlarmAccess(
-        exact = WakeAlarmScheduler.canScheduleExactAlarms(context),
-        ringingIssue = NotificationAccess.issue(context, WakePlaybackService.CHANNEL_ID, NotificationManager.IMPORTANCE_HIGH),
-        awakeCheckIssue = if (awakeCheckEnabled) NotificationAccess.issue(context, AwakeCheckService.CHANNEL_ID) else null,
-        fullScreen = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || manager.canUseFullScreenIntent(),
-    )
-}
+import com.tunisianprayertimes.wake.wakeAlarmAccess
 
 @Composable
 internal fun WakeAlarmAccessNotice(
@@ -95,26 +73,26 @@ internal fun WakeAlarmAccessNotice(
                 modifier = Modifier.semantics { heading() },
             )
             if (!access.exact) {
-                WakeAccessAction(R.string.wake_access_exact_detail, R.string.wake_access_exact_action) {
+                WakeAccessAction(R.string.wake_access_exact_action) {
                     openSettings(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, packageUri), "exact_alarm")
                 }
             }
             if (access.ringingIssue == NotificationAccess.Issue.LOW_IMPORTANCE) {
-                WakeAccessAction(R.string.wake_access_low_ringing_channel, R.string.wake_access_ringing_channel_action) {
+                WakeAccessAction(R.string.wake_access_ringing_channel_action) {
                     repairNotifications(WakePlaybackService.CHANNEL_ID)
                 }
             } else if (access.ringingIssue != null) {
-                WakeAccessAction(R.string.wake_access_notifications_detail, R.string.wake_access_notifications_action) {
+                WakeAccessAction(R.string.wake_access_notifications_action) {
                     repairNotifications(WakePlaybackService.CHANNEL_ID)
                 }
             }
             if (access.awakeCheckIssue != null && access.ringingIssue != NotificationAccess.Issue.APP_BLOCKED) {
-                WakeAccessAction(R.string.wake_access_awake_check_detail, R.string.wake_access_awake_check_action) {
+                WakeAccessAction(R.string.wake_access_awake_check_action) {
                     repairNotifications(AwakeCheckService.CHANNEL_ID)
                 }
             }
             if (!access.fullScreen) {
-                WakeAccessAction(R.string.wake_access_full_screen_detail, R.string.wake_access_full_screen_action) {
+                WakeAccessAction(R.string.wake_access_full_screen_action) {
                     openSettings(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, packageUri), "full_screen_intent")
                 }
             }
@@ -123,7 +101,6 @@ internal fun WakeAlarmAccessNotice(
 }
 
 @Composable
-private fun WakeAccessAction(@StringRes detail: Int, @StringRes action: Int, onClick: () -> Unit) {
-    Text(stringResource(detail))
+private fun WakeAccessAction(@StringRes action: Int, onClick: () -> Unit) {
     TextButton(onClick = onClick) { Text(stringResource(action)) }
 }

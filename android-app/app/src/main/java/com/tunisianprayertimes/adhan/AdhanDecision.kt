@@ -31,6 +31,7 @@ internal object AdhanDecision {
         PLAY,
 
         QUIET_SILENT_PHONE,
+        QUIET_APP_SILENCE,
 
         /**
          * The app's prayer silence had begun, or begins with the adhan: the user is, or will be, at the mosque, where
@@ -70,7 +71,7 @@ internal object AdhanDecision {
             !enabled || lateMillis > LATE_NOTICE_MILLIS -> Outcome.NOTHING
             lateMillis > LATE_SOUND_MILLIS -> Outcome.QUIET_LATE
             inCall -> Outcome.QUIET_IN_CALL
-            userChoseAppSilence -> Outcome.QUIET_SILENT_PHONE
+            userChoseAppSilence -> Outcome.QUIET_APP_SILENCE
             appSilence != AppSilence.NONE -> Outcome.QUIET_PRAYER_SILENCE
             phoneQuiet -> Outcome.QUIET_SILENT_PHONE
             // A silent phone also reads zero; that case has its own reason above.

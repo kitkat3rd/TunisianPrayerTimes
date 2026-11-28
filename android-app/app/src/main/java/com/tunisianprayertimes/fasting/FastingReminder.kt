@@ -1,5 +1,7 @@
 package com.tunisianprayertimes.fasting
 
+import com.tunisianprayertimes.access.ReminderAccessChanges
+
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -105,7 +107,9 @@ object FastingReminder {
 
     fun setEnabled(context: Context, enabled: Boolean): Boolean {
         if (enabled && !PrefsManager.hasConfirmedPlace(context)) return false
+        val wasActive = notificationsRequested(context)
         prefs(context).edit().putBoolean("enabled", enabled).remove("paused_until_day").apply()
+        if (wasActive != enabled) ReminderAccessChanges.changed()
         refreshLater(context)
         return true
     }
@@ -151,22 +155,29 @@ object FastingReminder {
     fun isPaused(context: Context, now: Instant = Instant.now()): Boolean =
         now.atZone(zone(context)).toLocalDate().toEpochDay() < pausedUntilDay(context)
 
+    internal fun notificationsRequested(context: Context, now: Instant = Instant.now()): Boolean =
+        isEnabled(context) && !isPaused(context, now)
+
     /**
      * A week without reminders, no reason asked: illness, travel or a period are nobody's business. Counted in
      * eves, so the same tap skips the same days whatever the season; reads the prayer days, so not on the main thread.
      */
     fun pauseWeek(context: Context, now: Instant = Instant.now()) {
+        val wasActive = notificationsRequested(context, now)
         val today = now.atZone(zone(context)).toLocalDate()
         // Before Fajr the night still belongs to yesterday's eve.
         val fajr = PrayerTimesRepository.prayerDay(context, today)?.get(TimeEvent.FAJR)?.at
         val from = if (fajr != null && now < fajr) today.minusDays(1) else today
         prefs(context).edit().putLong("paused_until_day", from.plusDays(7).toEpochDay()).apply()
+        if (wasActive) ReminderAccessChanges.changed()
         cancelNotification(context)
         refresh(context, now)
     }
 
     fun resume(context: Context) {
+        val wasPaused = isEnabled(context) && isPaused(context)
         prefs(context).edit().remove("paused_until_day").apply()
+        if (wasPaused) ReminderAccessChanges.changed()
         refreshLater(context)
     }
 
@@ -412,7 +423,7 @@ object FastingReminder {
         if (now >= fajr) return
         val manager = channel(context) ?: return
         val local = now.atZone(zone(context))
-        val silent = quiet || suhoorAt != null || local.toLocalTime() >= LocalTime.of(QUIET_HOUR, 0) ||
+        val silent = quiet || local.toLocalTime() >= LocalTime.of(QUIET_HOUR, 0) ||
             local.toLocalDate() == eve.fastDay
         val own = if (suhoorAt == null) ownAlarm(context, eve) else null
         val deadline = "إن شئت الصيام فانوِه قبل أذان الفجر في ${clockOf(context, fajr)} صباحًا"
@@ -445,7 +456,7 @@ object FastingReminder {
         if (suhoorAt == null) {
             // Someone already woken before Fajr by an alarm of their own gets no second one.
             val options = suhoorOptions(fajr, now)
-            if (own == null && options.isNotEmpty()) {
+            if (own == null && options.isNotEmpty() && scheduledSuhoor(context, now) == null) {
                 // Chosen once in the app, with alarm access granted and still in time; from then on one tap here.
                 val action = if (PrefsManager.hasConfirmedPlace(context) && suhoorChosen(context) && suhoorMinutes(context) in options &&
                     suhoorWakeAccessReady(context, suhoorLevel(context))
@@ -509,7 +520,7 @@ object FastingReminder {
         val due = eves.firstOrNull()?.takeIf { it.reminds && now >= it.remindAt!! && now < it.fajr!! }
         val posted = prefs(app).getLong("posted_fast_day", NONE)
         if (due != null && posted != due.fastDay.toEpochDay() && !placeElsewhere(app, now)) {
-            post(app, due, now, quiet = fromApp)
+            post(app, due, now, suhoorAt = suhoorAt(app, due, now), quiet = fromApp)
         } else if (due != null && posted == due.fastDay.toEpochDay()) {
             updatePosted(app, due, now)
         }
@@ -563,6 +574,12 @@ object FastingReminder {
 
     // ---- Suhoor ----
 
+    internal fun nextSuhoorEve(context: Context, now: Instant = Instant.now()): Eve? {
+        if (isPaused(context, now)) return null
+        return upcoming(context, now, count = 12).firstOrNull { it.reminds }
+            ?.takeIf { suhoorOptions(it.fajr!!, now).isNotEmpty() }
+    }
+
     fun suhoorMinutes(context: Context): Int = prefs(context).getInt("suhoor_minutes", 30)
 
     internal fun suhoorLevel(context: Context): FajrAlarmPersistence =
@@ -602,15 +619,21 @@ object FastingReminder {
 
     /**
      * The one-off suhoor alarm for [eve], with the reader's minutes and insistence, named in the Alarms tab.
-     * Requires a confirmed place and enough time before Fajr tonight.
+     * Requires a confirmed place and enough time before the chosen day's Fajr.
      */
-    fun setSuhoor(context: Context, eve: Eve, now: Instant = Instant.now()): Boolean {
-        if (!PrefsManager.hasConfirmedPlace(context)) return false
+    internal fun setSuhoor(
+        context: Context,
+        eve: Eve,
+        now: Instant = Instant.now(),
+        minutes: Int = suhoorMinutes(context),
+        level: FajrAlarmPersistence = suhoorLevel(context),
+    ): Boolean = synchronized(lock) {
+        if (!PrefsManager.hasConfirmedPlace(context) || !eve.reminds) return false
         val fajr = eve.fajr ?: return false
-        val minutes = suhoorMinutes(context)
-        if (minutes !in suhoorOptions(fajr, now)) return false
+        if (minutes !in suhoorOptions(fajr, now) || !WakeAlarmScheduler.canScheduleExactAlarms(context)) return false
+        scheduledSuhoor(context, now)?.let { return it.fastDay == eve.fastDay }
         val ring = fajr.minus(Duration.ofMinutes(minutes.toLong()))
-        val base = fajrSuggestionAlarm(minutes, suhoorLevel(context))
+        val base = fajrSuggestionAlarm(minutes, level)
         val config = base.copy(
             id = SUHOOR_ALARM_ID,
             title = "منبه السحور",
@@ -621,9 +644,11 @@ object FastingReminder {
         // Once the alarm exists: a refresh in between would otherwise forget it as removed.
         prefs(context).edit().putLong("suhoor_fast_day", eve.fastDay.toEpochDay()).apply()
         rememberSuhoorRings(context, config)
+        saveSuhoorChoice(context, minutes, level)
         runBlocking { ScheduleRefreshCoordinator.syncWake(context) }
-        post(context, eve, now, suhoorAt = ring)
-        return true
+        val remindAt = eve.remindAt
+        if (remindAt != null && now >= remindAt) post(context, eve, now, suhoorAt = ring, quiet = true)
+        true
     }
 
     private fun suhoorAlarm(context: Context) =
@@ -663,11 +688,14 @@ object FastingReminder {
         return prefs.getLong("suhoor_ring_at", 0L).takeIf { rang && it > 0 }?.let(Instant::ofEpochMilli)
     }
 
-    /** The suhoor alarm for [eve] is on and has not rung yet. */
-    fun suhoorPending(context: Context, eve: Eve, now: Instant = Instant.now()): Boolean {
-        if (prefs(context).getLong("suhoor_fast_day", NONE) != eve.fastDay.toEpochDay()) return false
-        val alarm = suhoorAlarm(context)?.takeIf { it.enabled } ?: return false
-        return firstRing(alarm) > now.toEpochMilli()
+    internal data class ScheduledSuhoor(val fastDay: LocalDate, val ringsAt: Instant)
+
+    internal fun scheduledSuhoor(context: Context, now: Instant = Instant.now()): ScheduledSuhoor? {
+        val fastDay = prefs(context).getLong("suhoor_fast_day", NONE)
+        if (fastDay == NONE) return null
+        val alarm = suhoorAlarm(context)?.takeIf { it.enabled } ?: return null
+        val ring = alarm.mainAlarm.oneOffTriggerAtMillis.takeIf { it > now.toEpochMilli() } ?: return null
+        return ScheduledSuhoor(LocalDate.ofEpochDay(fastDay), Instant.ofEpochMilli(ring))
     }
 
     private fun forgetSuhoor(context: Context) {
@@ -692,7 +720,7 @@ object FastingReminder {
             ACTION_SUHOOR -> tonight(context)?.takeIf { isEnabled(context) && it.reminds && isChosen(context, it) }?.let { eve ->
                 // A changed grant or expired offset turns the next tap into a visit to setup.
                 if (!suhoorWakeAccessReady(context, suhoorLevel(context)) || !setSuhoor(context, eve)) {
-                    post(context, eve, quiet = true)
+                    post(context, eve, suhoorAt = suhoorAt(context, eve), quiet = true)
                 }
             }
         }

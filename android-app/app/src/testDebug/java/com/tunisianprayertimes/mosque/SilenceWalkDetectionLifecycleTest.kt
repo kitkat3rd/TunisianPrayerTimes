@@ -66,6 +66,7 @@ class SilenceWalkDetectionLifecycleTest : MosqueGraceFixture() {
         endAlarm()
         fix(40)
         fix(80, inside = false)
+        fix(90, inside = false)
         fix(99, inside = false)
         assertEquals(id, active())
         assertTrue(requested())
@@ -86,6 +87,26 @@ class SilenceWalkDetectionLifecycleTest : MosqueGraceFixture() {
         assertEquals(listOf(id), SilenceTraceStore.sessions(context).map { it.id })
     }
 
+    @Test fun leavingByAnotherDoorEndsGraceAndRecordsTheSustainedExteriorFixes() {
+        begin()
+        val id = requireNotNull(active())
+        confirm()
+        endAlarm()
+        // The east wall is at 0.001°. Every 4 m accuracy circle clears it by about 5 m.
+        val pavement = 0.001081
+        for (second in 30L..70L step 5) {
+            fixAtLongitude(second, pavement)
+            assertTrue(requested())
+        }
+        fixAtLongitude(75, pavement)
+        assertFalse(requested())
+        assertNull(plan())
+        assertNull(active())
+        val departed = events(id).single { it.kind == "mosque_visit_ended" }
+        assertEquals(context.getString(R.string.trace_mosque_stayed_outside, "Hall"), departed.detail)
+        assertEquals(pavement, requireNotNull(departed.longitude), 0.000001)
+    }
+
     private fun departWhileWindowIsOpen(): Long {
         begin(secondsBeforeEnd = 150)
         val first = requireNotNull(active())
@@ -94,6 +115,7 @@ class SilenceWalkDetectionLifecycleTest : MosqueGraceFixture() {
         fix(-134)
         assertTrue(requested())
         fix(-100, inside = false)
+        fix(-90, inside = false)
         fix(-80, inside = false)
         assertFalse(requested())
         assertNull(active())
@@ -205,6 +227,7 @@ class SilenceWalkDetectionLifecycleTest : MosqueGraceFixture() {
             fix(from + 8)
             fix(from + 16)
             fix(from + 50, inside = false)
+            fix(from + 60, inside = false)
             fix(from + 70, inside = false)
         }
         visit(nominalStart - 150)

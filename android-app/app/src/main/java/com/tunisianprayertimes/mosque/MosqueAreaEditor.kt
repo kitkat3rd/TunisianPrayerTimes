@@ -152,7 +152,7 @@ internal fun AreaEditor(initial: AreaDraft, saved: List<SavedSilenceArea>, onClo
         if (manual) {
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(if (fixed.isEmpty()) R.string.mosque_editor_help else R.string.mosque_complex_read_only))
+                if (fixed.isNotEmpty()) Text(stringResource(R.string.mosque_complex_read_only))
                 nameField()
                 if (fixed.isEmpty()) {
                     OutlinedTextField(draft.coordinates, onValueChange = { replaceCoordinates(it) },
@@ -188,9 +188,7 @@ internal fun AreaEditor(initial: AreaDraft, saved: List<SavedSilenceArea>, onClo
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 MosqueBoundaryMap(points.orEmpty(), fixed, crossing, draft.cataloguePin, userLocation, mode, focus,
-                    Modifier.fillMaxSize(), { mapReady = it }) {
-                    replaceCoordinates(coordinateText(it))
-                }
+                    Modifier.fillMaxSize(), { mapReady = it }, onChange = { replaceCoordinates(coordinateText(it)) })
                 if (mapReady == null) CircularProgressIndicator(Modifier.align(Alignment.Center))
                 if (mapReady == false) Surface(Modifier.align(Alignment.Center).padding(16.dp), shape = MaterialTheme.shapes.medium) {
                     Text(stringResource(R.string.mosque_map_unavailable), Modifier.padding(12.dp))
@@ -212,13 +210,9 @@ internal fun AreaEditor(initial: AreaDraft, saved: List<SavedSilenceArea>, onClo
                 val help = when (mode) {
                     BoundaryEditMode.DRAW -> R.string.mosque_map_draw_help
                     BoundaryEditMode.ADJUST -> R.string.mosque_map_adjust_help
-                    BoundaryEditMode.VIEW -> when {
-                        fixed.isNotEmpty() -> R.string.mosque_complex_read_only
-                        editablePolygon != null -> R.string.mosque_map_confirm_help
-                        else -> R.string.mosque_map_start
-                    }
+                    BoundaryEditMode.VIEW -> R.string.mosque_complex_read_only.takeIf { fixed.isNotEmpty() }
                 }
-                Text(stringResource(help), Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall)
+                if (help != null) Text(stringResource(help), Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall)
                 if (fixed.isEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
                     if (mode == BoundaryEditMode.VIEW) {
                         TextButton(enabled = mapReady == true, onClick = {
@@ -257,6 +251,11 @@ internal fun AreaEditor(initial: AreaDraft, saved: List<SavedSilenceArea>, onClo
             Switch(checked = draft.enabled, onCheckedChange = { update(draft.copy(enabled = it)) },
                 modifier = Modifier.semantics { contentDescription = context.getString(R.string.mosque_area_enable) })
         }
+        if (polygons.isNotEmpty() && mode != BoundaryEditMode.DRAW) {
+            TextButton(onClick = { context.startActivity(MosqueFeedbackActivity.mapIntent(context, draft.id, polygons)) }) {
+                Text(stringResource(R.string.mr_boundary))
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(modifier = Modifier.weight(1f),
                 enabled = polygons.isNotEmpty() && mode != BoundaryEditMode.DRAW && draft.name.isNotBlank(), onClick = {
@@ -283,7 +282,8 @@ internal fun AreaEditor(initial: AreaDraft, saved: List<SavedSilenceArea>, onClo
         finishAttempted = false
         undo = emptyList()
         update(draft.copy(id = id, name = (existing?.name ?: mosque.displayName()).take(100),
-            enabled = existing?.geometry?.enabled ?: draft.enabled, cataloguePin = pin).withPolygons(selected))
+            enabled = existing?.geometry?.enabled ?: draft.enabled, cataloguePin = pin,
+            catalogueBase = existing?.catalogueBase ?: com.tunisianprayertimes.BuildConfig.MOSQUE_CATALOG_VERSION).withPolygons(selected))
     }
     if (rectangle) RectangleDialog(onClose = { rectangle = false }) {
         replaceCoordinates(coordinateText(it), BoundaryEditMode.ADJUST)
@@ -294,7 +294,7 @@ private data class CatalogueMosque(val mosque: Mosque, val polygons: List<Silenc
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CatalogueChooser(nearby: GeoPoint?, onClose: () -> Unit, onChoose: (Mosque, List<SilencePolygon>) -> Unit) {
+internal fun CatalogueChooser(nearby: GeoPoint?, onClose: () -> Unit, onChoose: (Mosque, List<SilencePolygon>) -> Unit) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     val catalog by produceState<Result<List<CatalogueMosque>>?>(null, context) {
@@ -329,6 +329,12 @@ private fun CatalogueChooser(nearby: GeoPoint?, onClose: () -> Unit, onChoose: (
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.76f).padding(horizontal = 16.dp, vertical = 6.dp)) {
             OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
                 label = { Text(stringResource(R.string.mosque_search_catalogue)) })
+            if (query.isNotBlank() && catalog?.isSuccess == true && matches.isEmpty()) {
+                TextButton(onClick = {
+                    onClose()
+                    context.startActivity(android.content.Intent(context, MosqueFeedbackActivity::class.java).putExtra("page","missing"))
+                }) { Text(stringResource(R.string.mr_missing)) }
+            }
             when {
                 catalog == null -> CircularProgressIndicator(Modifier.padding(16.dp))
                 catalog?.isFailure == true -> Text(stringResource(R.string.mosque_catalogue_unavailable), Modifier.padding(12.dp))
@@ -348,7 +354,7 @@ private fun CatalogueChooser(nearby: GeoPoint?, onClose: () -> Unit, onChoose: (
     }
 }
 
-private fun Mosque.displayName() = nameAr ?: name ?: nameFr.orEmpty()
+internal fun Mosque.displayName() = nameAr ?: name ?: nameFr.orEmpty()
 
 private val searchMarks = Regex("[\\u0640\\u064B-\\u065F\\u0670]")
 private val alefForms = Regex("[أإآٱ]")
@@ -376,6 +382,7 @@ private fun RectangleDialog(onClose: () -> Unit, onConfirm: (List<GeoPoint>) -> 
             Column {
                 Text(stringResource(R.string.mosque_rectangle_help))
                 OutlinedTextField(text, { text = it; invalid = false }, minLines = 2, isError = invalid,
+                    placeholder = { Text(stringResource(R.string.mosque_rectangle_example), style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)) },
                     textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr))
             }
         }, confirmButton = {

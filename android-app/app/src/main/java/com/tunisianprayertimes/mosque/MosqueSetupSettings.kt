@@ -84,11 +84,11 @@ internal fun MosqueSetupSettings(
                 R.string.mosque_needs_precise -> SetupRow(R.string.mosque_allow_precise, onClick = onPrecise)
                 R.string.mosque_needs_disclosure, R.string.mosque_needs_background ->
                     SetupRow(R.string.mosque_allow_background, issue, onBackground)
-                R.string.mosque_needs_exact -> SetupRow(R.string.mosque_allow_exact, issue, onExact)
-                R.string.mosque_needs_notifications -> SetupRow(R.string.mosque_allow_notifications, issue, onNotifications)
+                R.string.mosque_needs_exact -> SetupRow(R.string.mosque_allow_exact, onClick = onExact)
+                R.string.mosque_needs_notifications -> SetupRow(R.string.mosque_allow_notifications, onClick = onNotifications)
                 R.string.mosque_observation_notifications_blocked ->
                     SetupRow(R.string.mosque_open_observation_notifications, issue, onNotifications)
-                R.string.mosque_needs_location -> SetupRow(R.string.mosque_location_settings, issue, onLocation)
+                R.string.mosque_needs_location -> SetupRow(R.string.mosque_location_settings, onClick = onLocation)
                 R.string.mosque_background_restricted -> SetupRow(R.string.mosque_app_settings, issue, onAppSettings)
                 R.string.mosque_no_areas, R.string.mosque_too_many_areas, R.string.mosque_store_unavailable ->
                     SetupRow(R.string.mosque_areas_title, issue, onAreas)
@@ -126,7 +126,9 @@ internal fun MosqueSetupSettings(
         add(SetupRow(R.string.mosque_app_settings, onClick = onAppSettings))
     }.filter { row -> required.none { it.title == row.title } }
     if (showSystemShortcuts && system.isNotEmpty()) SetupGroup(R.string.mosque_setup_phone_settings, system)
-    if (combined) SetupMessage(R.string.mosque_provider_note)
+    if (combined) {
+        PrayerSettingsGroup { MosqueBackgroundBatteryLink() }
+    }
 }
 
 private data class SetupRow(val title: Int, val detail: Int? = null, val onClick: (() -> Unit)? = null)

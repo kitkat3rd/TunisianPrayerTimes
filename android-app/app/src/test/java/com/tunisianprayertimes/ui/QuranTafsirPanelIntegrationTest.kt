@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import com.tunisianprayertimes.quran.QuranVerseReference
 import com.tunisianprayertimes.quran.quranVerseSentence
 import com.tunisianprayertimes.quran.tafsir.TafsirRepository
+import com.tunisianprayertimes.quran.tafsir.tafsirFixtureRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -47,7 +48,7 @@ class QuranTafsirPanelIntegrationTest {
             "quran/tafsir/catalog.json" to """{"version":1,"books":[{"id":"juzayy","source":"fixture","edition":"test","shareable":true,"surahs":[67]}]}""",
             "quran/tafsir/juzayy/67.json" to """{"units":[{"id":"span","from":13,"to":14,"text":"$sampleText"}]}""",
         )
-        return TafsirRepository(files::get)
+        return tafsirFixtureRepository(files::get)
     }
 
     @Test

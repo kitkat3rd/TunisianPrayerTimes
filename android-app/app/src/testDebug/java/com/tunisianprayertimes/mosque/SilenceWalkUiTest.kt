@@ -50,6 +50,12 @@ class SilenceWalkUiTest {
             val idle = context.getString(R.string.silence_walk_intro)
             compose.waitUntil(10_000) { compose.onAllNodesWithText(idle).fetchSemanticsNodes().isNotEmpty() }
             assertNull(SilenceTraceStore.activeId(context))
+            val privacy = context.getString(R.string.mosque_privacy)
+            compose.onNodeWithText(privacy).assertDoesNotExist()
+            val topic = context.getString(R.string.silence_walk_recording_info)
+            compose.onNodeWithContentDescription(context.getString(R.string.info_about_topic, topic)).performClick()
+            compose.onNodeWithText(privacy).assertIsDisplayed()
+            compose.onNodeWithText(context.getString(R.string.prayer_control_close)).performClick()
 
             val id = SilenceTraceStore.start(context)
             val arrived = context.getString(R.string.silence_walk_arrived)
@@ -61,6 +67,7 @@ class SilenceWalkUiTest {
             SilenceTraceStore.stop(context, id)
             val save = context.getString(R.string.silence_walk_save)
             compose.waitUntil(10_000) { compose.onAllNodesWithText(save).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText(context.getString(R.string.silence_walk_export_info)).performScrollTo().assertIsDisplayed()
             compose.onNodeWithText(save).performScrollTo().assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText(arrived).fetchSemanticsNodes().isEmpty())
             assertEquals(listOf(id), SilenceTraceStore.sessions(context).map { it.id })

@@ -686,6 +686,18 @@ object HifzReminder {
         Prayer.AID_FITR, Prayer.AID_ADHA -> "العيد"
     }
 
+    /** Before the notebook loads, the scheduler's saved slot is evidence of an actual reminder. */
+    internal fun hasConfiguredNotification(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return try {
+            prefs.getBoolean("reminder", true) && if (HifzRepository.isLoaded) HifzRepository.points.value.isNotEmpty()
+            else prefs.getString("armed", null)?.let(::decodeSlot) != null
+        } catch (_: ClassCastException) {
+            // An incompatible preference is left to the feature's own recovery.
+            false
+        }
+    }
+
     /** The app may post notifications: the permission is granted and they are not turned off for the app. */
     fun appNotificationsAllowed(context: Context): Boolean =
         NotificationAccess.issue(context, null) == null
